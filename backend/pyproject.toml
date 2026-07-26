@@ -19,11 +19,35 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Typing :: Typed",
 ]
-# Runtime dependencies are deliberately empty at S01. The repository skeleton
-# has no runtime behaviour to depend on anything. FastAPI, SQLAlchemy, Pydantic,
-# structlog and Celery arrive with the subsystems that need them (S02, S04, S05),
-# each justified in that subsystem's design document.
-dependencies = []
+# Every runtime dependency is pinned exactly (ADR-032) and justified in the
+# design document of the subsystem that introduced it. Transitive pins live in
+# uv.lock, which is committed and enforced with UV_FROZEN=1 in CI.
+#
+# S02 -- Core Runtime:
+#   pydantic / pydantic-settings  typed, fail-fast configuration (ADR-031)
+#   structlog                     structured logging with a redaction processor
+#   fastapi / uvicorn             the /health /ready /metrics component (ADR-035)
+#   prometheus-client             metrics registry and exposition (ADR-035)
+#   opentelemetry-api             tracing facade; the SDK is a composition-root
+#                                 concern and is an optional extra, not a
+#                                 library dependency (ADR-040)
+dependencies = [
+  "pydantic==2.12.3",
+  "pydantic-settings==2.11.0",
+  "structlog==25.4.0",
+  "fastapi==0.121.1",
+  "uvicorn==0.38.0",
+  "prometheus-client==0.24.0",
+  "opentelemetry-api==1.39.0",
+]
+
+[project.optional-dependencies]
+# Installed at composition roots and in deployed environments only. Library code
+# imports the OpenTelemetry API, never the SDK (ADR-040).
+tracing = [
+  "opentelemetry-sdk==1.39.0",
+  "opentelemetry-exporter-otlp-proto-http==1.39.0",
+]
 
 [project.scripts]
 dhruva-check-boundaries = "dhruva.tooling.boundaries:main"
@@ -39,6 +63,8 @@ dev = [
   "pytest-randomly==4.0.1",
   "hypothesis==6.140.3",
   "pip-audit==2.9.0",
+  "pytest-benchmark==5.1.0",
+  "httpx==0.28.1",
 ]
 
 [tool.hatch.version]
@@ -137,6 +163,10 @@ addopts = [
   "--strict-config",
   "-ra",
   "--import-mode=importlib",
+  # Benchmarks are excluded from the default run for two reasons: they slow the
+  # inner loop, and coverage instrumentation inflates their timings enough to
+  # make the measurements meaningless (ADR-036). Run them with `make bench`.
+  "-m", "not benchmark",
 ]
 markers = [
   "unit: pure logic, no I/O, milliseconds",
@@ -144,6 +174,7 @@ markers = [
   "contract: external adapter contract tests against recorded fixtures",
   "e2e: full journey through the API",
   "slow: takes more than one second",
+  "benchmark: performance budget measurement (ADR-036); excluded from the inner loop",
 ]
 xfail_strict = true
 filterwarnings = ["error"]
