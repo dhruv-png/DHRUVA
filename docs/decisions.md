@@ -1,0 +1,64 @@
+# Decision Index
+
+Master index of every Architecture Decision Record. Generated content is not
+acceptable here -- this file is reviewed, and reviewing it is how a decision that
+should not have been made gets caught.
+
+**30 decisions, all Accepted.** Records are immutable once accepted
+(ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
+
+| # | Decision | Status |
+|---|---|---|
+| [ADR-001](ADR-001-modular-monolith-not-microservices.md) | Modular monolith, not microservices | Accepted |
+| [ADR-002](ADR-002-kafka-deferred-redis-streams-is-the-v1-event.md) | Kafka deferred; Redis Streams is the v1 event backbone | Accepted |
+| [ADR-003](ADR-003-provider-agnostic-market-data-via-ports-and.md) | Provider-agnostic market data via ports and adapters | Accepted |
+| [ADR-004](ADR-004-multi-tenant-ready-schema-from-day-one.md) | Multi-tenant-ready schema from day one | Accepted |
+| [ADR-005](ADR-005-money-is-decimal-storage-is-integer-paise.md) | Money is `Decimal`; storage is integer paise | Accepted |
+| [ADR-006](ADR-006-all-timestamps-stored-utc-all-display-asia-kolkata.md) | All timestamps stored UTC; all display Asia/Kolkata; `TradingDay` is a domain type | Accepted |
+| [ADR-007](ADR-007-bitemporal-data-for-anything-a-backtest-reads.md) | Bitemporal data for anything a backtest reads | Accepted |
+| [ADR-008](ADR-008-prices-stored-unadjusted-adjustment-applied-at-read.md) | Prices stored unadjusted; adjustment applied at read time | Accepted |
+| [ADR-009](ADR-009-internal-surrogate-instrument-id-tradingsymbol-is.md) | Internal surrogate `instrument_id`; `tradingsymbol` is never a key | Accepted |
+| [ADR-010](ADR-010-one-execution-kernel-shared-by-backtest-paper-and.md) | One execution kernel shared by backtest, paper, and live | Accepted |
+| [ADR-011](ADR-011-time-is-injected-never-read-from-the-wall-clock.md) | Time is injected, never read from the wall clock | Accepted |
+| [ADR-012](ADR-012-the-risk-engine-is-a-mandatory-unbypassable-pre.md) | The Risk Engine is a mandatory, unbypassable pre-trade gate | Accepted |
+| [ADR-013](ADR-013-the-cost-engine-is-effective-dated-and-shared-by.md) | The Cost Engine is effective-dated and shared by all three execution modes | Accepted |
+| [ADR-014](ADR-014-orders-and-fills-are-an-append-only-immutable.md) | Orders and fills are an append-only immutable ledger | Accepted |
+| [ADR-015](ADR-015-idempotency-on-the-entire-order-path.md) | Idempotency on the entire order path | Accepted |
+| [ADR-016](ADR-016-hard-unbypassable-order-rate-governor.md) | Hard, unbypassable order-rate governor | Accepted |
+| [ADR-017](ADR-017-broker-state-is-the-source-of-truth-internal-state.md) | Broker state is the source of truth; internal state is a hypothesis | Accepted |
+| [ADR-018](ADR-018-explainability-is-a-data-contract-not-a-ui-feature.md) | Explainability is a data contract, not a UI feature | Accepted |
+| [ADR-019](ADR-019-simple-mode-and-professional-mode-are-two.md) | Simple Mode and Professional Mode are two compositions of one API | Accepted |
+| [ADR-020](ADR-020-security-by-default-encrypted-broker-credentials-no.md) | Security by default: encrypted broker credentials, no secrets in the database in plaintext | Accepted |
+| [ADR-021](ADR-021-daily-market-open-ritual-is-a-designed-feature.md) | Daily "Market Open Ritual" is a designed feature | Accepted |
+| [ADR-022](ADR-022-fail-closed.md) | Fail closed | Accepted |
+| [ADR-023](ADR-023-monorepo.md) | Monorepo | Accepted |
+| [ADR-024](ADR-024-python-3-12-strict-typing-async-first-at-i-o.md) | Python 3.12, strict typing, async-first at I/O boundaries | Accepted |
+| [ADR-025](ADR-025-research-notebooks-are-not-production.md) | Research notebooks are not production | Accepted |
+| [ADR-026](ADR-026-no-live-capital-before-gate-g5.md) | No live capital before Gate G5 | Accepted |
+| [ADR-027](ADR-027-every-major-architectural-decision-is-recorded-as.md) | Every major architectural decision is recorded as an ADR; approved architecture is never silently modified | Accepted |
+| [ADR-028](ADR-028-mcp-first-delivery-execution-subsystems-are-gated.md) | MCP-first delivery; execution subsystems are gated on demonstrated analytics value | Accepted |
+| [ADR-029](ADR-029-version-control-is-part-of-the-definition-of.md) | Version control is part of the Definition of Done; no subsystem accumulates uncommitted | Accepted |
+| [ADR-030](ADR-030-documentation-is-updated-in-the-same-commit-as.md) | Documentation is updated in the same commit as the code it describes | Accepted |
+
+## Reading order for someone new
+
+If you have twenty minutes and want to understand why the codebase looks the way
+it does, read these six in order:
+
+1. **ADR-001** — why a modular monolith and not services
+2. **ADR-010** — why backtest, paper and live share one execution kernel
+3. **ADR-007** — why every record carries two timestamps
+4. **ADR-012** — why the risk gate is structurally unbypassable
+5. **ADR-022** — why ambiguity blocks trading rather than proceeding
+6. **ADR-028** — why there is no execution code in this repository yet
+7. **ADR-029** — why nothing crosses a subsystem boundary uncommitted
+
+## Architecture Revisions
+
+None. A revision is the heavier instrument, reserved for changes that invalidate a
+gate or a scope parameter (plan section 1.2). It requires written Product Owner
+approval and a reissued Master Project Plan.
+
+| AR | Date | Change | Plan version |
+|---|---|---|---|
+| — | — | — | — |
