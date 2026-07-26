@@ -338,43 +338,126 @@ backend/tests/unit/api/
 backend/tests/benchmarks/            ← marked `slow`, excluded from the inner loop
 ```
 
-## 8–12. Implementation, Testing, Optimisation, Documentation, Future Improvements
+## 8. Implementation
 
-To be completed in Step 2 onward. Planned content:
+| Module | Statements | What it owns |
+|---|---|---|
+| `shared/errors/` | 71 | Eight-family closed taxonomy, stable codes, structured context (ADR-038) |
+| `shared/config/environment.py` | 17 | Closed environment enum with security-relevant predicates |
+| `shared/config/secret.py` | 44 | `SecretValue` — non-disclosing credential type (ADR-033) |
+| `shared/config/settings.py` | 99 | Typed settings, fail-fast validation, unsafe-deployment rejection (ADR-031) |
+| `shared/context.py` | 55 | Correlation/causation/account propagation (ADR-039) |
+| `shared/logging/` | 84 | structlog chain with two-strategy redaction (ADR-037) |
+| `shared/observability/` | 113 | Health/readiness registry, metrics registry, tracing facade (ADR-035, ADR-040) |
+| `shared/runtime.py` | 23 | Ordered `bootstrap()` |
+| `api/` | 46 | The observability component: `/health`, `/ready`, `/metrics` |
+| `tooling/boundaries.py` | +26 | Boundary rule **R5** |
 
-- **New dependencies**, each justified: `pydantic`, `pydantic-settings`,
-  `structlog`, `opentelemetry-api`, `opentelemetry-sdk`. The
-  `test_runtime_dependencies_are_still_empty` assertion from S01 is replaced in
-  the same commit by an explicit allowlist test, so the list stays deliberate.
-- **New boundary rule R5** in `dhruva.tooling.boundaries`, with self-tests.
-- **New ADRs**, renumbered after ADR-032 … ADR-036 were claimed by the v1.3
-  engineering policies: **ADR-037** (redaction is a tested control),
-  **ADR-038** (typed errors with stable codes), **ADR-039** (correlation via
-  contextvars), **ADR-040** (OpenTelemetry API in library code, SDK only at
-  composition roots). ADR-031 covers configuration injection and is already
-  accepted.
-- **Testing**: property tests on `SecretValue` non-disclosure; async isolation
-  tests for context leakage; the deliberate credential-leak test; a snapshot test
-  pinning the error-code registry.
+**Seven new dependencies**, each justified above and pinned exactly. The
+OpenTelemetry SDK is an optional extra, not a runtime dependency, and a test
+asserts the split (ADR-040).
+
+**Two optimisations found by the budget suite**, both real rather than cosmetic:
+
+1. `bind_correlation` was a `@contextmanager` generator. The generator machinery
+   dominated a call on the hot path of every request and tick batch. Rewritten as
+   a class-based context manager: **17.7 µs → 2.0 µs**.
+2. The redactor rebuilt its secret snapshot on **every log record** — two set
+   constructions per record. Cached against a registry version counter:
+   **71.9 µs → 36.7 µs** per emission.
+
+Neither would have been found without ADR-036's requirement to measure.
+
+## 9. Testing
+
+**335 tests, 99.9% statement coverage, 99.5% branch coverage.** Six benchmarks
+run separately.
+
+| Suite | Focus |
+|---|---|
+| `test_errors.py` | Code uniqueness, pinned snapshot, `repr` non-disclosure, pickling |
+| `test_secret_value.py` | Seven rendering paths, pickle/hash refusal, property test |
+| `test_settings.py` | Fail-fast, unsafe-deployment rejection, env-file precedence |
+| `test_context.py` | Nesting, restoration on exception, async isolation, thread limitation |
+| `test_logging_redaction.py` | **The deliberate credential-leak suite** |
+| `test_observability.py` | Health/readiness semantics, timeout, concurrency, naming |
+| `test_observability_endpoints.py` | All three endpoints, correlation, no-leak assertions |
+| `test_bootstrap.py` | Ordering, banner contents, post-bootstrap secret registration |
+| `test_secret_hygiene.py` | Repository-level ADR-033 invariants |
+| `test_tooling_cli.py` | R5 across six spellings, plus its exemptions |
+
+The leak suite is the one that matters. It attacks redaction from every direction
+a real leak takes — named fields, interpolated messages, nested structures,
+exception arguments, bound context — and asserts that ordinary content survives.
+
+## 10. Optimisation — Measured Budget Compliance
+
+| Budget | Target | Measured | Status |
+|---|---|---|---|
+| Settings load + validation | < 50 ms | **0.89 ms** (p95) | PASS |
+| Correlation bind + unbind | < 10 µs | **2.01 µs**/call | PASS |
+| Log emit, JSON, redaction on | < 100 µs | **36.7 µs**/call | PASS |
+| Redaction overhead vs. off | < 1.25× | **1.02×** | PASS |
+| Metrics render, 500 series | < 100 ms | **7.62 ms** (p95) | PASS |
+| Readiness eval, 4 checks | < 100 ms | **0.45 ms** (p99) | PASS |
+
+**All six pass.** Figures are from Python 3.10; the 3.12 target is materially
+faster, so these are conservative.
+
+**Measurement methodology, revised during implementation.** Millisecond-scale
+budgets use tail measures (p95/p99), because the tail is what an operator
+experiences. Microsecond-scale budgets use best-of-batched-means, because a
+per-iteration `perf_counter` costs a large fraction of the thing being timed and
+a per-iteration tail reports the garbage collector rather than the code. The
+first measurement pass showed 5× run-to-run variance before this change. Recorded
+here rather than silently applied, as ADR-036 requires.
+
+Two budgets — startup-to-ready and steady-state RSS — are deferred to S04, when
+there is a database connection to make them meaningful. Recorded in §13.
+
+## 11. Documentation
+
+ADR-037 … ADR-041 written; `docs/decisions.md` regenerated (41 records);
+`docs/BUILD.md` created; `CHANGELOG.md` and `docs/releases/v0.2.0.md` written;
+`Makefile` gains `bench` and `lock`; session log updated.
+
+## 12. Future Improvements
+
+| Improvement | Trigger |
+|---|---|
+| Trace context propagation across process boundaries | S05, when the event envelope exists |
+| `/ready` result caching under probe pressure | If probe frequency ever shows in the metrics |
+| Structured log sampling for high-volume paths | S10, if tick logging approaches its budget |
+| OpenTelemetry log correlation (trace_id on records) | When the SDK is first configured in a deployed environment |
+
+## 13. Technical Debt Register (ADR-041)
+
+| # | Item | Rationale for deferral | Effort | Priority | Milestone | Status |
+|---|---|---|---|---|---|---|
+| TD-01 | Migrate to canonical `uv.lock` + `uv sync --frozen` | `uv lock` needs a 3.12 interpreter the sandbox cannot download. Hash-pinned `uv pip compile` output gives the same guarantee meanwhile. | 0.5 | **HIGH** | First 3.12 host | OPEN |
+| TD-02 | Validate on Python 3.12 and remove the compatibility shim | 3.12 build artefact unreachable here. Source already targets 3.12; the shim never ships. | 0.5 | **HIGH** | Before G1 | OPEN |
+| TD-03 | Remove `UP047` suppression (PEP 695 type parameters) | Adopting the syntax now would make the module unparseable by the verification interpreter, i.e. untested. | 0.1 | MEDIUM | With TD-02 | OPEN |
+| TD-04 | Remove `asyncio.TimeoutError` from the timeout except clause | Redundant on 3.12; present so the sandbox exercises the same branch rather than skipping it. | 0.1 | LOW | With TD-02 | OPEN |
+| TD-05 | Pin container images by `@sha256:` digest | Tags are mutable, but no deployed environment exists yet, so drift has no consequence today. | 0.5 | MEDIUM | S10 (first deploy) | OPEN |
+| TD-06 | Value-based redaction cannot see a transformed secret (base64, truncated, in a URL) | No general solution exists. Key-matching is the first net; this is the second. Cost of chasing it exceeds the residual risk. | — | MEDIUM | — | **ACCEPTED** |
+| TD-07 | `contextvars` do not reach threads or process pools | Intrinsic to the mechanism. `copy_context_into` is the remedy and is tested; the limitation is asserted so it is documented behaviour. | — | LOW | — | **ACCEPTED** |
+| TD-08 | Startup-to-ready and RSS budgets unmeasured | Both are meaningless until there is a real dependency to connect to. | 0.5 | MEDIUM | S04 | OPEN |
+| TD-09 | Trace context does not cross process boundaries | Requires the event envelope, which does not exist until S05. | 1.0 | MEDIUM | S05 | OPEN |
+| TD-10 | `/ready` has no result caching | Premature without evidence of probe pressure. Adding a cache would also add a staleness question nobody has asked yet. | 0.5 | LOW | S41 | OPEN |
+| TD-11 | `configure_logging` carries a `PLR0913` suppression | Six independent keyword-only settings; grouping them into an object adds a type without adding meaning. | — | LOW | — | **ACCEPTED** |
+
+Eight open, three accepted. TD-01 and TD-02 are the only `HIGH` items and share
+a single trigger: access to a Python 3.12 host.
 
 ### How this could silently be wrong
 
-Recorded now, before implementation, because these are the failure modes the
-design must be built to expose:
-
-- **Value-based redaction is best-effort.** A secret that is transformed before
-  logging — base64-encoded, truncated, embedded in a URL — will not match the
-  registry. Mitigation is that key-based redaction covers the common paths and
-  that no code should be logging credentials at all; the value scan is a second
-  net, not the first.
-- **`contextvars` do not propagate into threads or process pools.** Any code that
-  hands work to a `ThreadPoolExecutor` loses correlation silently. The bootstrap
-  must provide a context-copying wrapper, and its absence will be invisible until
-  someone reads a log without an ID.
-- **Fail-fast configuration only covers what is declared.** A field with a
-  plausible default that is wrong in production fails nothing. This is why FR-04
-  exists — production must actively reject development-shaped values, not merely
-  accept whatever it is given.
-- **A no-op tracer is indistinguishable from a broken one.** If the SDK is
-  misconfigured, spans vanish quietly. The startup banner must state whether
-  tracing is active, so the absence of traces is diagnosable.
+- **Value-based redaction is best-effort** (TD-06). A transformed secret escapes.
+- **`contextvars` do not propagate into threads** (TD-07). Work handed to a pool
+  loses correlation with no error.
+- **Fail-fast covers only what is declared.** A field with a plausible but wrong
+  default fails nothing — which is why FR-04 requires deployed environments to
+  *reject* development-shaped values rather than merely accept what they are given.
+- **A no-op tracer is indistinguishable from a broken one.** Mitigated by the
+  startup banner reporting `tracing_active`, but only if someone reads it.
+- **Benchmarks measure a 3.10 interpreter.** Figures are conservative rather than
+  wrong, but the *ratios* between operations could shift on 3.12.

@@ -8,6 +8,7 @@ each case the credential reaches a sink through a path no policy anticipated
 
 from __future__ import annotations
 
+import copy
 import json
 import pickle
 
@@ -59,8 +60,22 @@ def test_reveal_is_the_only_accessor() -> None:
 @pytest.mark.unit
 def test_a_secret_cannot_be_pickled() -> None:
     """Pickling writes a credential to disk or onto a queue."""
-    with pytest.raises(TypeError, match="cannot be serialised"):
+    with pytest.raises(TypeError, match="cannot be pickled"):
         pickle.dumps(SecretValue(SECRET))
+
+
+@pytest.mark.unit
+def test_a_secret_can_be_copied_in_memory() -> None:
+    """Copying must work, or a secret cannot be a validated default.
+
+    Pickling is blocked because it writes the value somewhere; an in-memory copy
+    never leaves the process, so restricting it would be cost without benefit.
+    """
+    original = SecretValue(SECRET)
+
+    assert copy.copy(original) == original
+    assert copy.deepcopy(original) == original
+    assert str(copy.deepcopy(original)) == REDACTED_PLACEHOLDER
 
 
 @pytest.mark.unit
