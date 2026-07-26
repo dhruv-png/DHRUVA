@@ -1,0 +1,167 @@
+# D.H.R.U.V.A backend - build, dependency and quality-tool configuration.
+# Governing document: docs/DHRUVA_MASTER_PROJECT_PLAN.md v1.1
+# Toolchain decisions: ADR-024 (strict typing), section 13.3.
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dhruva"
+description = "Dynamic Heuristic Regime Understanding & Volatility Analytics"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "drew" }]
+dynamic = ["version"]
+classifiers = [
+  "Private :: Do Not Upload",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+# Runtime dependencies are deliberately empty at S01. The repository skeleton
+# has no runtime behaviour to depend on anything. FastAPI, SQLAlchemy, Pydantic,
+# structlog and Celery arrive with the subsystems that need them (S02, S04, S05),
+# each justified in that subsystem's design document.
+dependencies = []
+
+[project.scripts]
+dhruva-check-boundaries = "dhruva.tooling.boundaries:main"
+dhruva-adr-guard = "dhruva.tooling.adr_guard:main"
+
+[dependency-groups]
+dev = [
+  "ruff==0.16.0",
+  "mypy==1.18.2",
+  "import-linter==2.4",
+  "pytest==8.4.2",
+  "pytest-cov==7.0.0",
+  "pytest-randomly==4.0.1",
+  "hypothesis==6.140.3",
+  "pip-audit==2.9.0",
+]
+
+[tool.hatch.version]
+path = "src/dhruva/__about__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dhruva"]
+
+# --------------------------------------------------------------------------- #
+# ruff - linting and formatting (section 13.3)
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = [".venv*", "*.egg-info"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",    # pycodestyle
+  "F",         # pyflakes
+  "I",         # isort
+  "N",         # pep8-naming
+  "UP",        # pyupgrade
+  "B",         # bugbear
+  "A",         # builtins shadowing
+  "C4",        # comprehensions
+  "DTZ",       # flake8-datetimez - enforces ADR-006 (no naive datetimes)
+  "T20",       # no print statements
+  "PT",        # pytest style
+  "RET",       # return consistency
+  "SIM",       # simplify
+  "TID",       # tidy imports
+  "ARG",       # unused arguments
+  "PTH",       # use pathlib
+  "ERA",       # commented-out code
+  "PL",        # pylint subset
+  "TRY",       # exception anti-patterns
+  "RUF",       # ruff-specific
+  "S",         # bandit security
+  "ASYNC",     # async anti-patterns
+  "FIX",       # no FIXME/TODO/XXX left in the tree (Golden Rules)
+  "D",         # pydocstyle
+]
+ignore = [
+  "D203",   # conflicts with D211
+  "D213",   # conflicts with D212
+  "TRY003", # long messages in raise are fine and are more useful than terse ones
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+  "S101",    # assert is the point of a test
+  "PLR2004", # magic values are readable in assertions
+  "D104",    # package docstrings not required for test packages
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# --------------------------------------------------------------------------- #
+# mypy - ADR-024: strict, no gradual-typing escape hatch
+# --------------------------------------------------------------------------- #
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+mypy_path = "src"
+strict = true
+warn_unreachable = true
+warn_no_return = true
+enable_error_code = [
+  "redundant-expr",
+  "possibly-undefined",
+  "truthy-bool",
+  "ignore-without-code",
+  "unused-awaitable",
+]
+# ADR-024: a bare `# type: ignore` is banned; `ignore-without-code` above turns
+# one into an error. Any ignore must name the code and link an issue.
+
+# --------------------------------------------------------------------------- #
+# pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "-ra",
+  "--import-mode=importlib",
+]
+markers = [
+  "unit: pure logic, no I/O, milliseconds",
+  "integration: real Postgres/Redis via testcontainers",
+  "contract: external adapter contract tests against recorded fixtures",
+  "e2e: full journey through the API",
+  "slow: takes more than one second",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+
+# --------------------------------------------------------------------------- #
+# coverage - DoD section 10.1
+# --------------------------------------------------------------------------- #
+[tool.coverage.run]
+source = ["dhruva"]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 90
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@(abc\\.)?abstractmethod",
+]

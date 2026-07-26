@@ -1,0 +1,61 @@
+# Fast local enforcement of the same gates CI runs (plan section 13.3).
+# Install once with: make hooks
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-check
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run --project backend mypy
+        language: system
+        types: [python]
+        files: ^backend/
+        pass_filenames: false
+
+      - id: import-linter
+        name: import-linter (Clean Architecture layers)
+        entry: uv run --project backend lint-imports --config backend/.importlinter
+        language: system
+        pass_filenames: false
+        files: ^backend/src/
+
+      - id: context-boundaries
+        name: bounded-context boundaries (plan section 5)
+        entry: uv run --project backend dhruva-check-boundaries
+        language: system
+        pass_filenames: false
+        files: ^backend/src/
+
+      - id: adr-guard
+        name: ADR integrity and immutability (ADR-027)
+        entry: uv run --project backend dhruva-adr-guard
+        language: system
+        pass_filenames: false
+        files: ^docs/adr/
