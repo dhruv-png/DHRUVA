@@ -19,6 +19,12 @@ Nothing yet.
 
 ## [0.3.0] — 2026-07-26 — S03 Domain Primitives & Shared Kernel
 
+> **Approved with one documented exception.** Mutation testing (ADR-049) did not
+> execute in the build environment and is tracked as **TD-12, HIGH, OPEN**. It
+> must be run on the canonical Python 3.12 environment before G1, producing a
+> real score and surviving-mutant analysis, with ADR-049 updated if the toolchain
+> changes. The debt item closes only after successful verification.
+
 The vocabulary every later subsystem speaks. Forty-three subsystems remain and
 every one will import from here, so this is the layer where correctness is worth
 the most and churn costs the most.
@@ -71,10 +77,17 @@ ADR-048 · ADR-049 · ADR-050. **The shared kernel is API-stable from this relea
 
 ### Known limitations
 
-Mutation testing did not execute in the build environment and is recorded as
-TD-12 at HIGH priority. Two performance budgets miss marginally (25% and 9%),
-both measured on Python 3.10 against a 3.12 target, both recorded rather than
-dropped.
+Mutation testing did not execute and is recorded as TD-12 (HIGH, OPEN). Two
+performance budgets miss marginally — `Money` construction by 25% and the
+million-addition aggregate by 9% — both measured on Python 3.10 against a 3.12
+target, both accepted as measured debt (TD-13, TD-14) rather than hidden.
+
+### Engineering lessons
+
+`docs/LESSONS.md` records what the mutation-harness investigation cost to learn:
+property-test shrinking dominates mutation runtime, `ast.unparse` silently
+discards comments, and a source-rewriting tool must be crash-safe by
+construction rather than by cleanup discipline.
 
 ## [0.2.0] — 2026-07-26 — S02 Core Runtime
 
