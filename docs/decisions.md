@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**49 decisions — 48 accepted, 1 superseded.** Records are immutable once accepted
+**50 decisions — 49 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -58,6 +58,7 @@ should not have been made gets caught.
 | [ADR-047](ADR-047-exceptions-only-no-result-type.md) | Exceptions are the single error-signalling mechanism; no Result type | Accepted |
 | [ADR-048](ADR-048-no-float-in-the-monetary-modules.md) | Boundary rule R6: no float in the monetary modules | Accepted |
 | [ADR-049](ADR-049-mutation-testing-for-the-financial-primitives.md) | Mutation testing for the financial primitives | Accepted |
+| [ADR-050](ADR-050-shared-kernel-is-api-stable.md) | The shared kernel is API-stable from S03 | Accepted |
 
 ## Reading order for someone new
 

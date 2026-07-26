@@ -17,6 +17,65 @@ capital (ADR-026, ADR-029).
 
 Nothing yet.
 
+## [0.3.0] — 2026-07-26 — S03 Domain Primitives & Shared Kernel
+
+The vocabulary every later subsystem speaks. Forty-three subsystems remain and
+every one will import from here, so this is the layer where correctness is worth
+the most and churn costs the most.
+
+### Added
+
+- **`Money`** — an exact integer count of minor units, never a float. Exact
+  addition, lossless allocation by largest remainder, rate application with a
+  named policy.
+- **`Price`** — an integer at a **fixed 8-decimal scale**. This is the change
+  that matters most: NSE currency derivatives tick at ₹0.0025, and a price at
+  paise scale would have silently rounded every one of them, invisibly, until a
+  position failed to reconcile.
+- **`Quantity` / `SignedQuantity` / `Side`** — quantity is unsigned; direction
+  never lives in a sign. `lots()` requires an explicit `lot_size`, because the
+  gap between "3 lots" and "3 contracts" is a 25-fold position error.
+- **`Ratio`** — one type with percent, basis-point and fraction constructors.
+- **`RoundingPolicy`** — named for the market rule, not the mathematical mode.
+  `STT_NEAREST_RUPEE` can be checked against a SEBI circular; `ROUND_HALF_UP`
+  cannot. `CONSERVATIVE_TO_TRADER` exists because optimistic cost estimates are
+  how a strategy appears profitable and is not.
+- **`TradingDay` / `TradingCalendar` / `TradingSession`** — a trading day cannot
+  be constructed without a calendar, and there is no `timedelta` arithmetic.
+  NSE moved expiry from Thursday to Tuesday on 2025-09-01; a backtest spanning
+  that date that computes expiry by date arithmetic is wrong and nothing flags it.
+- **`Clock`** — injected, never read from the wall clock, forward-only when frozen.
+- **`InstrumentId` / `AccountId`** — UUIDs we mint. A test walks the module AST
+  and fails if any executable reference to a broker identifier appears.
+- **`DomainEvent`** — facts, not commands. Transport metadata belongs to S05's
+  envelope, so a fact means the same thing replayed as it did on the wire.
+- **`DateRange` / `TimeRange`** — half-open, so consecutive ranges tile without
+  double-counting a boundary.
+- **Boundary rule R6** — no float under `shared/money`, in any of its three
+  shapes, while permitting the `isinstance` guards that reject floats.
+- **`docs/DOMAIN.md`** — 719 lines explaining *why*, with a domain map and twelve
+  worked examples of financial bugs this design prevents.
+
+### Changed
+
+- Hot-path guards rewritten from `invariant(cond, msg, **ctx)` to explicit
+  branches. The helper evaluates its arguments eagerly, so every addition was
+  building an f-string and two `str()` calls before checking anything.
+  **`Money + Money`: 1.856 µs → 0.456 µs. One million additions: 2.007 s →
+  0.545 s.** Invisible to every gate except a measured budget.
+
+### Decisions
+
+ADR-042 (supersedes ADR-005) · ADR-043 · ADR-044 · ADR-045 · ADR-046 · ADR-047 ·
+ADR-048 · ADR-049 · ADR-050. **The shared kernel is API-stable from this release.**
+
+### Known limitations
+
+Mutation testing did not execute in the build environment and is recorded as
+TD-12 at HIGH priority. Two performance budgets miss marginally (25% and 9%),
+both measured on Python 3.10 against a 3.12 target, both recorded rather than
+dropped.
+
 ## [0.2.0] — 2026-07-26 — S02 Core Runtime
 
 The platform's cross-cutting capabilities, and its first runtime component.
@@ -144,6 +203,7 @@ Documented in full in `docs/subsystems/S01-repository-tooling-ci.md`:
 - The ADR guard hashes bodies, not meaning. A new ADR that contradicts an old one
   without superseding it passes every check.
 
-[Unreleased]: https://github.com/dhruv-png/DHRUVA/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dhruv-png/DHRUVA/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/dhruv-png/DHRUVA/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dhruv-png/DHRUVA/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dhruv-png/DHRUVA/releases/tag/v0.1.0

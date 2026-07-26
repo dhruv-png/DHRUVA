@@ -47,5 +47,6 @@
   "ADR-046-trading-day-requires-a-calendar.md": "16f11e5d8f83cf2e7f94ac656d98aa6e5e63372bbdb452a16dc30fbce299e195",
   "ADR-047-exceptions-only-no-result-type.md": "43c36f3c4eafb29b4c6a7ffa341e86827dbc6971053c72fca41a51117823b992",
   "ADR-048-no-float-in-the-monetary-modules.md": "44d3bb48a504224819cb984a210e5e26489d43d6281e0bd696f00d1f0eac784d",
-  "ADR-049-mutation-testing-for-the-financial-primitives.md": "5fe7ad24dd394101e94904887bdc6f05ed6c4deea5015ac7c6093420dbc241b1"
+  "ADR-049-mutation-testing-for-the-financial-primitives.md": "5fe7ad24dd394101e94904887bdc6f05ed6c4deea5015ac7c6093420dbc241b1",
+  "ADR-050-shared-kernel-is-api-stable.md": "59223372e8e661fdd89082215da7357d7652f1669fc06f67bbfd553ddbbb3e1f"
 }

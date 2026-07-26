@@ -10,7 +10,7 @@
 | Complexity | M → **L** (see §2.4) |
 | Estimate | 5 → **7 sessions** |
 | Risk | **CRIT** — see §1.2 |
-| Status | **STEP 1 COMPLETE — awaiting Design Review (Step 2). No implementation started.** |
+| Status | **COMPLETE — awaiting final approval** |
 
 ---
 
@@ -305,72 +305,152 @@ backend/tests/unit/shared/time/
 backend/tests/benchmarks/test_primitives.py
 ```
 
-## 8. Proposed Architecture Decisions — FOR DESIGN REVIEW
+## 8. Architecture Decisions (all approved at Design Review)
 
-**No implementation begins until these are approved.** One supersedes an
-approved ADR and is flagged accordingly.
+ADR-042 (money as integer minor units, superseding ADR-005) · ADR-043
+(dimensional typing) · ADR-044 (explicit named rounding) · ADR-045 (unsigned
+quantity, explicit side) · ADR-046 (calendar-verified trading day) · ADR-047
+(exceptions only, no Result) · ADR-048 (rule R6, no float in monetary modules) ·
+ADR-049 (mutation testing) · ADR-050 (shared kernel API-stable).
 
-### ADR-042 — Money is an integer count of minor units *(supersedes ADR-005)*
+## 9. Measured Benchmark Results (ADR-036)
 
-**Proposed.** `Money` holds `int` minor units plus a `Currency`. `Decimal` is a
-parsing and formatting type only. `Price` holds `int` micro-units at a fixed
-6-decimal scale.
+**Environment.** Intel Core i5-10300H @ 2.50 GHz, 2 vCPU, 3 GB RAM, Linux
+6.8.0, **CPython 3.10.12**. The target runtime is 3.12; 3.11 and 3.12 carry
+substantial interpreter speedups on exactly this kind of small-object arithmetic,
+so every figure below is **conservative**.
 
-*Why it supersedes rather than amends:* ADR-005 states `Money` wraps `Decimal`,
-and ADR-027 forbids editing an accepted record. ADR-042 restates ADR-005's still
-valid clauses — no float, `BIGINT` minor units in storage, `Money` as the single
-monetary type — so nothing is lost, and ADR-005 becomes
-`Superseded by ADR-042` with its body intact as history.
+**Methodology.** Microsecond-scale operations use best-of-batched-means: an inner
+loop of N calls timed once, repeated R times, minimum taken. A per-iteration
+`perf_counter` costs a meaningful fraction of what it measures, and a
+per-iteration p99 reports the garbage collector rather than the code. The
+million-addition figure is a single wall-clock measurement and also asserts the
+arithmetic is correct, so a fast wrong answer cannot pass.
 
-*What forced it:* `Decimal`'s thread-local context makes results
-environment-dependent, which is a determinism defect. And paise alone cannot
-represent a currency-derivative tick of ₹0.0025.
-
-### ADR-043 — Dimensional typing: Money, Price, Quantity and Ratio are distinct
-
-**Proposed.** Operations are defined only where they are dimensionally
-meaningful. `Money × Money` and `Money + Price` do not exist.
-
-### ADR-044 — Rounding is always explicit and named after the rule it implements
-
-**Proposed.** No default rounding mode anywhere. Policies named for the Indian
-market rule they encode, including `CONSERVATIVE_TO_TRADER` for pre-trade
-estimates.
-
-### ADR-045 — Quantity is unsigned; direction is a separate `Side`
-
-**Proposed.** `Quantity` rejects negatives. `Side` is an explicit enum.
-`SignedQuantity` exists solely for position deltas. Eliminates the
-"negative quantity means sell" convention, which is the kind of implicit rule
-that survives right up until someone forgets it.
-
-### ADR-046 — `TradingDay` cannot be constructed without a calendar
-
-**Proposed.** The `TradingCalendar` port lives in the shared kernel; S08
-implements it. No `timedelta` arithmetic on trading days.
-
-### ADR-047 — Exceptions are the single error-signalling mechanism; no `Result` type
-
-**Proposed.** Removes `Result` from S03's scope as listed in the plan. Two
-idioms would mean a boundary question in every review for years.
-
-### ADR-048 — Boundary rule R6: no `float` in the monetary modules
-
-**Proposed.** The boundary checker fails the build if any module under
-`dhruva.shared.money` references `float` — as an annotation, a call, or a
-literal. Analytics may legitimately use floats for implied volatility and greeks;
-settled cash never may.
-
-## 9. Open Questions for the Product Owner
-
-| # | Question | Why it matters now | My recommendation |
+| Budget | Target | Measured | Status |
 |---|---|---|---|
-| Q1 | Should `Price` carry 6 decimal places universally, or a per-instrument scale? | Per-instrument is more precise but makes `Price` depend on S07, inverting the dependency. | **Fixed 6 dp.** Covers every Indian instrument with headroom; tick-size validation stays in S07 where the metadata lives. |
-| Q2 | Should `Money` be currency-parameterised in the type system (`Money[INR]`)? | Catches cross-currency errors at type-check time rather than runtime. | **No.** No multi-currency trading is planned; the generic machinery would cost readability permanently for a runtime check that already exists. |
-| Q3 | Should `Quantity` know about lot sizes? | F&O trades in lots; a bare integer invites "42 contracts" where 42 lots was meant. | **No, but** `Quantity` gets a `lots(n, lot_size)` named constructor so the conversion is explicit and greppable. Lot size itself stays in S07. |
+| `Money + Money` | < 0.50 µs | **0.456 µs** | PASS |
+| `Money × int` | < 0.50 µs | **0.455 µs** | PASS |
+| `Money` construction | < 0.30 µs | **0.374 µs** | **MISS (25%)** |
+| `Price × Quantity → Money` | < 2.00 µs | **1.149 µs** | PASS |
+| `Money.apply(Ratio)` | < 10.00 µs | **2.678 µs** | PASS |
+| `Money.allocate`, 10 weights | < 20.00 µs | **8.215 µs** | PASS |
+| `Money.parse` | < 5.00 µs | **2.230 µs** | PASS |
+| `TradingDay` compare + hash | < 1.20 µs | **0.265 µs** | PASS |
+| `SystemClock.now()` | < 1.00 µs | **0.293 µs** | PASS |
+| `FrozenClock.now()` | < 1.00 µs | **0.055 µs** | PASS |
+| `InstrumentId.deterministic` | < 10.00 µs | **5.851 µs** | PASS |
+| 1,000,000 `Money` additions | < 0.50 s | **0.545 s** | **MISS (9%)** |
+| `sizeof(Money)` | ≤ 64 B | **48 B** | PASS |
 
----
+**11 of 13 pass. Two miss, both marginally, both recorded rather than dropped
+(ADR-036).** They are the same measurement seen twice: construction dominates the
+million-addition loop, since each addition builds a `Money`.
 
-*Step 1 complete. Steps 3 onward — implementation, review, testing, optimisation,
-documentation, git history, summaries, debt register, lessons learned — follow
-Design Review approval.*
+### What the benchmarks found
+
+The first run was not marginal — it was **3.7× over budget**, and the cause was a
+real defect rather than an unlucky threshold.
+
+`invariant(condition, message, **context)` evaluates every argument eagerly. On
+the addition path that meant building an f-string and calling `str()` twice on
+**every single addition**, before checking anything. Rewriting the hot-path guards
+as explicit `if ... raise` branches, and moving the failure message into a cold
+method, took `Money + Money` from **1.856 µs to 0.456 µs** and the million-add
+loop from **2.007 s to 0.545 s**.
+
+That defect was invisible to every other gate. Coverage was 99%, types were
+clean, the architecture conformed, and the tests all passed. Only a measured
+budget surfaced it — which is the argument for ADR-036 in a single example.
+
+## 10. Mutation Testing (ADR-049) — NOT COMPLETED
+
+**Status: blocked in this environment. No score is reported, because no honest
+score is available.**
+
+Three attempts, each blocked for a different reason:
+
+| Attempt | Outcome |
+|---|---|
+| `mutmut` 2.5.1 | Depends on `parso`, which cannot parse the `match` statement in `rounding.py`. 15 parse errors. Structurally blocked. |
+| `mutmut` 3.6.0 | Parses correctly, but executes tests from a copied `mutants/` directory in a way that conflicts with the Python 3.10 compatibility shim this sandbox requires. |
+| Purpose-built harness | Written and verified working — individual mutants are correctly killed — but each mutant requires a full test-suite run, and the environment enforces a 45-second ceiling per command with background processes terminated. |
+
+Two genuine findings came out of the attempt, and both are kept:
+
+1. **Hypothesis shrinking dominates mutation cost.** A killed mutant makes a
+   property test *fail*, and Hypothesis then spends seconds minimising the
+   counterexample — valuable for a human, pure overhead for a harness that only
+   needs an exit code. Excluding the shrink phase in the `fast` profile cut
+   per-mutant cost by more than an order of magnitude.
+2. **An in-place mutation harness is dangerous.** The first version wrote mutants
+   over the original source with a `try/finally` restore. A timeout killed the
+   process before the `finally` ran, leaving a mutated, comment-stripped
+   `money.py` on disk. It was caught within minutes by a failing test and
+   recovered from git. The harness now mutates a **scratch copy of the tree**,
+   which makes that failure mode impossible rather than merely unlikely.
+
+**To run it on a machine without a command-time ceiling:**
+
+```bash
+cd DHRUVA
+export PYTHONPATH="$PWD/backend/src"
+python tools/mutation_harness.py \
+    --package src/dhruva/shared/money \
+    --tests tests/unit/shared/money/ --sample 40
+python tools/mutation_harness.py \
+    --package src/dhruva/shared/time \
+    --tests tests/unit/shared/time/ --sample 40
+```
+
+Expected runtime: roughly 10–20 minutes per package at `--sample 40`; a couple of
+hours exhaustive. Once a Python 3.12 host is available, `mutmut` replaces the
+harness and the harness is deleted — it exists only because the intended tool
+cannot run here.
+
+**This is the one Definition-of-Done item S03 does not satisfy.** It is recorded
+as TD-12 at HIGH priority and is a stated exception in the approval request rather
+than a silent omission.
+
+## 11. Documentation
+
+`docs/DOMAIN.md` (719 lines) explains the reasoning behind every primitive,
+including a Mermaid domain map and twelve worked examples of financial
+programming mistakes this design prevents. ADR-042 … ADR-050 written; ADR-005
+marked superseded; `docs/decisions.md` regenerated at 50 records.
+
+## 12. Technical Debt Register (ADR-041)
+
+| # | Item | Priority | Risk | Impact if unresolved | Trigger for removal | Planned subsystem |
+|---|---|---|---|---|---|---|
+| TD-12 | Mutation testing not executed | **HIGH** | Test suite may assert less than coverage implies | The primitives forty subsystems trust are unverified against the one gate designed to check assertions | A machine without a per-command time ceiling | Before **G0** sign-off |
+| TD-13 | `Money` construction 0.374 µs vs 0.30 µs budget | MEDIUM | Low | ~25% over on the hottest constructor; compounds in long backtests | Re-measure on Python 3.12 | S04 |
+| TD-14 | 1M additions 0.545 s vs 0.50 s budget | MEDIUM | Low | Same cause as TD-13, seen in aggregate | Re-measure on Python 3.12 | S04 |
+| TD-01 | Canonical `uv.lock` not generated | HIGH | Supply chain | Hash-pinned lockfiles give the same guarantee meanwhile | Python 3.12 host | Before G1 |
+| TD-02 | Validation runs on Python 3.10 with a shim | HIGH | Correctness | Source targets 3.12; behaviour differences would not be caught | Python 3.12 host | Before G1 |
+| TD-15 | `TradingDay` bare constructor is reachable | LOW | Misuse | Calendar implementations need it; `of()` is the documented route | A language mechanism for friend-scoped construction | **ACCEPTED** |
+| TD-16 | `Ratio` uses `Decimal`, not integers | LOW | Determinism | Decimal context sensitivity remains in the rate path, applied per trade rather than per tick | Evidence of a discrepancy or a hot-path need | **ACCEPTED** |
+| TD-17 | Currency conversion unimplemented | LOW | Scope | Single-currency platform; `Currency` exists so the schema is ready | Multi-currency portfolio requirement | **ACCEPTED** |
+| TD-05 | Container images not digest-pinned | MEDIUM | Supply chain | Mutable tags can drift | First deployed environment | S10 |
+| TD-08 | Startup-to-ready and RSS budgets unmeasured | MEDIUM | Low | Meaningless until a database connection exists | Real dependency to connect to | S04 |
+| TD-09 | Trace context does not cross process boundaries | MEDIUM | Observability | Correlation breaks at the bus | Event envelope exists | S05 |
+
+**Eleven open, four accepted.** Three HIGH items — TD-01, TD-02 and TD-12 — share
+a single trigger: access to a machine that is not this sandbox.
+
+### How this could silently be wrong
+
+- **Mutation testing has not run** (TD-12). Every claim about test *quality* in
+  this subsystem rests on coverage and on reading, neither of which detects a
+  test that executes without asserting.
+- **Benchmarks measure a 3.10 interpreter.** The absolute figures are
+  conservative, but the *ratios* between operations could shift on 3.12, and an
+  optimisation that helps here might not help there.
+- **`Decimal` remains in the rate path.** ADR-042 removed context sensitivity
+  from `Money`; `Ratio` still has it. Applied per trade rather than per tick, so
+  the exposure is small — but it is not zero, and it is recorded rather than
+  forgotten.
+- **The dimensional model is only as good as its adoption.** Nothing forces a
+  future subsystem to use `Money` rather than an `int` of paise. Rule R6 bans
+  floats inside the kernel; it does not compel the rest of the platform to use
+  the kernel.
