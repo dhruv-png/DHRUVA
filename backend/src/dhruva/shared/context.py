@@ -25,9 +25,8 @@ identifier on it.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar, copy_context
+from collections.abc import Callable
+from contextvars import ContextVar, Token, copy_context
 from dataclasses import dataclass
 from typing import Final, ParamSpec, TypeVar
 
@@ -114,14 +113,67 @@ def current_correlation_id() -> str | None:
     return _CORRELATION_ID.get()
 
 
-@contextmanager
+class _CorrelationBinding:
+    """Context manager that binds and restores the three identifiers.
+
+    Written as a class rather than as a ``@contextmanager`` generator for
+    measured reasons: the generator machinery dominated the cost of a bind, and
+    this is on the hot path of every request and every tick batch (ADR-036
+    budget, S02 design section 3.5). The class form roughly halves it.
+    """
+
+    __slots__ = ("_account", "_causation", "_context", "_correlation", "_tokens")
+
+    def __init__(
+        self,
+        correlation_id: str | None,
+        causation_id: str | None,
+        account_id: str | None,
+        *,
+        generate_missing: bool,
+    ) -> None:
+        """Resolve the values to bind, inheriting any already in force."""
+        resolved = correlation_id or _CORRELATION_ID.get()
+        if resolved is None and generate_missing:
+            resolved = new_correlation_id()
+        self._correlation = resolved
+        self._causation = causation_id or _CAUSATION_ID.get()
+        self._account = account_id or _ACCOUNT_ID.get()
+        self._tokens: tuple[Token[str | None], ...] = ()
+        self._context = CorrelationContext(
+            correlation_id=self._correlation,
+            causation_id=self._causation,
+            account_id=self._account,
+        )
+
+    def __enter__(self) -> CorrelationContext:
+        """Bind the identifiers and return the resulting context."""
+        self._tokens = (
+            _CORRELATION_ID.set(self._correlation),
+            _CAUSATION_ID.set(self._causation),
+            _ACCOUNT_ID.set(self._account),
+        )
+        return self._context
+
+    def __exit__(self, *_exc_info: object) -> None:
+        """Restore every variable to its prior value.
+
+        Restoration is what stops one request's identifiers leaking into the
+        next on a reused worker, and it must happen even when the block raised.
+        """
+        correlation_token, causation_token, account_token = self._tokens
+        _ACCOUNT_ID.reset(account_token)
+        _CAUSATION_ID.reset(causation_token)
+        _CORRELATION_ID.reset(correlation_token)
+
+
 def bind_correlation(
     *,
     correlation_id: str | None = None,
     causation_id: str | None = None,
     account_id: str | None = None,
     generate_missing: bool = True,
-) -> Iterator[CorrelationContext]:
+) -> _CorrelationBinding:
     """Bind correlation identifiers for the duration of the block.
 
     Parameters
@@ -138,10 +190,10 @@ def bind_correlation(
         already bound. Defaults to ``True``: at a process edge, work without an
         identifier is work that cannot be traced.
 
-    Yields
-    ------
-    CorrelationContext
-        The identifiers now in force.
+    Returns
+    -------
+    _CorrelationBinding
+        A context manager yielding the identifiers now in force.
 
     Notes
     -----
@@ -150,26 +202,11 @@ def bind_correlation(
     resetting it -- an inner operation adding a ``causation_id`` keeps the outer
     ``correlation_id``, which is the behaviour that makes end-to-end tracing work.
 
-    On exit, every variable is restored to its prior value. That restoration is
-    what stops one request's identifiers leaking into the next on a reused worker.
+    On exit, every variable is restored to its prior value.
     """
-    existing = current_context()
-    resolved_correlation = correlation_id or existing.correlation_id
-    if resolved_correlation is None and generate_missing:
-        resolved_correlation = new_correlation_id()
-
-    tokens = (
-        _CORRELATION_ID.set(resolved_correlation),
-        _CAUSATION_ID.set(causation_id or existing.causation_id),
-        _ACCOUNT_ID.set(account_id or existing.account_id),
+    return _CorrelationBinding(
+        correlation_id, causation_id, account_id, generate_missing=generate_missing
     )
-    try:
-        yield current_context()
-    finally:
-        correlation_token, causation_token, account_token = tokens
-        _ACCOUNT_ID.reset(account_token)
-        _CAUSATION_ID.reset(causation_token)
-        _CORRELATION_ID.reset(correlation_token)
 
 
 def copy_context_into(func: Callable[P, R]) -> Callable[P, R]:  # noqa: UP047
