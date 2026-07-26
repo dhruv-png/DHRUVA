@@ -28,5 +28,16 @@
   "ADR-027-every-major-architectural-decision-is-recorded-as.md": "bee5e2a8766f38e5c78e34ba0241be06c960ffa8b339c5b9f327c92da04ba8c5",
   "ADR-028-mcp-first-delivery-execution-subsystems-are-gated.md": "53592f7104bea974cd79e106a9525869b85a8169a5cb41f6eaa6379b286709b2",
   "ADR-029-version-control-is-part-of-the-definition-of.md": "06d9cdd7014d6a63da5c127bc239546e79ea9a646be05187fc1792864dcdfef4",
-  "ADR-030-documentation-is-updated-in-the-same-commit-as.md": "be61127fe015e16272d59b45e2a6354673bbe60c6f238e44a0dc5ae35a4c9862"
+  "ADR-030-documentation-is-updated-in-the-same-commit-as.md": "be61127fe015e16272d59b45e2a6354673bbe60c6f238e44a0dc5ae35a4c9862",
+  "ADR-031-process-configuration-lives-in-the-shared-kernel.md": "24b70400a5dd71472820837b62cfd069525952da019009875f2324f6115a8a97",
+  "ADR-032-reproducible-builds.md": "07ffbc2cf417091b63fc1dd4166daa0cf9eafdd15463b805576cf6a38b7fb6b5",
+  "ADR-033-no-secret-exists-in-the-repository.md": "29ecda20a2f463cdb5f8a57f198cb11cd08ec2f23cf7ffde8aaaefe0b1941fe1",
+  "ADR-034-release-governance.md": "5e88417c77ca78aebb661291658e7b80440f2d2c6a9ae3316b3b6179aa52a920",
+  "ADR-035-observability-is-a-first-class-feature.md": "9c97018307250bd929c1d6d15f620e9ab96194ab1a80a0ce0f5b976e9bc6ee6c",
+  "ADR-036-performance-budgets-declared-before-implementation.md": "803828ce8ae14303372f966db067d357a47d1a80c5cc6b1a7e41710658a8fd13",
+  "ADR-037-log-redaction-is-a-tested-control.md": "54eb119580e29ed8a013ff1b781bf470ae11c45376a969df78c5beeceeb6b697",
+  "ADR-038-errors-are-a-closed-taxonomy-with-stable-codes.md": "d5f1b62db69ba93b8117ddfbb2b741a42e3f328b0956f09a6cff3e16e59116b6",
+  "ADR-039-correlation-propagates-through-contextvars.md": "baa85db76f8ced24b26433c0ed190fe17b5af67e2e311798e6a91770dd49ef12",
+  "ADR-040-opentelemetry-api-in-libraries-sdk-at-roots.md": "1476026f1fb3329d19b915ef462b989e75339715d38f18c423d67dbec28a9d3d",
+  "ADR-041-technical-debt-register.md": "5184f1bd83390e3666af7b473b29c875b57e1997cfa628d940e7079f96ed1050"
 }

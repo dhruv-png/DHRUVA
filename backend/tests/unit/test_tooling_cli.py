@@ -152,6 +152,60 @@ def test_importing_a_bare_context_package_is_only_a_matrix_question(fake_repo: P
     assert {v.rule for v in violations} == {"R2"}
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os\n\nX = os.getenv('DHRUVA_DEBUG')\n",
+        "import os\n\nX = os.environ['DHRUVA_DEBUG']\n",
+        "from os import getenv\n\nX = getenv('DHRUVA_DEBUG')\n",
+        "from os import environ\n",
+        "import dotenv\n",
+        "from dotenv import load_dotenv\n",
+    ],
+)
+def test_r5_detects_every_way_of_reading_the_environment(fake_repo: Path, source: str) -> None:
+    """ADR-031. A rule evaded by changing spelling is not a rule."""
+    _module(fake_repo, "dhruva.contexts.analytics.application.compute", source)
+
+    violations = boundaries.check_tree(fake_repo / "backend" / "src")
+
+    assert [v.rule for v in violations] == ["R5"]
+    assert "shared.config" in violations[0].message
+
+
+@pytest.mark.unit
+def test_r5_permits_the_configuration_module_itself(fake_repo: Path) -> None:
+    """Something has to read the environment; exactly one module may."""
+    _module(fake_repo, "dhruva.shared.config.settings", "import os\n\nX = os.environ\n")
+
+    assert boundaries.check_tree(fake_repo / "backend" / "src") == []
+
+
+@pytest.mark.unit
+def test_r5_applies_to_composition_roots_too(fake_repo: Path) -> None:
+    """Composition roots are exempt from R3, not from R5.
+
+    A root may wire anything, but it still obtains configuration through the
+    settings loader rather than reaching for the environment itself.
+    """
+    _module(fake_repo, "dhruva.api.main", "import os\n\nX = os.getenv('PORT')\n")
+
+    assert [v.rule for v in boundaries.check_tree(fake_repo / "backend" / "src")] == ["R5"]
+
+
+@pytest.mark.unit
+def test_r5_ignores_unrelated_os_usage(fake_repo: Path) -> None:
+    """Reading a path or a pid is not reading configuration."""
+    _module(
+        fake_repo,
+        "dhruva.contexts.analytics.domain.regime",
+        "import os\n\nX = os.path.sep\nY = os.cpu_count()\n",
+    )
+
+    assert boundaries.check_tree(fake_repo / "backend" / "src") == []
+
+
 # --------------------------------------------------------------------------- #
 # dhruva-adr-guard
 # --------------------------------------------------------------------------- #

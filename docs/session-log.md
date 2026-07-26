@@ -57,3 +57,30 @@ placeholders, and the Golden Rules forbid placeholders.
 **Open.** Q2 (streaming universe), Q3 (cloud region) and Q4 (Kite historical
 entitlement) are not blocking until S09/S10. They will be raised with a
 recommendation before then.
+
+---
+
+## 2026-07-26 — S02 Core Runtime complete
+
+**Done.** Configuration, logging with redaction, error taxonomy, correlation,
+health/readiness/metrics registries, the `dhruva-api` observability component,
+boundary rule R5, hash-pinned lockfiles, `docs/BUILD.md`, secret-hygiene tests,
+and a six-budget benchmark suite. 335 tests at 99.91% coverage; all six gates
+green; all six budgets met.
+
+**Decided.** ADR-031 recorded as a clarification of §5 rather than a redesign.
+ADR-037…041 written; the four runtime ADRs were renumbered from 031–035 because
+the v1.3 policies claimed those numbers and ADR-027 forbids reuse.
+
+Benchmarking found two real inefficiencies that measurement-after-the-fact would
+have missed: the correlation binder's generator machinery (17.7 → 2.0 µs) and the
+redactor rebuilding its secret set per record (71.9 → 36.7 µs).
+
+Benchmark methodology was revised mid-implementation: microsecond-scale budgets
+use best-of-batched-means rather than per-iteration tails, because a
+`perf_counter` call costs a large fraction of what it measures. Recorded rather
+than silently applied.
+
+**Next.** S03 — Domain Primitives & Shared Kernel, after S02 approval.
+
+**Open.** TD-01 and TD-02 both need a Python 3.12 host.

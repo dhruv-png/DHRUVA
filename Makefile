@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 BACKEND := backend
 
-.PHONY: help setup hooks fmt lint types boundaries adr test cov check up down logs psql redis clean
+.PHONY: help setup hooks fmt lint types boundaries adr test cov bench check up down logs psql redis lock clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -43,6 +43,15 @@ test: ## Run the test suite
 
 cov: ## Run the test suite with the coverage gate
 	uv run --project $(BACKEND) pytest --cov --cov-report=term-missing --cov-report=xml
+
+bench: ## Run the performance budget suite (ADR-036); excluded from `make test`
+	uv run --project $(BACKEND) pytest -m benchmark -p no:randomly
+
+lock: ## Regenerate the hash-pinned lockfiles (ADR-032)
+	cd $(BACKEND) && uv pip compile pyproject.toml --python-version 3.12 --universal \
+		--generate-hashes --all-extras -o requirements.lock
+	cd $(BACKEND) && uv pip compile pyproject.toml --python-version 3.12 --universal \
+		--generate-hashes --group dev -o requirements-dev.lock
 
 check: lint types boundaries adr cov ## Everything CI runs, in CI's order
 

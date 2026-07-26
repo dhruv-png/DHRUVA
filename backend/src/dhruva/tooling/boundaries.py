@@ -16,6 +16,9 @@ R3  **No inward dependency on composition roots.** ``dhruva.api``,
     are imported by nothing.
 R4  **Shared kernel and tooling stay leaf packages.** ``dhruva.shared`` and
     ``dhruva.tooling`` import nothing from ``dhruva.contexts``.
+R5  **Only the configuration module reads the environment.** Nothing outside
+    ``dhruva.shared.config`` may touch ``os.environ``, ``os.getenv`` or
+    ``dotenv`` (ADR-031).
 
 Why this exists as code rather than as a convention
 ---------------------------------------------------
@@ -45,6 +48,7 @@ from pathlib import Path
 __all__ = [
     "ALLOWED_CONTEXT_DEPENDENCIES",
     "COMPOSITION_ROOTS",
+    "CONFIG_PACKAGE",
     "LAYER_PACKAGES",
     "ROOT_MARKER",
     "Violation",
@@ -89,6 +93,12 @@ LAYER_PACKAGES: frozenset[str] = frozenset(
 #: behaves identically from any working directory.
 ROOT_MARKER = ".dhruva-root"
 
+#: The only package permitted to read the environment (ADR-031, rule R5).
+CONFIG_PACKAGE = "dhruva.shared.config"
+
+#: Names that constitute reading the environment directly.
+_ENVIRONMENT_ACCESSORS: frozenset[str] = frozenset({"environ", "getenv", "putenv", "environb"})
+
 _PUBLIC_API_MODULE = "api"
 
 # Segment counts in a dotted module name, used to classify a module by position:
@@ -111,7 +121,7 @@ class Violation:
     lineno
         Line number of the offending import.
     rule
-        Short rule identifier, one of ``R1``..``R4``.
+        Short rule identifier, one of ``R1``..``R5``.
     message
         Human-readable explanation, written to be actionable without needing to
         consult the plan.
@@ -151,6 +161,50 @@ def find_repo_root(start: Path | None = None) -> Path:
             return candidate
     msg = f"no {ROOT_MARKER} marker found in {current} or any parent directory"
     raise FileNotFoundError(msg)
+
+
+def _environment_reads(tree: ast.AST) -> list[tuple[str, int]]:
+    """Find every direct read of the process environment in ``tree``.
+
+    Catches all the spellings that matter: ``os.environ[...]``,
+    ``os.getenv(...)``, ``from os import environ``, and any use of ``dotenv``.
+    Returns ``(description, lineno)`` pairs.
+
+    Notes
+    -----
+    This is intentionally syntactic. A determined caller could reach the
+    environment through ``importlib`` or ``getattr``, and no AST rule will see
+    that -- but such indirection is itself a review smell, and the rule exists to
+    stop the ordinary, well-meaning case: someone adding ``os.getenv("DEBUG")``
+    to a module at 6pm because threading a setting through felt like too much
+    work.
+    """
+    found: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend(
+                (alias.name, node.lineno)
+                for alias in node.names
+                if alias.name.split(".")[0] == "dotenv"
+            )
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.split(".")[0] == "dotenv":
+                found.append((f"dotenv.{node.names[0].name}", node.lineno))
+            elif module == "os":
+                found.extend(
+                    (f"os.{alias.name}", node.lineno)
+                    for alias in node.names
+                    if alias.name in _ENVIRONMENT_ACCESSORS
+                )
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "os"
+            and node.attr in _ENVIRONMENT_ACCESSORS
+        ):
+            found.append((f"os.{node.attr}", node.lineno))
+    return found
 
 
 def _module_name(source_root: Path, file: Path) -> str:
@@ -336,11 +390,28 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
     in_composition_root = _is_composition_root(module_name)
     is_leaf_package = module_name.startswith(_LEAF_PACKAGE_PREFIXES)
 
+    if not module_name.startswith(CONFIG_PACKAGE):
+        violations_r5 = [
+            Violation(
+                path=path,
+                lineno=lineno,
+                rule="R5",
+                message=(
+                    f"'{module_name}' reads the environment via '{accessor}'. Only "
+                    f"'{CONFIG_PACKAGE}' may do so (ADR-031). Add the value to the "
+                    f"settings schema and have it injected."
+                ),
+            )
+            for accessor, lineno in _environment_reads(tree)
+        ]
+    else:
+        violations_r5 = []
+
     grouped: dict[int, list[str]] = {}
     for target, lineno in _imported_modules(tree, package):
         grouped.setdefault(lineno, []).append(target)
 
-    violations: list[Violation] = []
+    violations: list[Violation] = list(violations_r5)
     for lineno, targets in sorted(grouped.items()):
         if not in_composition_root:
             roots = [t for t in targets if _is_composition_root(t)]

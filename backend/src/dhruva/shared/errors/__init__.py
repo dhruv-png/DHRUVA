@@ -1,0 +1,52 @@
+"""Error taxonomy.
+
+Import errors from here rather than from the submodules::
+
+    from dhruva.shared.errors import StaleDataError
+
+See :mod:`dhruva.shared.errors.taxonomy` for the families and
+:mod:`dhruva.shared.errors.base` for what every error carries.
+"""
+
+from __future__ import annotations
+
+from dhruva.shared.errors.base import DhruvaError, ErrorCode
+from dhruva.shared.errors.taxonomy import (
+    ConfigurationError,
+    ConflictError,
+    DataQualityError,
+    DegradedModeError,
+    ExternalServiceError,
+    MissingDataError,
+    NotFoundError,
+    PermissionDeniedError,
+    PreconditionUnknownError,
+    RateLimitedError,
+    SafetyError,
+    StaleDataError,
+    UnsafeConfigurationError,
+    UpstreamTimeoutError,
+    UpstreamUnavailableError,
+    ValidationError,
+)
+
+__all__ = [
+    "ConfigurationError",
+    "ConflictError",
+    "DataQualityError",
+    "DegradedModeError",
+    "DhruvaError",
+    "ErrorCode",
+    "ExternalServiceError",
+    "MissingDataError",
+    "NotFoundError",
+    "PermissionDeniedError",
+    "PreconditionUnknownError",
+    "RateLimitedError",
+    "SafetyError",
+    "StaleDataError",
+    "UnsafeConfigurationError",
+    "UpstreamTimeoutError",
+    "UpstreamUnavailableError",
+    "ValidationError",
+]

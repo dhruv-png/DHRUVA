@@ -6,11 +6,11 @@ Institutional AI Quant Trading Platform — Governing Engineering Document
 | Field | Value |
 |---|---|
 | Document ID | DHRUVA-MPP |
-| Version | **1.2 — APPROVED** |
+| Version | **1.4 — APPROVED** |
 | Date | 26 July 2026 |
 | Author | CTO / Principal Architect (AI Engineering Lead) |
-| Status | **APPROVED WITH AMENDMENTS** — S01 complete and approved; S02 authorised |
-| Supersedes | v1.1 (26 July 2026), v1.0 (draft, 26 July 2026) |
+| Status | **APPROVED WITH AMENDMENTS** — S01 released `v0.1.0`; S02 complete, awaiting approval |
+| Supersedes | v1.3, v1.2, v1.1, v1.0 (all 26 July 2026) |
 | Governs | All subsequent architecture, code, schema, and documentation |
 
 > **This document is the project's permanent engineering memory.**
@@ -39,6 +39,28 @@ Approved by the Product Owner on 26 July 2026, on approval of Subsystem S01.
 | A7 | **Documentation is synchronised with implementation, not trailing it.** Every subsystem updates ADRs, the decision log, the CHANGELOG, the README where behaviour changes, and API documentation where applicable. | **New ADR-030.** §10.1 and §18 extended; `CHANGELOG.md` added to the repository. |
 | A8 | The six quality gates are confirmed as the standing set. New gates are added only where they provide measurable value. | Confirms §10.1 and §14. Recorded in ADR-030's consequences. |
 
+### AMENDMENT RECORD — v1.2 → v1.3
+
+Approved by the Product Owner on 26 July 2026, on approval of the S02 architecture.
+
+| # | Amendment | Incorporated at |
+|---|---|---|
+| — | **Configuration placement clarified.** Process configuration belongs to the shared kernel; the Platform context (C9) owns only persisted, account-scoped configuration. Boundary rule **R5** forbids reading `os.environ` outside `shared.config`. | **New ADR-031.** §5 C9 row annotated. Recorded as a *clarification* of §5, not a redesign. |
+| A9 | **Reproducible builds.** Pinned dependencies, committed lockfile, documented Python version, OS baseline and external tool versions. CI builds from a clean checkout. | **New ADR-032.** §10.1 and §13.3 extended; `docs/BUILD.md` added. |
+| A10 | **Secrets management.** No secret in the repository at any commit. Credentials come only from the configuration provider. Automated secret scanning over full history. `.env.example` only. | **New ADR-033.** §15.1 extended; secret-hygiene tests added. |
+| A11 | **Release governance.** Every subsystem ships a changelog entry, ADR updates, a version tag, release notes, migration notes and rollback instructions. | **New ADR-034.** §10.1 extended; `docs/releases/` added; §18 updated. |
+| A12 | **Observability first.** Every runtime component from S02 onward exposes structured logs, correlation IDs, health, readiness, metrics and traces at the moment it is introduced. | **New ADR-035.** **S02 scope expands** (see §6 note); §16 reframed; per-subsystem DoD extended. |
+| A13 | **Performance budgets.** Every subsystem declares measurable targets in Step 1, before implementation, each backed by a committed benchmark. | **New ADR-036.** §12 extended; design-document format gains a budget section. |
+
+### AMENDMENT RECORD — v1.3 → v1.4
+
+Approved on completion of the S02 implementation.
+
+| # | Amendment | Incorporated at |
+|---|---|---|
+| A14 | **Technical Debt Register.** From S03 onward every subsystem records deferred improvements, known limitations, rationale, effort, priority and target milestone. | **New ADR-041.** §10.1 and §18 extended; design-document format gains a register section. S02 carries one as precedent. |
+| — | Four runtime decisions raised in the S02 design and accepted on implementation. | **New ADR-037** (redaction as a tested control), **ADR-038** (error taxonomy), **ADR-039** (correlation), **ADR-040** (OpenTelemetry split). Originally planned as 031–035; renumbered because the v1.3 policies claimed those numbers, and ADR-027 forbids reuse. |
+
 ---
 
 ## TABLE OF CONTENTS
@@ -46,7 +68,7 @@ Approved by the Product Owner on 26 July 2026, on approval of Subsystem S01.
 1. [Product Thesis & Scope Boundary](#1-product-thesis--scope-boundary)
 2. [Governing Constraints — The Reality Layer](#2-governing-constraints--the-reality-layer)
 3. [Architecture North Star](#3-architecture-north-star)
-4. [Project Decision Log (ADR-001 … ADR-030)](#4-project-decision-log)
+4. [Project Decision Log (ADR-001 … ADR-041)](#4-project-decision-log)
 5. [Bounded Contexts & Service Boundaries](#5-bounded-contexts--service-boundaries)
 6. [Subsystem Catalogue](#6-subsystem-catalogue)
 7. [Dependency Graph](#7-dependency-graph)
@@ -379,6 +401,61 @@ An **Architecture Revision (AR-nnn)** is the heavier instrument, reserved for ch
 *Rationale:* The value of a decision log is destroyed the moment entries can be edited after the fact. Immutability is what makes it trustworthy six months later, when the reasoning has been forgotten.
 *Consequence:* CI enforces this mechanically: a check fails the build if a file in `docs/adr/` with status `Accepted` is modified in any line other than its status line, and fails if a PR touching a context's public API or a migration does not also add or reference an ADR. Enforcement ships in S01.
 
+**ADR-031 — Process configuration lives in the shared kernel; the Platform context owns only persisted configuration.**
+*Decision:* Process configuration (database URL, log level, environment, exporter endpoint) lives in `dhruva.shared.config`. C9 owns persisted, account-scoped configuration only. The settings *schema* is defined in the kernel; the settings *object* is constructed once at a composition root and typed slices are injected. Boundary rule **R5** fails the build if any module outside `dhruva.shared.config` reads `os.environ`, `os.getenv` or `dotenv`.
+*Rationale:* §5's "config" covers two unrelated things. Routing process configuration through C9 would make C9 a universal dependency and drain rule R2 of meaning. R5 exists because "configuration is injected" decays into a convention within a few subsystems otherwise — and because ADR-010's shared execution kernel requires that a strategy cannot see the environment.
+*Consequence:* A **clarification** of §5, not a revision. Slightly more wiring at each composition root. The C9 row in §5 is annotated so the ambiguity is not relitigated at S06.
+
+**ADR-032 — Reproducible builds: pinned dependencies, committed lockfile, documented environment.** *(Amendment A9)*
+*Decision:* Direct dependencies pinned exactly; `backend/uv.lock` committed and reviewed; CI runs `UV_FROZEN=1` so a stale lockfile fails rather than regenerating silently. Python version declared in `.python-version`, `requires-python` and the CI matrix, with a test asserting all three agree. OS baseline, base-image digests and external tool versions documented in `docs/BUILD.md`. CI builds from a clean checkout; caches accelerate download, never resolution.
+*Rationale:* Research results depend on numerical library versions and production behaviour will eventually move money. Full hermeticity was rejected as disproportionate for a solo project; lockfile plus frozen CI plus digest-pinned images covers the failure modes that actually occur.
+*Consequence:* Upgrades become explicit reviewable commits rather than ambient drift — intended, and also friction. `docs/BUILD.md` joins the DoD checklist so toolchain changes update it in the same commit.
+
+**ADR-033 — No secret exists in the repository; secrets arrive only from the configuration provider.** *(Amendment A10)*
+*Decision:* No secret at any commit, in any branch. `.env.example` only, with obviously fake values. Automated scanning in CI over **full history**, not the diff. `detect-private-key` in pre-commit. Secrets held in memory as a non-disclosing `SecretValue` whose only accessor is explicitly named and greppable. Hygiene invariants asserted by test.
+*Rationale:* Scanning history rather than the diff is the decision that matters: diff-only scanning gives a green build to a repository that already contains a credential. Prevention and detection are layered because each fails alone. `SecretValue` covers the path policy cannot — a logged object graph or an exception carrying a credential.
+*Consequence:* Debugging occasionally needs an explicit `.reveal()`; that friction is the feature. If a secret is ever committed, rotation comes first and is mandatory even if the commit was never pushed.
+
+**ADR-034 — Release governance: every subsystem ships changelog, ADRs, tag, release notes, migration and rollback.** *(Amendment A11)*
+*Decision:* Six artefacts per subsystem. Release notes live in `docs/releases/v0.<nn>.0.md` and carry gate results, dependency deltas, known limitations, migration notes and rollback instructions. "No migration required" is stated explicitly rather than omitted. Rollback instructions state honestly what **cannot** be undone.
+*Rationale:* The two artefacts carrying the most weight — migration and rollback — are the two most often skipped, because at authoring time the answer is usually "none". Writing it is the difference between *verified none* and *nobody checked*. Release notes are separate from the changelog because they serve a different reader at a different moment.
+*Consequence:* One extra document per subsystem. `docs/releases/` becomes the operational history and the place to bisect a regression by behaviour rather than by commit.
+
+**ADR-035 — Observability is a first-class feature.** *(Amendment A12)*
+*Decision:* Every runtime component introduced from S02 onward exposes, at the moment it is introduced: structured logs, correlation IDs, `/health` (liveness, no dependency checks), `/ready` (readiness with a per-dependency breakdown, where unknown counts as not ready), `/metrics`, and trace instrumentation. Components without an HTTP surface meet the same obligations through a small admin listener rather than being waived.
+*Rationale:* The ingest feed's failure mode is silence, not an exception — a stopped WebSocket looks like a quiet market. Retrofitting at S41 would instrument forty subsystems that were not built to be observed, measuring what is easy to reach rather than what matters.
+*Consequence:* **S02 grows from 4 to ~6 sessions** and takes on FastAPI, uvicorn and a Prometheus client earlier than planned. S41 becomes what it should be: dashboards, SLOs and runbooks over instrumentation that already exists. Every later subsystem's DoD gains its health checks, metrics and spans.
+
+**ADR-036 — Every subsystem declares measurable performance budgets before implementation.** *(Amendment A13)*
+*Decision:* Targets are declared in the design document at **Step 1**, not Step 5, and each is backed by a benchmark committed with the implementation. Latency is stated at p50/p95/p99, never as a mean. Measured values are recorded in the release notes. A missed target is documented with its measured value, never quietly dropped.
+*Rationale:* Declaring targets before implementation changes design decisions rather than grading them: knowing a full option chain must price in under a second rules out a per-strike database round trip before that code exists. Absolute thresholds rather than run-to-run comparison, because CI hardware variance produces false alarms that teach the author to ignore them.
+*Consequence:* Benchmarks live in `backend/tests/benchmarks/`, marked `slow` and excluded from the inner loop. Early budgets will be guesses; a guessed budget that is measured and revised with a recorded reason beats no budget.
+
+**ADR-037 — Log redaction is a tested control with two independent strategies.**
+*Decision:* Redact by field name (broad pattern, wholesale replacement) **and** by registered secret value (recursive traversal, 8-character floor). Processor placed last, immediately before rendering, so it sees what earlier processors merged in. Snapshot cached against a registry version counter. Verified by a deliberate credential-leak suite.
+*Rationale:* Either strategy alone misses the other's cases. Measured overhead 1.02×, well inside the 1.25× budget — a control that costs 3× gets switched off for hot paths.
+*Consequence:* `get_logger` is the only sanctioned accessor. A custom stderr logger factory is required because structlog's binds its stream at construction, making the control impossible to capture in a test.
+
+**ADR-038 — Errors are a closed taxonomy with stable machine-readable codes.**
+*Decision:* Eight families; stable `DHR-XXX-NNN` codes pinned by snapshot test; structured context as fields; retryability as data. `repr` exposes keys but never values. `SAF` is its own branch, distinct from failure.
+*Rationale:* Stable codes are what let an alert rule survive a refactor. The safety branch exists because ADR-022 makes ambiguity fail closed, and reporting that as a generic error teaches operators to ignore it.
+*Consequence:* Adding an error updates the pinned snapshot in the same commit. Errors must stay picklable for Celery transport from S05.
+
+**ADR-039 — Correlation propagates through contextvars; threads need an explicit wrapper.**
+*Decision:* Three identifiers via `contextvars`; nested binds narrow rather than reset; class-based context manager for cost. `copy_context_into` for pool boundaries, with the limitation asserted by test.
+*Rationale:* Ambient propagation is acceptable here precisely because nothing *branches* on these values — losing one degrades debuggability, not correctness. That is a different risk profile from ambient configuration, which ADR-031 forbids.
+*Consequence:* Every process edge must bind, or downstream work is untraceable. The thread limitation is real and silent; the test documents it.
+
+**ADR-040 — OpenTelemetry API in library code; SDK only at composition roots.**
+*Decision:* Library code imports the API; the SDK is an optional extra installed at roots. No wrapper port of our own. `tracing_is_active()` reported in the startup banner.
+*Rationale:* Wrapping a facade in a second facade adds a type without adding capability — the opposite of ADR-003, where the wrapped thing is genuinely substitutable. The banner exists because tracing's failure mode is silence, indistinguishable from no traffic.
+*Consequence:* Deployed environments install the `tracing` extra; a test asserts the SDK is not a runtime dependency. Cross-process trace propagation arrives with S05.
+
+**ADR-041 — Every subsystem maintains a Technical Debt Register.** *(Amendment A14)*
+*Decision:* From S03, each design document carries a register: item, rationale, effort, priority, milestone, status. Lint suppressions and test-documented limitations are mandatory entries. Reviewed at every gate; `ACCEPTED` items are permanent with a stated reason.
+*Rationale:* Deferral is legitimate; forgetting is not. An issue tracker divorced from the design loses the context that makes an item decidable. Priority is judged by consequence if never resolved, because urgency is a property of the moment and consequence is a property of the item.
+*Consequence:* Design documents and gate agendas both grow. Some debt will be permanently accepted, which is the point of having the column.
+
 **ADR-029 — Version control is part of the Definition of Done; no subsystem accumulates uncommitted.** *(Amendment A6)*
 *Decision:* An approved subsystem is committed to a dedicated branch, merged to `main` via pull request, and pushed **before the next subsystem begins**. Every subsystem delivers, as part of its output: a branch name (`snn-<slug>`), one or more Conventional Commit messages, a pull-request title, a pull-request summary, and a tag recommendation. `main` is tagged `v0.<subsystem>.0` at each subsystem completion and `v<major>.0.0` at each gate.
 Where the working environment has authenticated Git access, the operations are performed directly. Where it does not, the exact commands are supplied in a form that can be pasted without modification or interpretation.
@@ -413,7 +490,9 @@ Nine contexts. Each is a Python package under `backend/src/dhruva/contexts/` wit
 | C6 | **Risk** | Risk rules, limits, margin, cost engine, kill switch | `RiskBreached`, `OrderRejected`, `KillSwitchTripped` | C1, C2 only. Risk **defines** the `PositionReader` port; Trading implements it. Risk never imports Trading. |
 | C7 | **Trading** | Orders, fills, positions, portfolio, reconciliation, broker gateway | `OrderPlaced/Filled/Rejected`, `PositionChanged`, `ReconciliationDiverged` | C1, C6 |
 | C8 | **Notification** | Alert rules, delivery channels, dedup, escalation | `AlertRaised`, `AlertDelivered` | all |
-| C9 | **Platform** | Auth, accounts, secrets, config, audit, jobs, feature flags | `AuditRecorded` | — |
+| C9 | **Platform** | Auth, accounts, secrets, **persisted account-scoped configuration** (feature flags, preferences, limits), audit, jobs | `AuditRecorded` | — |
+
+> **Note on configuration (ADR-031).** *Process* configuration — database URL, log level, environment, exporter endpoint — is **not** owned by C9. It lives in `dhruva.shared.config`, because it is needed by every layer of every context including `domain`, and routing it through C9 would make C9 a universal dependency. C9 owns configuration that is persisted and account-scoped. Boundary rule R5 enforces the split.
 
 **Boundary rules:**
 
@@ -826,6 +905,37 @@ A subsystem is **DONE** only when all of the following are true. Partial complet
 - [ ] README updated if externally visible behaviour changed
 - [ ] OpenAPI specification updated if any endpoint changed
 
+**Reproducible build** *(ADR-032)*
+- [ ] New dependencies pinned exactly; `uv.lock` regenerated and committed
+- [ ] `docs/BUILD.md` updated if the Python version, OS baseline or any tool version changed
+- [ ] CI green from a clean checkout with `UV_FROZEN=1`
+
+**Secret hygiene** *(ADR-033)*
+- [ ] No credential in the diff, and secret scanning green over full history
+- [ ] Any new configuration variable added to `.env.example` with an obviously fake value
+- [ ] Any in-memory credential held as `SecretValue`
+
+**Observability** *(ADR-035)*
+- [ ] Health checks this subsystem contributes are registered and tested
+- [ ] Metrics this subsystem emits are named per §13.2 and documented
+- [ ] Spans opened across process edges and external calls
+- [ ] Correlation propagates through every path this subsystem introduces
+
+**Performance** *(ADR-036)*
+- [ ] Budgets were declared in the design document **before** implementation
+- [ ] A committed benchmark measures each budget
+- [ ] Measured values recorded in the release notes; any miss documented, not dropped
+
+**Technical debt** *(ADR-041, from S03)*
+- [ ] Register present in the design document with rationale, effort, priority and milestone
+- [ ] Every lint suppression and every test-documented limitation has a row
+- [ ] Prior subsystems' `OPEN` items reviewed; anything two gates old escalated
+
+**Release artefacts** *(ADR-034)*
+- [ ] `docs/releases/v0.<nn>.0.md` written: summary, gate results, dependency deltas, known limitations
+- [ ] Migration notes stated explicitly, including "none required" where that is verified
+- [ ] Rollback instructions written, stating honestly what cannot be undone
+
 **Version control** *(ADR-029)*
 - [ ] Work committed on branch `snn-<slug>` with Conventional Commit messages
 - [ ] Pull-request title and summary produced
@@ -902,6 +1012,8 @@ Scored as Probability (P) × Impact (I) on 1–5. **Exposure = P × I.** Reviewe
 | Availability during market hours | ≥ 99.5% (single-node v1) | S41 |
 | RPO / RTO | RPO 15 min / RTO 1 h (v1); RPO 1 min / RTO 15 min (post-S45) | S45 |
 | Data retention | Ticks: 30 d hot, 12 mo compressed, then Parquet cold. Bars: indefinite. Orders/audit: indefinite, immutable. | S11 |
+
+**Per-subsystem budgets (ADR-036).** The table above is the platform-level target set. Each subsystem additionally declares its own measurable budgets in its design document, at Step 1, before implementation, each backed by a committed benchmark in `backend/tests/benchmarks/`. Measured values are recorded in that subsystem's release notes.
 
 **Scalability posture.** The brief asks whether this scales to one million users. Honestly: v1 is a single-node system for one user, and building for a million users now would be the wrong engineering. What §3 and ADR-004 guarantee is that scaling is a *sequence of tractable steps* rather than a rewrite — contexts extract to services, Redis Streams swaps to Kafka, RLS activates for tenancy, Timescale scales to multi-node, and the stateless API tier scales horizontally. The compute-bound analytics tier is the first thing that would need to shard, by instrument universe. That path is designed for; it is not built yet, and pretending otherwise would be the more expensive choice.
 
@@ -1047,6 +1159,8 @@ Primary controls: least privilege, mandatory 2FA for order permissions, unbypass
 
 **Stack:** Prometheus (metrics) · Grafana (dashboards) · Loki (logs) · OpenTelemetry (traces) · Alertmanager → the Alert Engine.
 
+> **Reframed by ADR-035.** Instrumentation is no longer built at S41. Every runtime component ships logs, correlation, `/health`, `/ready`, `/metrics` and traces **at the moment it is introduced**, starting with S02. S41 is now what it should always have been: dashboards, SLOs, alert rules and runbooks built on instrumentation that already exists.
+
 ### 16.1 Golden Signals per Context
 
 | Context | Key metrics |
@@ -1110,6 +1224,9 @@ Every alert must link to a runbook. An alert with no runbook is a defect.
 | Session log | `docs/session-log.md` | Every working session: what was done, what was decided, what is next |
 | Changelog | `CHANGELOG.md` | Keep a Changelog format. Updated in the same commit as the change (ADR-030) |
 | Commit plan | Pull-request body | Branch, commits, PR summary, tag recommendation (ADR-029) |
+| Release notes | `docs/releases/v0.<nn>.0.md` | Summary, gate results, dependency deltas, migration notes, rollback instructions (ADR-034) |
+| Build environment | `docs/BUILD.md` | Python version, OS baseline, image digests, tool versions (ADR-032) |
+| Technical debt register | Subsystem design document, final section | Deferred items with rationale, effort, priority, milestone (ADR-041) |
 
 **The subsystem design document uses the 12-section response format** mandated in the project brief: Overview · Responsibilities · Functional Requirements · Architecture · Database Changes · API Contracts · Folder Structure · Implementation · Testing · Optimisation · Documentation · Future Improvements.
 

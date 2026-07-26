@@ -104,15 +104,74 @@ def test_declared_markers_cover_the_test_pyramid(pyproject: dict[str, Any]) -> N
     assert {"unit", "integration", "contract", "e2e", "slow"} <= declared
 
 
-@pytest.mark.unit
-def test_runtime_dependencies_are_still_empty(pyproject: dict[str, Any]) -> None:
-    """S01 is a skeleton.
+#: Every runtime dependency, mapped to the subsystem that introduced it and
+#: justified in that subsystem's design document (ADR-030, ADR-032). Adding a
+#: dependency means updating this map in the same commit -- deliberately, rather
+#: than incidentally.
+DEPENDENCY_PROVENANCE: dict[str, str] = {
+    "pydantic": "S02 - typed configuration",
+    "pydantic-settings": "S02 - environment loading (ADR-031)",
+    "structlog": "S02 - structured logging with redaction (ADR-033)",
+    "fastapi": "S02 - the observability component (ADR-035)",
+    "uvicorn": "S02 - serving the observability component (ADR-035)",
+    "prometheus-client": "S02 - metrics registry and exposition (ADR-035)",
+    "opentelemetry-api": "S02 - tracing facade (ADR-040)",
+}
 
-    A runtime dependency appearing here means a subsystem was started without a
-    design document justifying it. When S02 lands, this test is updated in the
-    same commit that adds the dependency -- deliberately, not incidentally.
+
+@pytest.mark.unit
+def test_every_runtime_dependency_is_pinned_and_accounted_for(
+    pyproject: dict[str, Any],
+) -> None:
+    """A dependency with no recorded provenance is a subsystem started without a design.
+
+    Exact pinning is required by ADR-032; the provenance map is required so that
+    ``why is this here?`` has an answer that outlives the author's memory.
     """
-    assert pyproject["project"]["dependencies"] == []
+    declared = pyproject["project"]["dependencies"]
+    names = {spec.split("==")[0] for spec in declared}
+
+    assert all("==" in spec for spec in declared), "ADR-032 requires exact pins"
+    assert names == set(DEPENDENCY_PROVENANCE), "dependency set and provenance map disagree"
+
+
+@pytest.mark.unit
+def test_the_tracing_sdk_is_an_extra_not_a_library_dependency(
+    pyproject: dict[str, Any],
+) -> None:
+    """ADR-040: library code imports the OpenTelemetry API; only composition roots use the SDK."""
+    runtime = {spec.split("==")[0] for spec in pyproject["project"]["dependencies"]}
+    tracing_extra = {
+        spec.split("==")[0] for spec in pyproject["project"]["optional-dependencies"]["tracing"]
+    }
+
+    assert "opentelemetry-sdk" not in runtime
+    assert "opentelemetry-sdk" in tracing_extra
+
+
+@pytest.mark.unit
+def test_lockfiles_are_committed_and_hash_pinned(repo_root: Path) -> None:
+    """ADR-032. A lockfile without hashes does not pin what it claims to pin."""
+    for name in ("requirements.lock", "requirements-dev.lock"):
+        content = (repo_root / "backend" / name).read_text(encoding="utf-8")
+        assert "--hash=sha256:" in content, f"{name} is not hash-pinned"
+
+
+@pytest.mark.unit
+def test_python_version_is_declared_consistently(
+    repo_root: Path, pyproject: dict[str, Any]
+) -> None:
+    """ADR-032 declares the version in three places; a test asserts they agree.
+
+    Each is read by a different tool, and this assertion is cheaper than the
+    afternoon lost to discovering they disagree.
+    """
+    pinned = (repo_root / ".python-version").read_text(encoding="utf-8").strip()
+    ci = (repo_root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert pinned == "3.12"
+    assert pyproject["project"]["requires-python"] == ">=3.12"
+    assert f"uv python install {pinned}" in ci
 
 
 @pytest.mark.unit
