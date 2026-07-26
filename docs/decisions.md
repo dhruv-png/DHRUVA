@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**36 decisions, all Accepted.** Records are immutable once accepted
+**41 decisions, all Accepted.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -45,6 +45,11 @@ should not have been made gets caught.
 | [ADR-034](ADR-034-release-governance.md) | Release governance: every subsystem ships changelog, ADRs, tag, release notes, migration and rollback | Accepted |
 | [ADR-035](ADR-035-observability-is-a-first-class-feature.md) | Observability is a first-class feature: every runtime component ships logs, correlation, health, readiness, metrics and traces | Accepted |
 | [ADR-036](ADR-036-performance-budgets-declared-before-implementation.md) | Every subsystem declares measurable performance budgets before implementation | Accepted |
+| [ADR-037](ADR-037-log-redaction-is-a-tested-control.md) | Log redaction is a tested control with two independent strategies | Accepted |
+| [ADR-038](ADR-038-errors-are-a-closed-taxonomy-with-stable-codes.md) | Errors are a closed taxonomy with stable machine-readable codes | Accepted |
+| [ADR-039](ADR-039-correlation-propagates-through-contextvars.md) | Correlation propagates through contextvars, and threads require an explicit wrapper | Accepted |
+| [ADR-040](ADR-040-opentelemetry-api-in-libraries-sdk-at-roots.md) | OpenTelemetry API in library code; the SDK only at composition roots | Accepted |
+| [ADR-041](ADR-041-technical-debt-register.md) | Every subsystem maintains a Technical Debt Register | Accepted |
 
 ## Reading order for someone new
 
@@ -59,6 +64,7 @@ it does, read these six in order:
 6. **ADR-028** — why there is no execution code in this repository yet
 7. **ADR-029** — why nothing crosses a subsystem boundary uncommitted
 8. **ADR-035** — why observability is built at S02 rather than at S41
+9. **ADR-037** — why log redaction has two independent strategies
 
 ## Architecture Revisions
 

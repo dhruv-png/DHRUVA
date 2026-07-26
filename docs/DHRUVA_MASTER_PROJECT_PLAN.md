@@ -6,11 +6,11 @@ Institutional AI Quant Trading Platform — Governing Engineering Document
 | Field | Value |
 |---|---|
 | Document ID | DHRUVA-MPP |
-| Version | **1.3 — APPROVED** |
+| Version | **1.4 — APPROVED** |
 | Date | 26 July 2026 |
 | Author | CTO / Principal Architect (AI Engineering Lead) |
-| Status | **APPROVED WITH AMENDMENTS** — S01 released as `v0.1.0`; S02 in implementation |
-| Supersedes | v1.2, v1.1, v1.0 (all 26 July 2026) |
+| Status | **APPROVED WITH AMENDMENTS** — S01 released `v0.1.0`; S02 complete, awaiting approval |
+| Supersedes | v1.3, v1.2, v1.1, v1.0 (all 26 July 2026) |
 | Governs | All subsequent architecture, code, schema, and documentation |
 
 > **This document is the project's permanent engineering memory.**
@@ -52,6 +52,15 @@ Approved by the Product Owner on 26 July 2026, on approval of the S02 architectu
 | A12 | **Observability first.** Every runtime component from S02 onward exposes structured logs, correlation IDs, health, readiness, metrics and traces at the moment it is introduced. | **New ADR-035.** **S02 scope expands** (see §6 note); §16 reframed; per-subsystem DoD extended. |
 | A13 | **Performance budgets.** Every subsystem declares measurable targets in Step 1, before implementation, each backed by a committed benchmark. | **New ADR-036.** §12 extended; design-document format gains a budget section. |
 
+### AMENDMENT RECORD — v1.3 → v1.4
+
+Approved on completion of the S02 implementation.
+
+| # | Amendment | Incorporated at |
+|---|---|---|
+| A14 | **Technical Debt Register.** From S03 onward every subsystem records deferred improvements, known limitations, rationale, effort, priority and target milestone. | **New ADR-041.** §10.1 and §18 extended; design-document format gains a register section. S02 carries one as precedent. |
+| — | Four runtime decisions raised in the S02 design and accepted on implementation. | **New ADR-037** (redaction as a tested control), **ADR-038** (error taxonomy), **ADR-039** (correlation), **ADR-040** (OpenTelemetry split). Originally planned as 031–035; renumbered because the v1.3 policies claimed those numbers, and ADR-027 forbids reuse. |
+
 ---
 
 ## TABLE OF CONTENTS
@@ -59,7 +68,7 @@ Approved by the Product Owner on 26 July 2026, on approval of the S02 architectu
 1. [Product Thesis & Scope Boundary](#1-product-thesis--scope-boundary)
 2. [Governing Constraints — The Reality Layer](#2-governing-constraints--the-reality-layer)
 3. [Architecture North Star](#3-architecture-north-star)
-4. [Project Decision Log (ADR-001 … ADR-036)](#4-project-decision-log)
+4. [Project Decision Log (ADR-001 … ADR-041)](#4-project-decision-log)
 5. [Bounded Contexts & Service Boundaries](#5-bounded-contexts--service-boundaries)
 6. [Subsystem Catalogue](#6-subsystem-catalogue)
 7. [Dependency Graph](#7-dependency-graph)
@@ -421,6 +430,31 @@ An **Architecture Revision (AR-nnn)** is the heavier instrument, reserved for ch
 *Decision:* Targets are declared in the design document at **Step 1**, not Step 5, and each is backed by a benchmark committed with the implementation. Latency is stated at p50/p95/p99, never as a mean. Measured values are recorded in the release notes. A missed target is documented with its measured value, never quietly dropped.
 *Rationale:* Declaring targets before implementation changes design decisions rather than grading them: knowing a full option chain must price in under a second rules out a per-strike database round trip before that code exists. Absolute thresholds rather than run-to-run comparison, because CI hardware variance produces false alarms that teach the author to ignore them.
 *Consequence:* Benchmarks live in `backend/tests/benchmarks/`, marked `slow` and excluded from the inner loop. Early budgets will be guesses; a guessed budget that is measured and revised with a recorded reason beats no budget.
+
+**ADR-037 — Log redaction is a tested control with two independent strategies.**
+*Decision:* Redact by field name (broad pattern, wholesale replacement) **and** by registered secret value (recursive traversal, 8-character floor). Processor placed last, immediately before rendering, so it sees what earlier processors merged in. Snapshot cached against a registry version counter. Verified by a deliberate credential-leak suite.
+*Rationale:* Either strategy alone misses the other's cases. Measured overhead 1.02×, well inside the 1.25× budget — a control that costs 3× gets switched off for hot paths.
+*Consequence:* `get_logger` is the only sanctioned accessor. A custom stderr logger factory is required because structlog's binds its stream at construction, making the control impossible to capture in a test.
+
+**ADR-038 — Errors are a closed taxonomy with stable machine-readable codes.**
+*Decision:* Eight families; stable `DHR-XXX-NNN` codes pinned by snapshot test; structured context as fields; retryability as data. `repr` exposes keys but never values. `SAF` is its own branch, distinct from failure.
+*Rationale:* Stable codes are what let an alert rule survive a refactor. The safety branch exists because ADR-022 makes ambiguity fail closed, and reporting that as a generic error teaches operators to ignore it.
+*Consequence:* Adding an error updates the pinned snapshot in the same commit. Errors must stay picklable for Celery transport from S05.
+
+**ADR-039 — Correlation propagates through contextvars; threads need an explicit wrapper.**
+*Decision:* Three identifiers via `contextvars`; nested binds narrow rather than reset; class-based context manager for cost. `copy_context_into` for pool boundaries, with the limitation asserted by test.
+*Rationale:* Ambient propagation is acceptable here precisely because nothing *branches* on these values — losing one degrades debuggability, not correctness. That is a different risk profile from ambient configuration, which ADR-031 forbids.
+*Consequence:* Every process edge must bind, or downstream work is untraceable. The thread limitation is real and silent; the test documents it.
+
+**ADR-040 — OpenTelemetry API in library code; SDK only at composition roots.**
+*Decision:* Library code imports the API; the SDK is an optional extra installed at roots. No wrapper port of our own. `tracing_is_active()` reported in the startup banner.
+*Rationale:* Wrapping a facade in a second facade adds a type without adding capability — the opposite of ADR-003, where the wrapped thing is genuinely substitutable. The banner exists because tracing's failure mode is silence, indistinguishable from no traffic.
+*Consequence:* Deployed environments install the `tracing` extra; a test asserts the SDK is not a runtime dependency. Cross-process trace propagation arrives with S05.
+
+**ADR-041 — Every subsystem maintains a Technical Debt Register.** *(Amendment A14)*
+*Decision:* From S03, each design document carries a register: item, rationale, effort, priority, milestone, status. Lint suppressions and test-documented limitations are mandatory entries. Reviewed at every gate; `ACCEPTED` items are permanent with a stated reason.
+*Rationale:* Deferral is legitimate; forgetting is not. An issue tracker divorced from the design loses the context that makes an item decidable. Priority is judged by consequence if never resolved, because urgency is a property of the moment and consequence is a property of the item.
+*Consequence:* Design documents and gate agendas both grow. Some debt will be permanently accepted, which is the point of having the column.
 
 **ADR-029 — Version control is part of the Definition of Done; no subsystem accumulates uncommitted.** *(Amendment A6)*
 *Decision:* An approved subsystem is committed to a dedicated branch, merged to `main` via pull request, and pushed **before the next subsystem begins**. Every subsystem delivers, as part of its output: a branch name (`snn-<slug>`), one or more Conventional Commit messages, a pull-request title, a pull-request summary, and a tag recommendation. `main` is tagged `v0.<subsystem>.0` at each subsystem completion and `v<major>.0.0` at each gate.
@@ -892,6 +926,11 @@ A subsystem is **DONE** only when all of the following are true. Partial complet
 - [ ] A committed benchmark measures each budget
 - [ ] Measured values recorded in the release notes; any miss documented, not dropped
 
+**Technical debt** *(ADR-041, from S03)*
+- [ ] Register present in the design document with rationale, effort, priority and milestone
+- [ ] Every lint suppression and every test-documented limitation has a row
+- [ ] Prior subsystems' `OPEN` items reviewed; anything two gates old escalated
+
 **Release artefacts** *(ADR-034)*
 - [ ] `docs/releases/v0.<nn>.0.md` written: summary, gate results, dependency deltas, known limitations
 - [ ] Migration notes stated explicitly, including "none required" where that is verified
@@ -1187,6 +1226,7 @@ Every alert must link to a runbook. An alert with no runbook is a defect.
 | Commit plan | Pull-request body | Branch, commits, PR summary, tag recommendation (ADR-029) |
 | Release notes | `docs/releases/v0.<nn>.0.md` | Summary, gate results, dependency deltas, migration notes, rollback instructions (ADR-034) |
 | Build environment | `docs/BUILD.md` | Python version, OS baseline, image digests, tool versions (ADR-032) |
+| Technical debt register | Subsystem design document, final section | Deferred items with rationale, effort, priority, milestone (ADR-041) |
 
 **The subsystem design document uses the 12-section response format** mandated in the project brief: Overview · Responsibilities · Functional Requirements · Architecture · Database Changes · API Contracts · Folder Structure · Implementation · Testing · Optimisation · Documentation · Future Improvements.
 
