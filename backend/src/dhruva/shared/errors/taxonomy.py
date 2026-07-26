@@ -33,6 +33,7 @@ __all__ = [
     "DataQualityError",
     "DegradedModeError",
     "ExternalServiceError",
+    "InvariantViolation",
     "MissingDataError",
     "NotFoundError",
     "PermissionDeniedError",
@@ -218,6 +219,25 @@ class PreconditionUnknownError(SafetyError):
     """
 
     code = ErrorCode("DHR-SAF-002")
+
+
+class InvariantViolation(SafetyError):  # noqa: N818 - see docstring
+    """A domain invariant does not hold.
+
+    Defined here so the taxonomy is complete in one place; the canonical import
+    is :class:`dhruva.shared.invariants.InvariantViolation`, which re-exports it
+    alongside the :func:`~dhruva.shared.invariants.invariant` guard.
+
+    Always a programming error: a value was constructed, or an aggregate
+    mutated, into a state the domain model says cannot exist.
+
+    Named without the conventional ``Error`` suffix on purpose. "InvariantError"
+    reads as a failure of the invariant; the invariant is fine. What happened is
+    that it was *violated*, and that distinction is worth the lint suppression --
+    this name appears in every domain guard in the codebase.
+    """
+
+    code = ErrorCode("DHR-SAF-004")
 
 
 class DegradedModeError(SafetyError):

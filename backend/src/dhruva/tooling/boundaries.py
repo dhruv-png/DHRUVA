@@ -19,6 +19,9 @@ R4  **Shared kernel and tooling stay leaf packages.** ``dhruva.shared`` and
 R5  **Only the configuration module reads the environment.** Nothing outside
     ``dhruva.shared.config`` may touch ``os.environ``, ``os.getenv`` or
     ``dotenv`` (ADR-031).
+R6  **No ``float`` in the monetary modules.** Nothing under
+    ``dhruva.shared.money`` may write a float literal, call ``float()``, or
+    annotate anything as ``float`` (ADR-048).
 
 Why this exists as code rather than as a convention
 ---------------------------------------------------
@@ -50,6 +53,7 @@ __all__ = [
     "COMPOSITION_ROOTS",
     "CONFIG_PACKAGE",
     "LAYER_PACKAGES",
+    "MONEY_PACKAGE",
     "ROOT_MARKER",
     "Violation",
     "check_tree",
@@ -96,6 +100,9 @@ ROOT_MARKER = ".dhruva-root"
 #: The only package permitted to read the environment (ADR-031, rule R5).
 CONFIG_PACKAGE = "dhruva.shared.config"
 
+#: Package in which ``float`` is forbidden outright (ADR-048, rule R6).
+MONEY_PACKAGE = "dhruva.shared.money"
+
 #: Names that constitute reading the environment directly.
 _ENVIRONMENT_ACCESSORS: frozenset[str] = frozenset({"environ", "getenv", "putenv", "environb"})
 
@@ -121,7 +128,7 @@ class Violation:
     lineno
         Line number of the offending import.
     rule
-        Short rule identifier, one of ``R1``..``R5``.
+        Short rule identifier, one of ``R1``..``R6``.
     message
         Human-readable explanation, written to be actionable without needing to
         consult the plan.
@@ -204,6 +211,55 @@ def _environment_reads(tree: ast.AST) -> list[tuple[str, int]]:
             and node.attr in _ENVIRONMENT_ACCESSORS
         ):
             found.append((f"os.{node.attr}", node.lineno))
+    return found
+
+
+def _float_usages(tree: ast.AST) -> list[tuple[str, int]]:
+    """Find every use of ``float`` that would let imprecision into money.
+
+    Three shapes are flagged: a float **literal**, a ``float()`` **conversion**,
+    and a ``float`` **annotation**.
+
+    ``isinstance(x, float)`` is deliberately *not* flagged. That is a guard
+    rejecting a float, which is the opposite of the problem -- banning it would
+    force the money constructors to drop the very check that stops a float
+    reaching them at runtime.
+
+    Returns ``(description, lineno)`` pairs.
+    """
+    found: list[tuple[str, int]] = []
+
+    annotations: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+            annotations.append(node.annotation)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if node.returns is not None:
+                annotations.append(node.returns)
+            args = node.args
+            for argument in (
+                *args.posonlyargs,
+                *args.args,
+                *args.kwonlyargs,
+                args.vararg,
+                args.kwarg,
+            ):
+                if argument is not None and argument.annotation is not None:
+                    annotations.append(argument.annotation)
+
+    annotated_nodes = {id(inner) for ann in annotations for inner in ast.walk(ann)}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and type(node.value) is float:
+            found.append((f"float literal {node.value!r}", node.lineno))
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "float"
+        ):
+            found.append(("float() conversion", node.lineno))
+        elif isinstance(node, ast.Name) and node.id == "float" and id(node) in annotated_nodes:
+            found.append(("float annotation", node.lineno))
     return found
 
 
@@ -390,6 +446,25 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
     in_composition_root = _is_composition_root(module_name)
     is_leaf_package = module_name.startswith(_LEAF_PACKAGE_PREFIXES)
 
+    violations_r6 = (
+        [
+            Violation(
+                path=path,
+                lineno=lineno,
+                rule="R6",
+                message=(
+                    f"'{module_name}' uses {usage}. No float may appear in the monetary "
+                    f"modules (ADR-048): a single float operation reintroduces the "
+                    f"imprecision the whole design removes. Use int minor units, Decimal "
+                    f"at the boundary, or an explicit RoundingPolicy."
+                ),
+            )
+            for usage, lineno in _float_usages(tree)
+        ]
+        if module_name.startswith(MONEY_PACKAGE)
+        else []
+    )
+
     if not module_name.startswith(CONFIG_PACKAGE):
         violations_r5 = [
             Violation(
@@ -411,7 +486,7 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
     for target, lineno in _imported_modules(tree, package):
         grouped.setdefault(lineno, []).append(target)
 
-    violations: list[Violation] = list(violations_r5)
+    violations: list[Violation] = [*violations_r5, *violations_r6]
     for lineno, targets in sorted(grouped.items()):
         if not in_composition_root:
             roots = [t for t in targets if _is_composition_root(t)]

@@ -47,6 +47,7 @@ EXPECTED_CODES: dict[str, str] = {
     "SafetyError": "DHR-SAF-001",
     "PreconditionUnknownError": "DHR-SAF-002",
     "DegradedModeError": "DHR-SAF-003",
+    "InvariantViolation": "DHR-SAF-004",
 }
 
 
