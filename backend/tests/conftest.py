@@ -7,11 +7,22 @@ is run from ``backend/``, from the repository root, or from CI.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, settings
 
 from dhruva.tooling.boundaries import find_repo_root
+
+# Mutation runs re-execute the suite once per mutant, so the default example
+# count would make a run cost hours rather than minutes. The reduced profile is
+# selected only by the mutation harness, never by a normal test run.
+settings.register_profile(
+    "fast", max_examples=15, deadline=None, suppress_health_check=[HealthCheck.too_slow]
+)
+settings.register_profile("default", deadline=None)
+settings.load_profile("fast" if os.environ.get("DHRUVA_FAST_PROPERTY_TESTS") else "default")
 
 
 @pytest.fixture(scope="session")

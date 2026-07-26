@@ -200,6 +200,17 @@ filterwarnings = ["error"]
 # --------------------------------------------------------------------------- #
 # coverage - DoD section 10.1
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# mutmut - mutation testing (ADR-049)
+# --------------------------------------------------------------------------- #
+[tool.mutmut]
+# Scoped to the packages where a subtle arithmetic fault produces a plausible
+# wrong number rather than a crash. Mutating the FastAPI wiring would cost
+# minutes per run to re-confirm what the other gates already establish.
+paths_to_mutate = ["src/dhruva/shared/money/", "src/dhruva/shared/time/"]
+tests_dir = ["tests/unit/shared/money/", "tests/unit/shared/time/"]
+also_copy = ["tests/"]
+
 [tool.coverage.run]
 source = ["dhruva"]
 branch = true
