@@ -22,6 +22,12 @@ R5  **Only the configuration module reads the environment.** Nothing outside
 R6  **No ``float`` in the monetary modules.** Nothing under
     ``dhruva.shared.money`` may write a float literal, call ``float()``, or
     annotate anything as ``float`` (ADR-048).
+R7  **The domain imports no persistence framework.** No module under a
+    ``domain`` package may import ``sqlalchemy``, ``alembic``, ``asyncpg`` or
+    ``psycopg`` (ADR-052, ADR-059).
+R8  **The timeseries path imports no domain.** No module under a ``timeseries``
+    infrastructure package may import from any ``domain`` package, so a business
+    entity cannot be named on the ORM-bypass path (ADR-054, ADR-059).
 
 Why this exists as code rather than as a convention
 ---------------------------------------------------
@@ -54,7 +60,9 @@ __all__ = [
     "CONFIG_PACKAGE",
     "LAYER_PACKAGES",
     "MONEY_PACKAGE",
+    "PERSISTENCE_PACKAGES",
     "ROOT_MARKER",
+    "TIMESERIES_SEGMENT",
     "Violation",
     "check_tree",
     "find_repo_root",
@@ -103,6 +111,16 @@ CONFIG_PACKAGE = "dhruva.shared.config"
 #: Package in which ``float`` is forbidden outright (ADR-048, rule R6).
 MONEY_PACKAGE = "dhruva.shared.money"
 
+#: Persistence frameworks. A domain layer that imports one of these has stopped
+#: being persistence-ignorant, whatever its class definitions look like
+#: (ADR-052, rule R7).
+PERSISTENCE_PACKAGES: frozenset[str] = frozenset(
+    {"sqlalchemy", "alembic", "asyncpg", "psycopg", "psycopg2"}
+)
+
+#: Path segment identifying the ORM-bypass timeseries path (ADR-054, rule R8).
+TIMESERIES_SEGMENT = "timeseries"
+
 #: Names that constitute reading the environment directly.
 _ENVIRONMENT_ACCESSORS: frozenset[str] = frozenset({"environ", "getenv", "putenv", "environb"})
 
@@ -128,7 +146,7 @@ class Violation:
     lineno
         Line number of the offending import.
     rule
-        Short rule identifier, one of ``R1``..``R6``.
+        Short rule identifier, one of ``R1``..``R8``.
     message
         Human-readable explanation, written to be actionable without needing to
         consult the plan.
@@ -261,6 +279,27 @@ def _float_usages(tree: ast.AST) -> list[tuple[str, int]]:
         elif isinstance(node, ast.Name) and node.id == "float" and id(node) in annotated_nodes:
             found.append(("float annotation", node.lineno))
     return found
+
+
+def _third_party_roots(tree: ast.AST) -> list[tuple[str, int]]:
+    """Yield ``(top_level_package, lineno)`` for every non-``dhruva`` import."""
+    found: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend((alias.name.split(".")[0], node.lineno) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            found.append((node.module.split(".")[0], node.lineno))
+    return found
+
+
+def _in_domain_layer(module: str) -> bool:
+    """Return whether ``module`` sits inside any context's domain layer."""
+    return ".domain" in f".{module}." or module.endswith(".domain")
+
+
+def _in_timeseries_package(module: str) -> bool:
+    """Return whether ``module`` sits inside a timeseries infrastructure package."""
+    return f".{TIMESERIES_SEGMENT}." in f"{module}." or module.endswith(f".{TIMESERIES_SEGMENT}")
 
 
 def _module_name(source_root: Path, file: Path) -> str:
@@ -414,12 +453,19 @@ def _check_context_import(
 
 
 def _deduplicate(violations: list[Violation]) -> list[Violation]:
-    """Collapse identical violations produced by the ambiguous-import expansion."""
-    seen: set[Violation] = set()
+    """Collapse violations that describe one breach more than once.
+
+    ``from a.b import c`` expands to two candidate targets, so a single offending
+    line can produce two violations whose messages differ only in which candidate
+    they name. Deduplicating on ``(path, line, rule)`` reports the breach once,
+    which is what a reader needs.
+    """
+    seen: set[tuple[str, int, str]] = set()
     unique: list[Violation] = []
     for violation in violations:
-        if violation not in seen:
-            seen.add(violation)
+        key = (violation.path, violation.lineno, violation.rule)
+        if key not in seen:
+            seen.add(key)
             unique.append(violation)
     return unique
 
@@ -445,6 +491,47 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
     source_context = _owning_context(module_name)
     in_composition_root = _is_composition_root(module_name)
     is_leaf_package = module_name.startswith(_LEAF_PACKAGE_PREFIXES)
+
+    violations_r7 = (
+        [
+            Violation(
+                path=path,
+                lineno=lineno,
+                rule="R7",
+                message=(
+                    f"'{module_name}' imports the persistence framework '{package}'. "
+                    f"A domain layer that imports one has stopped being "
+                    f"persistence-ignorant, whatever its class definitions look like "
+                    f"(ADR-052). Declare a repository protocol here and implement it "
+                    f"in infrastructure."
+                ),
+            )
+            for package, lineno in _third_party_roots(tree)
+            if package in PERSISTENCE_PACKAGES
+        ]
+        if _in_domain_layer(module_name)
+        else []
+    )
+
+    violations_r8 = (
+        [
+            Violation(
+                path=path,
+                lineno=lineno,
+                rule="R8",
+                message=(
+                    f"'{module_name}' imports '{target}' from a domain layer. The "
+                    f"timeseries path bypasses the mapping layer and must never carry "
+                    f"a business entity (ADR-054). Decompose to columns outside this "
+                    f"package."
+                ),
+            )
+            for target, lineno in _imported_modules(tree, module_name)
+            if _in_domain_layer(target)
+        ]
+        if _in_timeseries_package(module_name)
+        else []
+    )
 
     violations_r6 = (
         [
@@ -486,7 +573,12 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
     for target, lineno in _imported_modules(tree, package):
         grouped.setdefault(lineno, []).append(target)
 
-    violations: list[Violation] = [*violations_r5, *violations_r6]
+    violations: list[Violation] = [
+        *violations_r5,
+        *violations_r6,
+        *violations_r7,
+        *violations_r8,
+    ]
     for lineno, targets in sorted(grouped.items()):
         if not in_composition_root:
             roots = [t for t in targets if _is_composition_root(t)]
@@ -544,7 +636,7 @@ def check_tree(source_root: Path, repo_root: Path | None = None) -> list[Violati
     violations: list[Violation] = []
     for file in sorted(source_root.rglob("*.py")):
         violations.extend(_check_module(source_root, file, base))
-    return sorted(violations, key=lambda v: (v.path, v.lineno, v.rule))
+    return _deduplicate(sorted(violations, key=lambda v: (v.path, v.lineno, v.rule)))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
