@@ -144,6 +144,6 @@ Documented in full in `docs/subsystems/S01-repository-tooling-ci.md`:
 - The ADR guard hashes bodies, not meaning. A new ADR that contradicts an old one
   without superseding it passes every check.
 
-[Unreleased]: https://github.com/OWNER/dhruva/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/OWNER/dhruva/releases/tag/v0.2.0
-[0.1.0]: https://github.com/OWNER/dhruva/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dhruv-png/DHRUVA/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dhruv-png/DHRUVA/releases/tag/v0.2.0
+[0.1.0]: https://github.com/dhruv-png/DHRUVA/releases/tag/v0.1.0
