@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**50 decisions — 49 accepted, 1 superseded.** Records are immutable once accepted
+**59 decisions — 58 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -59,6 +59,15 @@ should not have been made gets caught.
 | [ADR-048](ADR-048-no-float-in-the-monetary-modules.md) | Boundary rule R6: no float in the monetary modules | Accepted |
 | [ADR-049](ADR-049-mutation-testing-for-the-financial-primitives.md) | Mutation testing for the financial primitives | Accepted |
 | [ADR-050](ADR-050-shared-kernel-is-api-stable.md) | The shared kernel is API-stable from S03 | Accepted |
+| [ADR-051](ADR-051-release-tags-are-immutable.md) | Release tags are immutable | Accepted |
+| [ADR-052](ADR-052-separate-persistence-models-and-mappers.md) | Separate persistence models with an explicit mapping layer | Accepted |
+| [ADR-053](ADR-053-unit-of-work-owns-the-transaction.md) | The Unit of Work owns the transaction; repositories never commit | Accepted |
+| [ADR-054](ADR-054-timeseries-bypass-behind-a-dedicated-interface.md) | Bulk timeseries writes bypass the ORM behind a dedicated TimeSeriesStorage interface | Accepted |
+| [ADR-055](ADR-055-expand-contract-migrations.md) | Expand/contract migrations; every migration declares its reversibility and operational impact | Accepted |
+| [ADR-056](ADR-056-async-session-discipline.md) | Async session discipline: bounded, deterministic, never global | Accepted |
+| [ADR-057](ADR-057-explicit-change-tracking.md) | Explicit change tracking with optimistic concurrency | Accepted |
+| [ADR-058](ADR-058-integration-tests-use-a-real-database.md) | Integration tests run against real PostgreSQL with TimescaleDB | Accepted |
+| [ADR-059](ADR-059-boundary-rules-r7-and-r8.md) | Boundary rules R7 and R8: the domain imports no persistence, the timeseries path imports no domain | Accepted |
 
 ## Reading order for someone new
 

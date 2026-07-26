@@ -10,7 +10,7 @@
 | Complexity | L → **XL** (see §2.4) |
 | Estimate | 6 → **9 sessions** |
 | Risk | **CRIT** |
-| Status | **STEP 1 COMPLETE — awaiting Design Review. No implementation started.** |
+| Status | **STEP 3 — IMPLEMENTATION** (design approved with two amendments, 2026-07-26) |
 
 ---
 
@@ -414,6 +414,34 @@ transactional rollback for isolation, session-scoped container for speed.
 **Proposed.** The build fails if any module under a `domain/` package imports
 `sqlalchemy`, `alembic`, `asyncpg` or `psycopg`. R6 banned a numeric type from
 the money layer; this bans a dependency direction from every domain layer.
+
+## 8.1 Design Review amendments (approved 2026-07-26)
+
+**Amendment 1 — ADR-054 boundary tightened.** The timeseries bypass must
+terminate at a dedicated `TimeSeriesStorage` interface rather than remaining a
+described convention. Seven conditions now define the exception, and boundary
+rule **R8** makes it enforceable: the timeseries package may not import from any
+`domain` package, so a business entity cannot be named on that path.
+
+**Amendment 2 — `TradingDay` reconstruction (answers Q1).** Neither the mapper
+nor the repository owns reconstruction. The flow is:
+
+```
+Database Row → Persistence DTO → Mapper → Reconstruction Factory → Domain Object
+```
+
+Repositories *orchestrate* reconstruction; they do not embed it. The mapper stays
+a pure function between a model and a primitives-only record. A reconstruction
+factory holds whatever domain services are needed — a `TradingCalendar` for
+`TradingDay` — and turns a record into an aggregate.
+
+This costs one more layer than my proposal and is better: it keeps the repository
+focused on persistence, keeps the mapper pure and benchmarkable, and leaves
+ADR-046 uncompromised, because reconstruction goes through the same calendar
+verification as any other `TradingDay` construction.
+
+**Q2, Q3, Q4** were approved as recommended: machinery plus one throwaway example
+table, optimistic locking on every aggregate, and the outbox table created here.
 
 ## 9. Open Questions for the Product Owner
 

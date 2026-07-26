@@ -49,5 +49,13 @@
   "ADR-048-no-float-in-the-monetary-modules.md": "44d3bb48a504224819cb984a210e5e26489d43d6281e0bd696f00d1f0eac784d",
   "ADR-049-mutation-testing-for-the-financial-primitives.md": "5fe7ad24dd394101e94904887bdc6f05ed6c4deea5015ac7c6093420dbc241b1",
   "ADR-050-shared-kernel-is-api-stable.md": "59223372e8e661fdd89082215da7357d7652f1669fc06f67bbfd553ddbbb3e1f",
-  "ADR-051-release-tags-are-immutable.md": "fdb918d9f208227e035680183d71fae47a11021662cbc4e1f21d2c58fe4981c6"
+  "ADR-051-release-tags-are-immutable.md": "fdb918d9f208227e035680183d71fae47a11021662cbc4e1f21d2c58fe4981c6",
+  "ADR-052-separate-persistence-models-and-mappers.md": "60b1ef40bfe284721c100b9670026d2c208583ce536f96a767658310f0f28bce",
+  "ADR-053-unit-of-work-owns-the-transaction.md": "38b062591ff68caeaa2c1650b61f0bac94327048f958b5f5a4d99a089654bb56",
+  "ADR-054-timeseries-bypass-behind-a-dedicated-interface.md": "e6a28d3ffc2f42208d201e03a42629afb596f6b0b502b64ee32442bdd6b19faa",
+  "ADR-055-expand-contract-migrations.md": "284235a0caf0a78b42d53a745b210b5a885f39e237c7fffc1997ff71f733f2a9",
+  "ADR-056-async-session-discipline.md": "a53e8f3991380d66ae4207dde1ff3ca77033205eeb0467765ba37186365a9be8",
+  "ADR-057-explicit-change-tracking.md": "b2f19177dcdfec94eb493619f84c8c94b91f477edd763ac6a1b187897a6865f1",
+  "ADR-058-integration-tests-use-a-real-database.md": "a1c38765743c223251d1015c5848f1409b5bafd99f2a38da6ec2325506db901b",
+  "ADR-059-boundary-rules-r7-and-r8.md": "ef02d724231d612a759a29ea6640cfdbe7c8f468da790df6ed0b729cffa9eac0"
 }
