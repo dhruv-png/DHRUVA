@@ -1,0 +1,18 @@
+* text=auto eol=lf
+
+*.py     text diff=python
+*.md     text
+*.toml   text
+*.yml    text
+*.yaml   text
+*.json   text
+*.sql    text
+Makefile text
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.parquet binary
+
+# Keep generated lockfiles out of diff noise but still versioned.
+uv.lock linguist-generated=true -diff

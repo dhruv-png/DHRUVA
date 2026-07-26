@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Environment - never commit anything that could contain a credential (ADR-020)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Research output is reproducible and often large; the notebook is the artefact
+research/output/
+research/data/
+*.ipynb_checkpoints/
+
+# Node / frontend
+node_modules/
+.next/
+out/
+
+# Editors and OS
+.idea/
+.vscode/
+!.vscode/extensions.json
+.DS_Store

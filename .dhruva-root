@@ -1,0 +1,5 @@
+D.H.R.U.V.A repository root marker.
+
+Read by dhruva.tooling.boundaries.find_repo_root so that the architectural
+checks behave identically regardless of the working directory they run from.
+Do not delete or move this file.
