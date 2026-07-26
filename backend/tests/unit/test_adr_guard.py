@@ -84,10 +84,10 @@ def test_real_decision_log_is_intact(adr_dir: Path) -> None:
 
 @pytest.mark.unit
 def test_real_decision_log_holds_all_approved_decisions(adr_dir: Path) -> None:
-    """Master Project Plan section 4 declares ADR-001 through ADR-030."""
+    """Master Project Plan section 4 declares ADR-001 through ADR-036."""
     records, problems = load_adrs(adr_dir)
     assert not problems
-    assert [r.number for r in records] == list(range(1, 31))
+    assert [r.number for r in records] == list(range(1, 37))
     assert all(r.is_accepted for r in records)
 
 
