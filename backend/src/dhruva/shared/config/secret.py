@@ -16,9 +16,14 @@ A value that cannot render itself closes that path structurally (ADR-033).
 from __future__ import annotations
 
 import hmac
-from typing import Final
+from typing import Any, Final
 
-__all__ = ["REDACTED_PLACEHOLDER", "SecretValue", "registered_secret_values"]
+__all__ = [
+    "REDACTED_PLACEHOLDER",
+    "SecretValue",
+    "registered_secret_values",
+    "secret_registry_version",
+]
 
 #: What a redacted value renders as, everywhere. Distinctive on purpose: it is
 #: greppable in a log archive, and unmistakable in a screenshot.
@@ -33,6 +38,21 @@ _MIN_REGISTERED_LENGTH: Final = 8
 #: processor. Deliberately a plain set: it is small, single-digit in practice, and
 #: lives only in memory.
 _REGISTRY: set[str] = set()
+
+#: Incremented whenever a new value joins the registry. Lets the logging
+#: redactor cache its filtered snapshot and rebuild it only when the registry
+#: actually changes -- the difference between two set constructions per log
+#: record and none (S02 performance budget).
+_REGISTRY_VERSION = 0
+
+
+def secret_registry_version() -> int:
+    """Return a counter that changes whenever a new secret is registered.
+
+    Consumers cache derived views of the registry against this value rather than
+    rebuilding them per use.
+    """
+    return _REGISTRY_VERSION
 
 
 def registered_secret_values() -> frozenset[str]:
@@ -96,9 +116,11 @@ class SecretValue:
             Pass ``False`` only for values that are not really secret, such as
             test fixtures whose appearance in output is expected.
         """
+        global _REGISTRY_VERSION  # noqa: PLW0603 - process-wide registry, by design
         self._value = value
-        if register and len(value) >= _MIN_REGISTERED_LENGTH:
+        if register and len(value) >= _MIN_REGISTERED_LENGTH and value not in _REGISTRY:
             _REGISTRY.add(value)
+            _REGISTRY_VERSION += 1
 
     def reveal(self) -> str:
         """Return the underlying credential.
@@ -159,14 +181,34 @@ class SecretValue:
         msg = "SecretValue is not hashable; a secret must never become a dict key"
         raise TypeError(msg)
 
-    def __getstate__(self) -> object:
+    def __reduce__(self) -> tuple[Any, ...]:
         """Refuse to be pickled.
 
         Raises
         ------
         TypeError
-            Always. Pickling a credential writes it to disk or to a queue, which
-            is the outcome this class exists to prevent.
+            Always. Pickling a credential writes it to disk or onto a queue,
+            which is the outcome this class exists to prevent.
+
+        Notes
+        -----
+        Pickling is blocked here rather than through ``__getstate__`` so that
+        in-memory copying still works. Validation frameworks deep-copy default
+        values, and a secret that cannot be copied is a secret that cannot be a
+        default -- a restriction with no security benefit, since the copy never
+        leaves the process.
         """
-        msg = "SecretValue cannot be serialised; pass the configuration provider instead"
+        msg = "SecretValue cannot be pickled; pass the configuration provider instead"
         raise TypeError(msg)
+
+    def __copy__(self) -> SecretValue:
+        """Return an equivalent secret.
+
+        Registration is skipped: the value is already in the registry if it
+        belonged there, and re-adding it would be a no-op on a set.
+        """
+        return SecretValue(self._value, register=False)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SecretValue:
+        """Return an equivalent secret; a string has no interior to deep-copy."""
+        return SecretValue(self._value, register=False)
