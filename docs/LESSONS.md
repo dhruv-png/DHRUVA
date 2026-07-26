@@ -1,12 +1,40 @@
-# Engineering Lessons
+# Engineering Journal
 
-Findings from building this platform that cost time to discover and would cost
-the same time again. Kept because the next person to hit one of these will
-otherwise repeat the investigation — and on a project with a bus factor of one,
-that person is most likely the author, having forgotten.
+A **permanent, accumulating record** of what building this platform actually
+taught — not a release artefact, and not a summary. It grows with every
+subsystem and is never pruned.
 
-Organised by the subsystem that surfaced them. Each entry states what happened,
-why it happened, and what to do instead.
+Findings kept here cost time to discover and would cost the same time again. The
+next person to hit one of these is, on a project with a bus factor of one, most
+likely the author having forgotten (risk R15).
+
+**What belongs here:** engineering discoveries · tooling limitations · failed
+approaches · benchmark findings · debugging techniques · estimation accuracy ·
+architectural trade-offs and how they aged.
+
+**What does not:** anything already stated as a decision (that is an ADR), and
+anything already stated as a deferral (that is the technical debt register).
+
+Organised newest-subsystem-first. Each entry states what happened, why, and what
+to do instead.
+
+---
+
+## Estimation accuracy so far
+
+Kept because estimates that are never checked never improve.
+
+| Subsystem | Estimated | Revised to | Why the revision |
+|---|---|---|---|
+| S01 | 4 sessions | 4 | — |
+| S02 | 4 sessions | 6 | ADR-035 moved observability from S41 into every component |
+| S03 | 5 sessions | 7 | Sub-paise price precision, property testing, and rule R6 |
+
+**Pattern: two consecutive upward revisions, both from scope discovered during
+architecture rather than during implementation.** That is the architecture-first
+process working — the discovery happened before code was written both times —
+but it is also evidence that the roadmap's per-subsystem estimates are optimistic
+by roughly 30%. Worth watching at S04 and S05 before adjusting the plan.
 
 ---
 
