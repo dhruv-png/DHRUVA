@@ -70,17 +70,18 @@ class Money:
         InvariantViolation
             If ``minor_units`` is a ``float``, a ``bool``, or not an ``int``.
         """
-        invariant(
-            not isinstance(minor_units, float),
-            "Money cannot be built from a float",
-            value=repr(minor_units),
-        )
-        invariant(
-            isinstance(minor_units, int) and not isinstance(minor_units, bool),
-            "Money requires an int count of minor units",
-            value=repr(minor_units),
-            actual_type=type(minor_units).__name__,
-        )
+        # `type(x) is int` rather than `isinstance`, deliberately: it rejects
+        # bool (a subclass of int) in the same test, and it is a single pointer
+        # comparison. The eager-argument form -- invariant(cond, msg, **ctx) --
+        # builds a repr and a dict on every construction, which the S03
+        # benchmark measured at 0.89us against a 0.30us budget. Guards on hot
+        # paths check first and construct the message only on failure.
+        if type(minor_units) is not int:
+            raise InvariantViolation(
+                "Money requires an int count of minor units; float is never permitted",
+                value=repr(minor_units),
+                actual_type=type(minor_units).__name__,
+            )
         object.__setattr__(self, "_minor_units", minor_units)
         object.__setattr__(self, "_currency", currency)
 
@@ -192,14 +193,16 @@ class Money:
         """Add two amounts of the same currency."""
         if not isinstance(other, Money):
             return NotImplemented
-        self._require_same_currency(other, "add")
+        if self._currency is not other._currency:
+            self._reject_currency_mismatch(other, "add")
         return Money(self._minor_units + other._minor_units, self._currency)
 
     def __sub__(self, other: Money, /) -> Money:
         """Subtract one amount from another of the same currency."""
         if not isinstance(other, Money):
             return NotImplemented
-        self._require_same_currency(other, "subtract")
+        if self._currency is not other._currency:
+            self._reject_currency_mismatch(other, "subtract")
         return Money(self._minor_units - other._minor_units, self._currency)
 
     def __mul__(self, other: int, /) -> Money:
@@ -356,8 +359,19 @@ class Money:
 
     def _require_same_currency(self, other: Money, operation: str) -> None:
         """Reject mixed-currency arithmetic (Design Review Q2: runtime check)."""
-        invariant(
-            self._currency is other._currency,
+        if self._currency is not other._currency:
+            self._reject_currency_mismatch(other, operation)
+
+    def _reject_currency_mismatch(self, other: Money, operation: str) -> None:
+        """Raise for a currency mismatch. Cold path, kept out of the hot one.
+
+        The comparison lives at the call site and only the *failure* costs a
+        function call. Two earlier shapes were measured and rejected: the eager
+        ``invariant(cond, msg, **ctx)`` form built an f-string and two ``str()``
+        calls on every addition (1.86us against a 0.50us budget), and routing
+        every addition through a checking method still cost a frame (0.53us).
+        """
+        raise InvariantViolation(
             f"cannot {operation} amounts in different currencies",
             left=str(self._currency),
             right=str(other._currency),

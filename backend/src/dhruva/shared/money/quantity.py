@@ -14,6 +14,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Self
 
+from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.invariants import invariant
 
 __all__ = ["Quantity", "Side", "SignedQuantity"]
@@ -258,7 +259,12 @@ class SignedQuantity:
 
     def __init__(self, units: int, /) -> None:
         """Wrap a signed unit count."""
-        _reject_non_integer(units, "SignedQuantity")
+        if type(units) is not int:
+            raise InvariantViolation(
+                "SignedQuantity requires an int; float is never permitted",
+                value=repr(units),
+                actual_type=type(units).__name__,
+            )
         object.__setattr__(self, "_units", units)
 
     def __setattr__(self, name: str, value: object) -> None:

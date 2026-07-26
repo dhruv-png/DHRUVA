@@ -73,17 +73,14 @@ class Price:
         InvariantViolation
             If ``scaled_units`` is a ``float``, a ``bool``, or not an ``int``.
         """
-        invariant(
-            not isinstance(scaled_units, float),
-            "Price cannot be built from a float",
-            value=repr(scaled_units),
-        )
-        invariant(
-            isinstance(scaled_units, int) and not isinstance(scaled_units, bool),
-            "Price requires an int count of scaled units",
-            value=repr(scaled_units),
-            actual_type=type(scaled_units).__name__,
-        )
+        # See the note in Money.__init__: hot-path guards check first and build
+        # the message only on failure.
+        if type(scaled_units) is not int:
+            raise InvariantViolation(
+                "Price requires an int count of scaled units; float is never permitted",
+                value=repr(scaled_units),
+                actual_type=type(scaled_units).__name__,
+            )
         object.__setattr__(self, "_scaled_units", scaled_units)
         object.__setattr__(self, "_currency", currency)
 
@@ -232,13 +229,17 @@ class Price:
     # -- comparison and identity -------------------------------------------- #
 
     def _require_same_currency(self, other: Price, operation: str) -> None:
-        """Reject mixed-currency arithmetic."""
-        invariant(
-            self._currency is other._currency,
-            f"cannot {operation} prices in different currencies",
-            left=str(self._currency),
-            right=str(other._currency),
-        )
+        """Reject mixed-currency arithmetic.
+
+        Explicit branch rather than ``invariant()``; see the note in
+        :meth:`Money._require_same_currency`.
+        """
+        if self._currency is not other._currency:
+            raise InvariantViolation(
+                f"cannot {operation} prices in different currencies",
+                left=str(self._currency),
+                right=str(other._currency),
+            )
 
     def __eq__(self, other: object, /) -> bool:
         """Compare by scaled units and currency."""
