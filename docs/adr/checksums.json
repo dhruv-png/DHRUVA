@@ -39,5 +39,13 @@
   "ADR-038-errors-are-a-closed-taxonomy-with-stable-codes.md": "d5f1b62db69ba93b8117ddfbb2b741a42e3f328b0956f09a6cff3e16e59116b6",
   "ADR-039-correlation-propagates-through-contextvars.md": "baa85db76f8ced24b26433c0ed190fe17b5af67e2e311798e6a91770dd49ef12",
   "ADR-040-opentelemetry-api-in-libraries-sdk-at-roots.md": "1476026f1fb3329d19b915ef462b989e75339715d38f18c423d67dbec28a9d3d",
-  "ADR-041-technical-debt-register.md": "5184f1bd83390e3666af7b473b29c875b57e1997cfa628d940e7079f96ed1050"
+  "ADR-041-technical-debt-register.md": "5184f1bd83390e3666af7b473b29c875b57e1997cfa628d940e7079f96ed1050",
+  "ADR-042-money-is-an-integer-count-of-minor-units.md": "b9b93433bf74ed5927c5b239caa056293898f6ea9b20056c334b3853d26f4885",
+  "ADR-043-dimensional-typing-of-domain-quantities.md": "6fcdfcf9c4546f7fdda9ca2644f802cced3549cff532badf7db6311499f48fb2",
+  "ADR-044-rounding-is-always-explicit-and-named.md": "8ab2bac1dd0fa2bf6e32e354334a56c65e84d0049b1f6c7430d94b3457c584bc",
+  "ADR-045-quantity-is-unsigned-direction-is-side.md": "93adddce12ede11aaef636ca3cdda55dec9fdb177b7d5d32d46fa445dda9bb69",
+  "ADR-046-trading-day-requires-a-calendar.md": "16f11e5d8f83cf2e7f94ac656d98aa6e5e63372bbdb452a16dc30fbce299e195",
+  "ADR-047-exceptions-only-no-result-type.md": "43c36f3c4eafb29b4c6a7ffa341e86827dbc6971053c72fca41a51117823b992",
+  "ADR-048-no-float-in-the-monetary-modules.md": "44d3bb48a504224819cb984a210e5e26489d43d6281e0bd696f00d1f0eac784d",
+  "ADR-049-mutation-testing-for-the-financial-primitives.md": "5fe7ad24dd394101e94904887bdc6f05ed6c4deea5015ac7c6093420dbc241b1"
 }

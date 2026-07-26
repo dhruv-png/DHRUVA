@@ -1,10 +1,10 @@
 # ADR-005 — Money is `Decimal`; storage is integer paise
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-042
 - **Date:** 2026-07-26
 - **Deciders:** Product Owner (drew), CTO / Principal Architect
 - **Supersedes:** —
-- **Superseded by:** —
+- **Superseded by:** ADR-042
 
 > Origin: Master Project Plan v1.1, section 4. Approved with the plan.
 

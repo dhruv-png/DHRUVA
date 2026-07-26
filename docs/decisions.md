@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**41 decisions, all Accepted.** Records are immutable once accepted
+**49 decisions — 48 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -13,7 +13,7 @@ should not have been made gets caught.
 | [ADR-002](ADR-002-kafka-deferred-redis-streams-is-the-v1-event.md) | Kafka deferred; Redis Streams is the v1 event backbone | Accepted |
 | [ADR-003](ADR-003-provider-agnostic-market-data-via-ports-and.md) | Provider-agnostic market data via ports and adapters | Accepted |
 | [ADR-004](ADR-004-multi-tenant-ready-schema-from-day-one.md) | Multi-tenant-ready schema from day one | Accepted |
-| [ADR-005](ADR-005-money-is-decimal-storage-is-integer-paise.md) | Money is `Decimal`; storage is integer paise | Accepted |
+| [ADR-005](ADR-005-money-is-decimal-storage-is-integer-paise.md) | Money is `Decimal`; storage is integer paise | Superseded by ADR-042 |
 | [ADR-006](ADR-006-all-timestamps-stored-utc-all-display-asia-kolkata.md) | All timestamps stored UTC; all display Asia/Kolkata; `TradingDay` is a domain type | Accepted |
 | [ADR-007](ADR-007-bitemporal-data-for-anything-a-backtest-reads.md) | Bitemporal data for anything a backtest reads | Accepted |
 | [ADR-008](ADR-008-prices-stored-unadjusted-adjustment-applied-at-read.md) | Prices stored unadjusted; adjustment applied at read time | Accepted |
@@ -50,6 +50,14 @@ should not have been made gets caught.
 | [ADR-039](ADR-039-correlation-propagates-through-contextvars.md) | Correlation propagates through contextvars, and threads require an explicit wrapper | Accepted |
 | [ADR-040](ADR-040-opentelemetry-api-in-libraries-sdk-at-roots.md) | OpenTelemetry API in library code; the SDK only at composition roots | Accepted |
 | [ADR-041](ADR-041-technical-debt-register.md) | Every subsystem maintains a Technical Debt Register | Accepted |
+| [ADR-042](ADR-042-money-is-an-integer-count-of-minor-units.md) | Money is an integer count of minor units; Price carries a fixed high-precision scale | Accepted |
+| [ADR-043](ADR-043-dimensional-typing-of-domain-quantities.md) | Dimensional typing: Money, Price, Quantity and Ratio are distinct types | Accepted |
+| [ADR-044](ADR-044-rounding-is-always-explicit-and-named.md) | Rounding is always explicit and named after the rule it implements | Accepted |
+| [ADR-045](ADR-045-quantity-is-unsigned-direction-is-side.md) | Quantity is unsigned; direction belongs exclusively to Side | Accepted |
+| [ADR-046](ADR-046-trading-day-requires-a-calendar.md) | TradingDay cannot be constructed without a calendar | Accepted |
+| [ADR-047](ADR-047-exceptions-only-no-result-type.md) | Exceptions are the single error-signalling mechanism; no Result type | Accepted |
+| [ADR-048](ADR-048-no-float-in-the-monetary-modules.md) | Boundary rule R6: no float in the monetary modules | Accepted |
+| [ADR-049](ADR-049-mutation-testing-for-the-financial-primitives.md) | Mutation testing for the financial primitives | Accepted |
 
 ## Reading order for someone new
 
@@ -65,6 +73,8 @@ it does, read these six in order:
 7. **ADR-029** — why nothing crosses a subsystem boundary uncommitted
 8. **ADR-035** — why observability is built at S02 rather than at S41
 9. **ADR-037** — why log redaction has two independent strategies
+10. **ADR-042** — why money is an integer, and why paise were not enough
+11. **ADR-043** — why `Money + Price` does not compile
 
 ## Architecture Revisions
 
