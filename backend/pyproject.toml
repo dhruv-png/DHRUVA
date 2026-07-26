@@ -39,6 +39,13 @@ dependencies = [
   "uvicorn==0.38.0",
   "prometheus-client==0.24.0",
   "opentelemetry-api==1.39.0",
+  # S04 -- Persistence Foundation:
+  #   sqlalchemy   async ORM; models live in infrastructure only (ADR-052)
+  #   alembic      versioned migrations with declared reversibility (ADR-055)
+  #   asyncpg      the async PostgreSQL driver SQLAlchemy dispatches to
+  "sqlalchemy==2.0.44",
+  "alembic==1.16.5",
+  "asyncpg==0.30.0",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +72,7 @@ dev = [
   "pip-audit==2.9.0",
   "pytest-benchmark==5.1.0",
   "httpx==0.28.1",
+  "testcontainers[postgres]==4.9.1",
 ]
 
 [tool.hatch.version]
@@ -116,6 +124,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# SQLAlchemy's TypeDecorator hooks receive `dialect` whether or not an
+# implementation needs it. The parameter is imposed by the framework's signature,
+# not dead code we chose to leave.
+"src/dhruva/contexts/platform/infrastructure/database/types.py" = ["ARG002"]
 "tests/**" = [
   "S101",    # assert is the point of a test
   "PLR2004", # magic values are readable in assertions
