@@ -151,6 +151,24 @@ enable_error_code = [
 # ADR-024: a bare `# type: ignore` is banned; `ignore-without-code` above turns
 # one into an error. Any ignore must name the code and link an issue.
 
+# The monetary value objects annotate each binary operator with its precise
+# operand type, so that `Money + Price` is a *static* error -- which is what
+# ADR-043 asks for. They also keep a runtime `isinstance` guard returning
+# `NotImplemented`, so an untyped caller gets `TypeError` rather than
+# `AttributeError` from a half-executed operation.
+#
+# mypy correctly deduces that the guard is unreachable *statically*. It is not
+# unreachable dynamically. Rather than scatter thirty per-line suppressions
+# through the most-read code in the codebase, the check is disabled for this
+# package only. Every other module keeps it.
+[[tool.mypy.overrides]]
+module = "dhruva.shared.money.*"
+warn_unreachable = false
+# Same reasoning for `redundant-expr`: the runtime guards rejecting `bool` and
+# `float` are statically redundant given the annotations, and dynamically the
+# only thing standing between a caller and a wrong number.
+disable_error_code = ["redundant-expr"]
+
 # --------------------------------------------------------------------------- #
 # pytest
 # --------------------------------------------------------------------------- #
