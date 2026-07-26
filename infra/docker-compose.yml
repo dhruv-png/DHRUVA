@@ -1,0 +1,56 @@
+# Local development data services.
+#
+# Scope note (S01): this stack deliberately contains data services only. The
+# four application processes named in plan section 3.1 -- api, ingest, worker,
+# scheduler -- are added by the subsystems that give them something to do
+# (S02 onward). Shipping empty containers now would be a placeholder, and the
+# Golden Rules forbid placeholders.
+
+name: dhruva
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: dhruva-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dhruva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dhruva_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-dhruva}
+      # Asia/Kolkata is the display timezone; storage is UTC (ADR-006). Setting
+      # the container to UTC makes any accidental local-time dependency fail
+      # loudly here rather than silently in production.
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dhruva} -d ${POSTGRES_DB:-dhruva}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: dhruva-redis
+    # appendonly keeps Redis Streams durable across restarts. The event bus
+    # (ADR-002) must not lose events because a laptop slept.
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
