@@ -7,10 +7,10 @@
 | Stage | 1 (MCP) |
 | Depends on | S01 |
 | Blocks | S03 and everything downstream |
-| Complexity | M |
-| Estimate | 4 sessions |
+| Complexity | M → **L** (rescoped by ADR-035) |
+| Estimate | 4 → **6 sessions** (rescoped by ADR-035) |
 | Risk | LOW (but see §12 — the redaction failure mode is HIGH) |
-| Status | **STEP 1 OF 7 COMPLETE — architecture approved for implementation** |
+| Status | **STEP 2 — IMPLEMENTATION** (design approved 2026-07-26; revised for ADR-031 … ADR-036) |
 
 ---
 
@@ -50,6 +50,15 @@ subsystem:
 | Correlation / causation / account context | `dhruva.shared.context` |
 | Tracing facade and span helpers | `dhruva.shared.observability` |
 | Composition-root bootstrap sequence | `dhruva.shared.runtime` |
+| Health and readiness check registry | `dhruva.shared.observability.health` |
+| Metrics registry and exposition | `dhruva.shared.observability.metrics` |
+| The first runtime component: `/health`, `/ready`, `/metrics` | `dhruva.api` |
+
+> **Scope expanded by ADR-035.** Observability is no longer deferred to S41.
+> S02 now delivers both the mechanism — a registry that later subsystems declare
+> checks and metrics into — and the first component that exposes it. That
+> component is a real, tested HTTP service with exactly three endpoints, not a
+> placeholder.
 
 **Explicitly does not own**
 
@@ -58,9 +67,11 @@ subsystem:
 - Event envelope and bus adapters → **S05**
 - Secret *storage* and envelope encryption → **S06**. S02 owns how a secret is
   *handled in memory and kept out of logs*; S06 owns how it is persisted.
-- Metrics and Prometheus wiring → **S41**. Deferred deliberately: there is nothing
-  to measure until there is a runtime path, and a metrics registry built now would
-  be a placeholder.
+- Dashboards, SLO definitions, alert rules and runbooks → **S41**. S02 ships the
+  instrumentation; S41 builds the operational layer on top of it. The split moved
+  here from "S41 builds everything" when ADR-035 was accepted.
+- Business endpoints of any kind → **S35**. The `dhruva-api` process delivered here
+  serves three observability endpoints and nothing else.
 
 ## 3. Functional Requirements
 
@@ -80,6 +91,39 @@ subsystem:
 | FR-12 | Tracing is a no-op unless a composition root configures an exporter | unit |
 | FR-13 | No module outside `shared.config` reads `os.environ` | **new boundary rule R5** |
 | FR-14 | Timestamps in logs are UTC and ISO-8601 with an explicit offset (ADR-006) | unit |
+| FR-15 | `/health` returns 200 whenever the process is running, and performs **no** dependency checks | unit |
+| FR-16 | `/ready` returns a per-dependency breakdown; an unknown dependency counts as not ready (ADR-022) | unit |
+| FR-17 | `/metrics` serves Prometheus exposition format with the platform's naming convention | unit |
+| FR-18 | Subsystems register health checks and metrics through a registry rather than editing the API | unit |
+| FR-19 | The startup banner states whether tracing is active, so misconfiguration is visible | unit |
+| FR-20 | No secret appears in any endpoint response, including `/ready` failure detail | **deliberate leak test** |
+| FR-21 | `.python-version`, `requires-python` and the CI matrix agree (ADR-032) | `test_python_version_is_consistent` |
+| FR-22 | No `.env` file is tracked; `.env.example` contains no realistic value (ADR-033) | `test_secret_hygiene` |
+
+## 3.5 Performance Budgets (ADR-036)
+
+Declared before implementation. Each is measured by a benchmark in
+`backend/tests/benchmarks/`, and measured values are recorded in the release notes
+for `v0.2.0`.
+
+| Budget | Target | Why this number | Benchmark |
+|---|---|---|---|
+| Settings load and validation | **< 50 ms** | Startup is on the critical path of the daily Market Open Ritual (ADR-021), which is human-attended | `bench_settings_load` |
+| Process start → `/ready` returns 200 | **< 2 s** cold | An orchestrator restart must not extend a market-hours outage | `bench_bootstrap` |
+| `/health` latency | **p99 < 5 ms** | Liveness probes run every few seconds; anything slower distorts probe budgets | `bench_health_endpoint` |
+| `/ready` latency, all checks healthy | **p95 < 50 ms**, **p99 < 100 ms** | Must stay well inside a 1 s probe timeout even with dependency checks | `bench_ready_endpoint` |
+| `/metrics` render, 500 series | **p95 < 100 ms** | Prometheus default scrape interval is 15 s; a slow endpoint causes gaps | `bench_metrics_render` |
+| Log record emission, JSON, redaction on | **p99 < 100 µs** | Tick ingestion (S10) may log at hundreds of events per second; logging must not become the bottleneck | `bench_log_emit` |
+| Redaction overhead vs. no redaction | **< 25%** | The control must be cheap enough that nobody is tempted to disable it | `bench_log_emit` |
+| Correlation bind + unbind | **p99 < 10 µs** | Bound once per request and per tick batch | `bench_context_bind` |
+| Steady-state RSS, api process idle | **< 120 MB** | Target deployment is a single modest VM shared with Postgres and Redis | `bench_memory_footprint` |
+| RSS growth over 100k log records | **< 5 MB** | Detects the classic leak: unbounded context or an ever-growing secret registry | `bench_memory_footprint` |
+
+Two of these are deliberately aggressive. The redaction overhead ceiling exists
+because a security control that costs 3× will eventually be switched off "just for
+this one hot path". The log-emission budget exists because S10 will be the first
+place where logging volume could plausibly become a throughput problem, and
+discovering that at S10 would be too late to change the design cheaply.
 
 ## 4. Architecture
 
@@ -98,8 +142,8 @@ The plan's §5 assignment of "config" to C9 stands for *account-scoped, persiste
 configuration — feature flags, user preferences — which S06 and later subsystems
 will own. Process configuration is a different thing and belongs in the kernel.
 
-> This is a clarification of §5, not a departure from it, and is recorded as
-> **ADR-031** so the distinction is not relitigated later.
+> Recorded as **ADR-031**, approved as a clarification of §5 rather than a
+> redesign of it, so the distinction is not relitigated at S06.
 
 ### 4.2 Configuration: read once, inject typed values
 
@@ -270,13 +314,28 @@ backend/src/dhruva/shared/
 ├── observability.py       tracer accessor, span helpers
 └── runtime.py             bootstrap()
 
+backend/src/dhruva/shared/observability/
+├── __init__.py            tracer accessor, span helpers
+├── health.py              health/readiness registry, check protocol
+└── metrics.py             metric registry, exposition
+
+backend/src/dhruva/api/
+├── __init__.py
+├── app.py                 minimal FastAPI app: /health, /ready, /metrics only
+└── __main__.py            uvicorn entrypoint
+
 backend/tests/unit/shared/
 ├── test_settings.py
 ├── test_secret_value.py
 ├── test_logging_redaction.py     ← includes the deliberate leak test
 ├── test_errors.py
 ├── test_context.py
+├── test_health_registry.py
+├── test_metrics.py
 └── test_bootstrap.py
+backend/tests/unit/api/
+└── test_observability_endpoints.py
+backend/tests/benchmarks/            ← marked `slow`, excluded from the inner loop
 ```
 
 ## 8–12. Implementation, Testing, Optimisation, Documentation, Future Improvements
@@ -288,10 +347,12 @@ To be completed in Step 2 onward. Planned content:
   `test_runtime_dependencies_are_still_empty` assertion from S01 is replaced in
   the same commit by an explicit allowlist test, so the list stays deliberate.
 - **New boundary rule R5** in `dhruva.tooling.boundaries`, with self-tests.
-- **New ADRs**: ADR-031 (configuration is injected, never ambient), ADR-032
-  (redaction is a tested control), ADR-033 (typed errors with stable codes),
-  ADR-034 (correlation via contextvars), ADR-035 (OTel API in libraries, SDK at
-  composition roots).
+- **New ADRs**, renumbered after ADR-032 … ADR-036 were claimed by the v1.3
+  engineering policies: **ADR-037** (redaction is a tested control),
+  **ADR-038** (typed errors with stable codes), **ADR-039** (correlation via
+  contextvars), **ADR-040** (OpenTelemetry API in library code, SDK only at
+  composition roots). ADR-031 covers configuration injection and is already
+  accepted.
 - **Testing**: property tests on `SecretValue` non-disclosure; async isolation
   tests for context leakage; the deliberate credential-leak test; a snapshot test
   pinning the error-code registry.

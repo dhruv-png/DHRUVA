@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**30 decisions, all Accepted.** Records are immutable once accepted
+**36 decisions, all Accepted.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -39,6 +39,12 @@ should not have been made gets caught.
 | [ADR-028](ADR-028-mcp-first-delivery-execution-subsystems-are-gated.md) | MCP-first delivery; execution subsystems are gated on demonstrated analytics value | Accepted |
 | [ADR-029](ADR-029-version-control-is-part-of-the-definition-of.md) | Version control is part of the Definition of Done; no subsystem accumulates uncommitted | Accepted |
 | [ADR-030](ADR-030-documentation-is-updated-in-the-same-commit-as.md) | Documentation is updated in the same commit as the code it describes | Accepted |
+| [ADR-031](ADR-031-process-configuration-lives-in-the-shared-kernel.md) | Process configuration lives in the shared kernel; the Platform context owns only persisted configuration | Accepted |
+| [ADR-032](ADR-032-reproducible-builds.md) | Reproducible builds: pinned dependencies, committed lockfile, documented environment | Accepted |
+| [ADR-033](ADR-033-no-secret-exists-in-the-repository.md) | No secret exists in the repository; secrets arrive only from the configuration provider | Accepted |
+| [ADR-034](ADR-034-release-governance.md) | Release governance: every subsystem ships changelog, ADRs, tag, release notes, migration and rollback | Accepted |
+| [ADR-035](ADR-035-observability-is-a-first-class-feature.md) | Observability is a first-class feature: every runtime component ships logs, correlation, health, readiness, metrics and traces | Accepted |
+| [ADR-036](ADR-036-performance-budgets-declared-before-implementation.md) | Every subsystem declares measurable performance budgets before implementation | Accepted |
 
 ## Reading order for someone new
 
@@ -52,6 +58,7 @@ it does, read these six in order:
 5. **ADR-022** — why ambiguity blocks trading rather than proceeding
 6. **ADR-028** — why there is no execution code in this repository yet
 7. **ADR-029** — why nothing crosses a subsystem boundary uncommitted
+8. **ADR-035** — why observability is built at S02 rather than at S41
 
 ## Architecture Revisions
 
