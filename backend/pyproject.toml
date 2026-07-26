@@ -73,6 +73,7 @@ dev = [
   "pytest-benchmark==5.1.0",
   "httpx==0.28.1",
   "testcontainers[postgres]==4.9.1",
+  "pytest-asyncio==1.2.0",
 ]
 
 [tool.hatch.version]
@@ -128,6 +129,11 @@ ignore = [
 # implementation needs it. The parameter is imposed by the framework's signature,
 # not dead code we chose to leave.
 "src/dhruva/contexts/platform/infrastructure/database/types.py" = ["ARG002"]
+# The Unit of Work under test *is* an async context manager whose contract is
+# that exceptions escape it. Asserting that requires the `async with` block to
+# live inside `pytest.raises`, which PT012 flags. Splitting it would test
+# something else.
+"tests/unit/persistence/test_unit_of_work.py" = ["PT012"]
 "tests/**" = [
   "S101",    # assert is the point of a test
   "PLR2004", # magic values are readable in assertions
@@ -206,6 +212,8 @@ markers = [
   "slow: takes more than one second",
   "benchmark: performance budget measurement (ADR-036); excluded from the inner loop",
 ]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
 filterwarnings = ["error"]
 
