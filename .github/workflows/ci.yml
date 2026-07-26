@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  backend:
+    name: Backend quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --project backend --all-groups
+
+      # --- Gates run cheapest-first so feedback arrives fast -----------------
+      - name: Lint (ruff)
+        run: |
+          uv run --project backend ruff check backend
+          uv run --project backend ruff format --check backend
+
+      - name: Types (mypy, strict - ADR-024)
+        run: uv run --project backend mypy
+
+      - name: Architecture - Clean Architecture layers (lint-imports)
+        run: uv run --project backend lint-imports --config backend/.importlinter
+
+      - name: Architecture - bounded contexts (plan section 5)
+        run: uv run --project backend dhruva-check-boundaries
+
+      - name: Decision log integrity (dhruva-adr-guard, ADR-027)
+        run: uv run --project backend dhruva-adr-guard
+
+      - name: Tests with coverage gate
+        run: uv run --project backend pytest --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage.xml
+          if-no-files-found: ignore
+
+  build:
+    name: Container build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: false
+          tags: dhruva-backend:ci

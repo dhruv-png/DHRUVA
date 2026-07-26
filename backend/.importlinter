@@ -1,0 +1,75 @@
+# Clean Architecture layer enforcement (ADR-001, plan section 3.2).
+#
+# Scope note: this file enforces layering *within* each bounded context.
+# Context-to-context rules (public-API-only access and the declared dependency
+# matrix) are enforced by `dhruva-check-boundaries`, because import-linter
+# cannot express them without a combinatorial explosion of contracts.
+
+[importlinter]
+root_packages =
+    dhruva
+include_external_packages = False
+
+[importlinter:contract:layers]
+name = Clean Architecture layers within each bounded context
+type = layers
+layers =
+    interfaces
+    infrastructure
+    application
+    domain
+containers =
+    dhruva.contexts.reference
+    dhruva.contexts.marketdata
+    dhruva.contexts.analytics
+    dhruva.contexts.intelligence
+    dhruva.contexts.strategy
+    dhruva.contexts.risk
+    dhruva.contexts.trading
+    dhruva.contexts.notification
+    dhruva.contexts.platform
+
+[importlinter:contract:interfaces-never-touch-adapters]
+name = Interfaces must not import infrastructure; wiring is the composition root's job
+type = forbidden
+source_modules =
+    dhruva.contexts.reference.interfaces
+    dhruva.contexts.marketdata.interfaces
+    dhruva.contexts.analytics.interfaces
+    dhruva.contexts.intelligence.interfaces
+    dhruva.contexts.strategy.interfaces
+    dhruva.contexts.risk.interfaces
+    dhruva.contexts.trading.interfaces
+    dhruva.contexts.notification.interfaces
+    dhruva.contexts.platform.interfaces
+forbidden_modules =
+    dhruva.contexts.reference.infrastructure
+    dhruva.contexts.marketdata.infrastructure
+    dhruva.contexts.analytics.infrastructure
+    dhruva.contexts.intelligence.infrastructure
+    dhruva.contexts.strategy.infrastructure
+    dhruva.contexts.risk.infrastructure
+    dhruva.contexts.trading.infrastructure
+    dhruva.contexts.notification.infrastructure
+    dhruva.contexts.platform.infrastructure
+
+[importlinter:contract:shared-kernel-is-a-leaf]
+name = The shared kernel and tooling import nothing from the contexts
+type = forbidden
+source_modules =
+    dhruva.shared
+    dhruva.tooling
+forbidden_modules =
+    dhruva.contexts
+
+[importlinter:contract:composition-roots-are-not-imported]
+name = Nothing imports a composition root
+type = forbidden
+source_modules =
+    dhruva.contexts
+    dhruva.shared
+    dhruva.tooling
+forbidden_modules =
+    dhruva.api
+    dhruva.workers
+    dhruva.ingest
