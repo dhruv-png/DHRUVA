@@ -37,18 +37,61 @@ if TYPE_CHECKING:
 #: container runtime still runs the unit suite cleanly.
 DATABASE_URL_ENV = "DHRUVA_TEST_DATABASE_URL"
 
+#: Set by the canonical validation runner. Under canonical validation a skip is
+#: not an acceptable outcome: the entire purpose of the run is to produce
+#: database-backed evidence, and a suite that skips every test reports success
+#: while verifying nothing. With this set, an unavailable database is a hard
+#: error at collection rather than twelve green-looking skips.
+REQUIRE_DATABASE_ENV = "DHRUVA_REQUIRE_DATABASE"
+
 #: TimescaleDB rather than plain PostgreSQL: hypertable DDL is part of what this
 #: suite verifies, and it does not exist without the extension.
 POSTGRES_IMAGE = "timescale/timescaledb:2.17.2-pg16"
 
-requires_database = pytest.mark.skipif(
-    not os.environ.get(DATABASE_URL_ENV),
-    reason=(
-        f"integration tests require PostgreSQL with TimescaleDB. Set {DATABASE_URL_ENV}, "
-        f"or run with Docker available so the container fixture can start one. "
-        f"No SQLite substitute is permitted (ADR-058)."
-    ),
+
+def _docker_is_available() -> bool:
+    """Report whether a container runtime can actually start the fixture.
+
+    ``testcontainers`` imports cleanly without a daemon, so importability proves
+    nothing; the daemon is pinged instead. Any failure is treated as "no Docker",
+    because every failure mode here has the same consequence for the suite.
+    """
+    try:
+        import docker  # noqa: PLC0415 - optional dependency, probed deliberately
+    except ImportError:
+        return False
+    try:
+        client = docker.from_env()
+    except Exception:  # noqa: BLE001 - a daemon that will not talk to us is simply absent
+        return False
+    try:
+        client.ping()
+    except Exception:  # noqa: BLE001 - as above
+        return False
+    else:
+        return True
+    finally:
+        client.close()
+
+
+def database_is_available() -> bool:
+    """Report whether the suite has any way to reach a database.
+
+    Two ways, and the check must cover both. The previous version tested only
+    the environment variable, which made the container fallback in
+    :func:`database_url` unreachable -- the skip fired first, every time, while
+    the skip reason claimed Docker was sufficient. It was not.
+    """
+    return bool(os.environ.get(DATABASE_URL_ENV)) or _docker_is_available()
+
+
+_SKIP_REASON = (
+    f"integration tests require PostgreSQL with TimescaleDB. Set {DATABASE_URL_ENV}, "
+    f"or start Docker so the container fixture can provision one. "
+    f"No SQLite substitute is permitted (ADR-058)."
 )
+
+requires_database = pytest.mark.skipif(not database_is_available(), reason=_SKIP_REASON)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -60,9 +103,19 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     mechanism that actually works, and it means a new integration module inherits
     them without having to remember.
     """
-    for item in items:
-        if "tests/integration/" not in item.nodeid.replace("\\", "/"):
-            continue
+    selected = [i for i in items if "tests/integration/" in i.nodeid.replace("\\", "/")]
+
+    # Under canonical validation, refuse to skip. A run whose evidence consists
+    # of twelve SKIPPED lines proves nothing, and the failure is far cheaper to
+    # diagnose here -- with the reason attached -- than in a log file three days
+    # later.
+    if selected and os.environ.get(REQUIRE_DATABASE_ENV) and not database_is_available():
+        raise pytest.UsageError(
+            f"{REQUIRE_DATABASE_ENV} is set, so the integration suite must run, "
+            f"but no database is reachable. {_SKIP_REASON}"
+        )
+
+    for item in selected:
         item.add_marker(pytest.mark.integration)
         item.add_marker(requires_database)
         # asyncio_mode is "strict", so an `async def test_` without this marker

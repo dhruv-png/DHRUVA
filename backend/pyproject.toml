@@ -179,11 +179,13 @@ enable_error_code = [
 # unreachable dynamically. Rather than scatter thirty per-line suppressions
 # through the most-read code in the codebase, the check is disabled for this
 # package only. Every other module keeps it.
-# testcontainers ships no type stubs. It is a development-only dependency used
-# by the integration harness, and its absence must not fail the type gate for the
+# testcontainers ships no type stubs, and neither does the `docker` client it
+# pulls in (the harness pings the daemon with it to decide whether the container
+# fixture can run at all). Both are development-only dependencies used by the
+# integration harness, and their absence must not fail the type gate for the
 # whole project.
 [[tool.mypy.overrides]]
-module = ["testcontainers.*"]
+module = ["testcontainers.*", "docker.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
