@@ -296,9 +296,36 @@ S11 uses it in anger.
 ### 4.8 The transactional outbox
 
 Domain events must not be lost if the process dies between commit and publish.
-The outbox table is created here — written inside the same transaction as the
-aggregate change — and drained by S05. Designing it now costs one table and saves
-S05 from retrofitting delivery guarantees into an already-working bus.
+The outbox row is written **inside the same transaction as the aggregate
+change**, so it commits or rolls back with it, and a separate drainer publishes
+it afterwards. The table is created here; the drainer belongs to S05.
+
+#### The guarantees the platform officially provides
+
+Stated once, here, and repeated verbatim wherever the outbox is described. No
+section may imply anything stronger.
+
+| Guarantee | Provided |
+|---|---|
+| Transactional durability | **Yes.** The event and the change share one transaction and one fate. |
+| Delivery | **At-least-once.** Not exactly-once. |
+| Event identity | **Stable, immutable `event_id`**, unique per occurrence. |
+| Ordering | **Per aggregate.** Not global. |
+| Consumer contract | **Consumers must be idempotent.** |
+
+**Why not exactly-once.** A crash between publishing and marking the row
+published republishes on recovery. Exactly-once delivery across a process
+boundary is not achievable without distributed transactions, and claiming it
+would be a guarantee the implementation cannot keep. At-least-once delivery plus
+idempotent consumers gives **effectively-once processing**, which is the
+achievable and honest formulation.
+
+**Why ordering is per-aggregate.** Two events about the same instrument arrive in
+the order they happened, which is what consumers actually need. Strict global
+ordering across aggregates would require serialising every write in the platform.
+
+**The consumer contract is binding on S05.** Every consumer deduplicates on
+`event_id`. A consumer that does not is a defect, not a performance choice.
 
 ## 5. Database Changes
 
@@ -455,3 +482,54 @@ table, optimistic locking on every aggregate, and the outbox table created here.
 ---
 
 *Step 1 complete. Awaiting Design Review before implementation.*
+
+---
+
+## 13. Canonical Validation — REQUIRED BEFORE APPROVAL
+
+S04 is **implementation complete, validation pending**. The persistence
+subsystem is the first whose correctness depends on infrastructure outside the
+development sandbox, so implementation alone is not evidence.
+
+### What cannot be verified here
+
+No Docker, no PostgreSQL, no Python 3.12. Confirmed rather than assumed: `apt`
+requires root, no container runtime is present, and no PostgreSQL wheel exists
+for CPython 3.10. Every claim below is therefore **unverified**, not merely
+untested.
+
+### Required environment
+
+Python 3.12 · PostgreSQL · TimescaleDB · Docker or Testcontainers · `uv`.
+
+### How to run it
+
+```bash
+./scripts/canonical_validation.sh
+```
+
+Output lands in `docs/evidence/s04-<UTC timestamp>/`, one log per stage. Attach
+the directory whole — it is deliberately unsummarised.
+
+### What the run captures
+
+| Stage | Evidence |
+|---|---|
+| Environment | CPU, memory, kernel, Python, uv, Docker, SQLAlchemy, Alembic, asyncpg, pytest |
+| Database | PostgreSQL server version, TimescaleDB extension version, isolation level |
+| Gates | ruff, ruff-format, mypy, import-linter, boundaries R1–R8, ADR guard |
+| Unit suite | Verbose, every outcome |
+| Migrations | `upgrade head` → `downgrade base` → `upgrade head`, history, current |
+| Schema drift | `--autogenerate` diff, with the generated body printed if non-empty |
+| Integration suite | Verbose: rollback, concurrent writers, optimistic locking, deadlock, isolation, constraints, idempotent writes |
+| Benchmarks | With `DHRUVA_CANONICAL_BENCHMARKS=1`, so sub-microsecond budgets are measured rather than skipped |
+
+### After the run
+
+1. Append the measured numbers to `docs/PERFORMANCE_BASELINE.md` under a new
+   dated **E2** section. Do not edit the E1 rows — a baseline that is overwritten
+   cannot answer "was this always slow, or did we make it slow?"
+2. Close or re-scope TD-13, TD-14 and TD-18 against the real figures.
+3. Regenerate lockfiles on 3.12 if `uv lock` now succeeds, closing TD-01.
+4. Re-run every gate, confirm a clean tree, merge `--no-ff`, then tag `v0.4.0`
+   **once**, after every artefact is committed (ADR-051).
