@@ -7,13 +7,22 @@
     gates, full verbose test output, migration logs and benchmark numbers.
     Nothing is summarised - summarising is what this script exists to avoid.
 
-    Requires: Python 3.12, uv, and either Docker Desktop running (the harness
-    starts a TimescaleDB container) or a reachable PostgreSQL you point it at.
+    Requires: Python 3.12, uv, and a database. Either supply one with
+    -DatabaseUrl, or leave it off and let this script start a TimescaleDB
+    container (Docker Desktop must be running).
+
+    A database is mandatory, not optional. Stages 30-35 invoke `alembic` as
+    standalone processes, outside pytest -- they cannot borrow a container that
+    only exists for the lifetime of the test session. Whatever database is used,
+    this script provisions it before any stage runs and every stage shares it.
 
 .PARAMETER DatabaseUrl
-    Optional. An existing PostgreSQL with the TimescaleDB extension available,
-    e.g. postgresql+asyncpg://postgres:postgres@localhost:5432/dhruva_test
-    When omitted, Docker Desktop must be running and a container is started.
+    An existing PostgreSQL with the TimescaleDB extension available, e.g.
+    postgresql+asyncpg://postgres:postgres@localhost:5432/dhruva_test
+    Omit it to have a disposable container started and torn down for you.
+
+    Use a dedicated database. This script truncates tables and runs
+    `alembic downgrade base`.
 
 .EXAMPLE
     .\scripts\canonical_validation.ps1
@@ -28,19 +37,92 @@ $Stamp    = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $Evidence = Join-Path $RepoRoot "docs\evidence\s04-$Stamp"
 New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
 
+#: TimescaleDB, not plain PostgreSQL: hypertable DDL is part of what is verified.
+$PostgresImage = 'timescale/timescaledb:2.17.2-pg16'
+#: A non-default port, so a container never collides with a local PostgreSQL.
+$ContainerPort = 55432
+$ContainerName = "dhruva-canonical-$Stamp"
+$StartedContainer = $false
+
+#: Stage name -> exit code. The manifest turns this into a verdict, so that a
+#: run in which everything failed cannot be mistaken for a run that happened.
+$Verdicts = [ordered]@{}
+
 function Write-Stage([string]$Name) {
     Write-Host ""
     Write-Host "=== $Name ===" -ForegroundColor Cyan
 }
 
+function Write-Log([string]$Name, [object]$Content) {
+    # UTF-8 explicitly. PowerShell 5.1's Tee-Object writes UTF-16LE, which makes
+    # the evidence awkward to read anywhere except Windows.
+    $target = Join-Path $Evidence "$Name.log"
+    $Content | Out-File -FilePath $target -Encoding utf8
+    $Content | Out-Host
+    return $target
+}
+
 function Invoke-Captured([string]$Name, [scriptblock]$Command) {
     Write-Stage $Name
     $target = Join-Path $Evidence "$Name.log"
-    & $Command 2>&1 | Tee-Object -FilePath $target
+    $output = & $Command 2>&1
     $code = $LASTEXITCODE
-    "exit_code: $code" | Add-Content $target
+    $output | Out-File -FilePath $target -Encoding utf8
+    $output | Out-Host
+    "exit_code: $code" | Add-Content $target -Encoding utf8
+    $script:Verdicts[$Name] = $code
     if ($code -ne 0) { Write-Host "  -> exit $code (recorded, continuing)" -ForegroundColor Yellow }
     return $code
+}
+
+function Start-CanonicalDatabase {
+    <#
+        Start a disposable TimescaleDB and return its URL. The container is owned
+        by this script rather than by pytest, because the migration stages run
+        before pytest starts and need the same database the tests will use.
+    #>
+    Write-Stage 'starting database container'
+
+    docker info 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker is not responding. Start Docker Desktop, or pass -DatabaseUrl to use an existing PostgreSQL."
+    }
+
+    Write-Host "  pulling $PostgresImage (first run only, this can take a few minutes)"
+    docker pull $PostgresImage 2>&1 | Out-Host
+
+    docker run -d --name $ContainerName `
+        -e POSTGRES_USER=dhruva_test `
+        -e POSTGRES_PASSWORD=dhruva_test `
+        -e POSTGRES_DB=dhruva_test `
+        -p "${ContainerPort}:5432" `
+        $PostgresImage 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Could not start container $ContainerName." }
+    $script:StartedContainer = $true
+
+    Write-Host "  waiting for the database to accept connections"
+    $ready = $false
+    foreach ($attempt in 1..60) {
+        docker exec $ContainerName pg_isready -U dhruva_test -d dhruva_test 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $ready) { throw "Database did not become ready within 120 seconds." }
+
+    # The image installs the extension into template1, so a database created at
+    # startup already has it. Asserting it costs nothing and turns a confusing
+    # hypertable failure much later into a clear one now.
+    docker exec $ContainerName psql -U dhruva_test -d dhruva_test `
+        -c 'CREATE EXTENSION IF NOT EXISTS timescaledb;' 2>&1 | Out-Host
+
+    Write-Host "  container $ContainerName ready on port $ContainerPort" -ForegroundColor Green
+    return "postgresql+asyncpg://dhruva_test:dhruva_test@localhost:$ContainerPort/dhruva_test"
+}
+
+function Stop-CanonicalDatabase {
+    if (-not $script:StartedContainer) { return }
+    Write-Stage 'removing database container'
+    docker rm -f $ContainerName 2>&1 | Out-Null
 }
 
 Push-Location (Join-Path $RepoRoot 'backend')
@@ -65,35 +147,54 @@ try {
         "asyncpg:         $(uv run python -c 'import asyncpg; print(asyncpg.__version__)' 2>&1)"
         "pytest:          $((uv run pytest --version 2>&1) -split "`n" | Select-Object -First 1)"
     )
-    $env_log | Tee-Object -FilePath (Join-Path $Evidence '01-environment.log')
+    Write-Log '01-environment' $env_log | Out-Null
 
     # --------------------------------------------------------------------- #
-    # 2. Database target. Alembic builds its URL from settings (ADR-031), so the
-    #    single documented URL is translated into the DHRUVA_DB__* variables
-    #    settings understands. Without this, Alembic connects as the default
-    #    user 'dhruva' and fails authentication.
+    # 2. Database target, provisioned before any stage that needs one.
     # --------------------------------------------------------------------- #
-    if ($DatabaseUrl) {
-        Write-Stage 'database target'
-        $env:DHRUVA_TEST_DATABASE_URL = $DatabaseUrl
-        $uri = [System.Uri]($DatabaseUrl -replace '\+asyncpg', '')
-        $env:DHRUVA_DB__HOST = $uri.Host
-        $env:DHRUVA_DB__PORT = $uri.Port
-        $env:DHRUVA_DB__NAME = $uri.AbsolutePath.TrimStart('/')
-        $userInfo = $uri.UserInfo -split ':'
-        $env:DHRUVA_DB__USER = $userInfo[0]
-        if ($userInfo.Count -gt 1) { $env:DHRUVA_DB__PASSWORD = $userInfo[1] }
-        @(
-            "DHRUVA_TEST_DATABASE_URL: $DatabaseUrl"
-            "DHRUVA_DB__HOST:          $($env:DHRUVA_DB__HOST)"
-            "DHRUVA_DB__PORT:          $($env:DHRUVA_DB__PORT)"
-            "DHRUVA_DB__NAME:          $($env:DHRUVA_DB__NAME)"
-            "DHRUVA_DB__USER:          $($env:DHRUVA_DB__USER)"
-            "DHRUVA_DB__PASSWORD:      <set, not logged>"
-        ) | Tee-Object -FilePath (Join-Path $Evidence '02-database-target.log')
+    if (-not $DatabaseUrl) { $DatabaseUrl = Start-CanonicalDatabase }
 
-        Invoke-Captured '03-database-versions' {
-            uv run python -c @"
+    Write-Stage 'database target'
+    $env:DHRUVA_TEST_DATABASE_URL = $DatabaseUrl
+    # Alembic never reads DHRUVA_TEST_DATABASE_URL. It builds its URL from
+    # settings (ADR-031), so the one documented URL is translated here into the
+    # DHRUVA_DB__* variables settings understands -- note the *double*
+    # underscore. Without this, alembic/env.py falls through to the defaults in
+    # shared/config/settings.py and connects as user 'dhruva'.
+    $uri = [System.Uri]($DatabaseUrl -replace '\+asyncpg', '')
+    $env:DHRUVA_DB__HOST = $uri.Host
+    $env:DHRUVA_DB__PORT = $uri.Port
+    $env:DHRUVA_DB__NAME = $uri.AbsolutePath.TrimStart('/')
+    $userInfo = $uri.UserInfo -split ':'
+    $env:DHRUVA_DB__USER = $userInfo[0]
+    if ($userInfo.Count -gt 1) { $env:DHRUVA_DB__PASSWORD = $userInfo[1] }
+    # Turn "no database" into a hard collection error instead of twelve skips.
+    $env:DHRUVA_REQUIRE_DATABASE = '1'
+
+    # Computed outside the string: PowerShell 5.1 will not parse a double-quoted
+    # string nested inside a $() subexpression of another double-quoted string.
+    if ($StartedContainer) {
+        $provisionedBy = "this script (container $ContainerName)"
+    } else {
+        $provisionedBy = 'supplied via -DatabaseUrl'
+    }
+    $redactedUrl = $DatabaseUrl -replace ':[^:@/]+@', ':<redacted>@'
+
+    Write-Log '02-database-target' @(
+        "provisioned_by:           $provisionedBy"
+        "DHRUVA_TEST_DATABASE_URL: $redactedUrl"
+        "DHRUVA_DB__HOST:          $($env:DHRUVA_DB__HOST)"
+        "DHRUVA_DB__PORT:          $($env:DHRUVA_DB__PORT)"
+        "DHRUVA_DB__NAME:          $($env:DHRUVA_DB__NAME)"
+        "DHRUVA_DB__USER:          $($env:DHRUVA_DB__USER)"
+        "DHRUVA_DB__PASSWORD:      <set, not logged>"
+        "DHRUVA_REQUIRE_DATABASE:  1"
+    ) | Out-Null
+
+    # Prove the database is reachable *before* running six stages against it.
+    # Failing here names the problem; failing later buries it in a stack trace.
+    $probe = Invoke-Captured '03-database-versions' {
+        uv run python -c @"
 import asyncio, os, re, asyncpg
 async def main():
     url = re.sub(r'\+asyncpg', '', os.environ['DHRUVA_TEST_DATABASE_URL'])
@@ -104,10 +205,9 @@ async def main():
     await c.close()
 asyncio.run(main())
 "@
-        } | Out-Null
-    } else {
-        'DHRUVA_TEST_DATABASE_URL unset; testcontainers will start one (Docker Desktop must be running)' |
-            Tee-Object -FilePath (Join-Path $Evidence '02-database-target.log')
+    }
+    if ($probe -ne 0) {
+        throw "Cannot connect to the database. See 03-database-versions.log. Nothing below this point would be meaningful, so the run stops here."
     }
 
     # --------------------------------------------------------------------- #
@@ -126,7 +226,13 @@ asyncio.run(main())
     # --------------------------------------------------------------------- #
     # 4. Unit suite, verbose. Every outcome recorded.
     # --------------------------------------------------------------------- #
-    Invoke-Captured '20-unit-suite' { uv run pytest -v --no-header -p no:randomly } | Out-Null
+    # -p no:cacheprovider: the .pytest_cache directory has repeatedly become
+    # unwritable mid-run (WinError 5 / WinError 183), aborting collection for a
+    # reason that has nothing to do with the code under test. The cache buys
+    # --lf and --ff, neither of which a full canonical run uses.
+    Invoke-Captured '20-unit-suite' {
+        uv run pytest -v --no-header -p no:randomly -p no:cacheprovider
+    } | Out-Null
 
     # --------------------------------------------------------------------- #
     # 5. Migrations: up -> down -> up, plus the schema-drift check.
@@ -137,23 +243,27 @@ asyncio.run(main())
     Invoke-Captured '33-migration-history'   { uv run alembic history --verbose } | Out-Null
     Invoke-Captured '34-migration-current'   { uv run alembic current --verbose } | Out-Null
 
-    Write-Stage '35-autogenerate-empty-diff'
+    Invoke-Captured '35-autogenerate-empty-diff' {
+        uv run alembic revision --autogenerate -m "drift check" --rev-id drift_check
+    } | Out-Null
     $driftLog = Join-Path $Evidence '35-autogenerate-empty-diff.log'
-    uv run alembic revision --autogenerate -m "drift check" --rev-id drift_check 2>&1 |
-        Tee-Object -FilePath $driftLog
     $drift = Get-ChildItem 'alembic\versions' -Filter '*drift_check*' -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($drift) {
-        '--- generated migration body ---' | Add-Content $driftLog
-        Get-Content $drift.FullName | Tee-Object -FilePath $driftLog -Append
+        # A generated body means the mapped metadata and the migrated schema
+        # disagree. The body is the diff; it is recorded verbatim and the file
+        # removed so it cannot be mistaken for an intended migration.
+        '--- generated migration body: SCHEMA DRIFT DETECTED ---' | Add-Content $driftLog -Encoding utf8
+        Get-Content $drift.FullName | Add-Content $driftLog -Encoding utf8
         Remove-Item $drift.FullName -Force
+        $Verdicts['35-autogenerate-empty-diff'] = 1
     }
 
     # --------------------------------------------------------------------- #
     # 6. Integration suite. This is the evidence S04 is blocked on.
     # --------------------------------------------------------------------- #
     Invoke-Captured '40-integration-suite' {
-        uv run pytest -v --no-header -p no:randomly -m integration
+        uv run pytest -v --no-header -p no:randomly -p no:cacheprovider -m integration
     } | Out-Null
 
     # --------------------------------------------------------------------- #
@@ -162,26 +272,54 @@ asyncio.run(main())
     # --------------------------------------------------------------------- #
     $env:DHRUVA_CANONICAL_BENCHMARKS = '1'
     Invoke-Captured '50-benchmarks' {
-        uv run pytest -v --no-header -p no:randomly -m benchmark
+        uv run pytest -v --no-header -p no:randomly -p no:cacheprovider -m benchmark
     } | Out-Null
 
     # --------------------------------------------------------------------- #
-    # 8. Manifest.
+    # 8. Manifest, with a verdict per stage.
+    #
+    #    The previous manifest listed line counts, which is why a run where
+    #    every database stage failed and every integration test skipped could be
+    #    described as "the stages execute". Line counts measure output, not
+    #    outcome. Exit codes measure outcome.
     # --------------------------------------------------------------------- #
     Write-Stage 'manifest'
+    $failed = @($Verdicts.GetEnumerator() | Where-Object { $_.Value -ne 0 })
     $manifest = @(
         'S04 canonical validation evidence'
         "captured: $Stamp"
         "commit:   $(git -C $RepoRoot rev-parse HEAD)"
         "branch:   $(git -C $RepoRoot rev-parse --abbrev-ref HEAD)"
         ''
+        'stage verdicts'
+        '--------------'
+    ) + ($Verdicts.GetEnumerator() | ForEach-Object {
+        '{0,-40} {1} (exit {2})' -f $_.Key, $(if ($_.Value -eq 0) { 'PASS' } else { 'FAIL' }), $_.Value
+    }) + @(
+        ''
+        $(if ($failed.Count -eq 0) {
+            'OVERALL: PASS - every stage exited 0.'
+        } else {
+            "OVERALL: FAIL - $($failed.Count) stage(s) failed: $($failed.Key -join ', ')"
+        })
+        ''
+        'files'
+        '-----'
     ) + (Get-ChildItem $Evidence -Filter '*.log' | ForEach-Object {
         '{0,-40} {1} lines' -f $_.Name, (Get-Content $_.FullName | Measure-Object -Line).Lines
     })
-    $manifest | Tee-Object -FilePath (Join-Path $Evidence '99-manifest.log')
+    Write-Log '99-manifest' $manifest | Out-Null
 
     Write-Host ""
     Write-Host "Evidence written to: $Evidence" -ForegroundColor Green
+    if ($failed.Count -eq 0) {
+        Write-Host "OVERALL: PASS" -ForegroundColor Green
+    } else {
+        Write-Host "OVERALL: FAIL - $($failed.Count) stage(s): $($failed.Key -join ', ')" -ForegroundColor Red
+    }
     Write-Host "Attach the whole directory; do not summarise it." -ForegroundColor Green
 }
-finally { Pop-Location }
+finally {
+    Stop-CanonicalDatabase
+    Pop-Location
+}
