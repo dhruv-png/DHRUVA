@@ -39,9 +39,23 @@ Alembic reads these instead:
 
 The double underscore is the nested delimiter; a single one will not work.
 
-`tests/integration/conftest.py` now translates the one URL into these variables
+`tests/integration/conftest.py` translates the one URL into these variables
 automatically, so the harness and Alembic can no longer disagree. Only a
 *manual* `alembic` invocation needs them set by hand.
+
+### Why that translation was not enough on its own
+
+Stages 30–35 run `alembic` as **standalone processes, outside pytest**. A
+container started by testcontainers exists only inside the pytest process, for
+the lifetime of the test session — so in the first version of this script, a run
+without `-DatabaseUrl` reached the migration stages with no database in
+existence and no `DHRUVA_DB__*` set, fell through to the settings defaults, and
+failed as user `dhruva`. The translation in `conftest.py` was never consulted,
+because pytest had not started yet.
+
+**A database is now mandatory and the script provisions it before any stage
+runs.** When `-DatabaseUrl` is omitted the script starts and owns the container
+itself, and every stage — Alembic and pytest alike — shares that one database.
 
 ---
 
@@ -73,27 +87,47 @@ docker info                        # must succeed before continuing
 .\scripts\canonical_validation.ps1
 ```
 
-The harness starts `timescale/timescaledb:2.17.2-pg16` via testcontainers and
-disposes of it afterwards. First run pulls the image.
+The script starts `timescale/timescaledb:2.17.2-pg16` on port **55432** — not
+5432, so it cannot collide with your local PostgreSQL — waits for
+`pg_isready`, and removes the container in a `finally` block even if the run
+throws. First run pulls the image, which takes a few minutes.
 
 ---
 
 ## What the script does, in order
 
 1. Environment provenance — recorded first, so every later number is attributable
-2. Database target and server versions, read from the running server rather than
-   the image tag
+2. Database provisioning (container, or the URL you supplied), then a
+   **connection probe**: server version, TimescaleDB extension version, default
+   isolation level, read from the running server rather than assumed from the
+   image tag
 3. Quality gates: ruff, format, mypy, import-linter, boundaries R1–R8, ADR guard
 4. Unit suite, verbose
 5. Migrations: `upgrade head` → `downgrade base` → `upgrade head`
 6. Schema-drift check, printing the generated migration body if not empty
 7. Integration suite, verbose
 8. Benchmarks with `DHRUVA_CANONICAL_BENCHMARKS=1`
+9. Manifest with a **PASS/FAIL verdict per stage** and an overall verdict
 
 Failures are **recorded and the run continues**. A stage that stops on first
-failure produces an evidence package with a hole in it.
+failure produces an evidence package with a hole in it. The one exception is the
+connection probe at step 2: if the database is unreachable, every stage below it
+would fail for the same reason and the run stops there instead of producing six
+copies of the same stack trace.
 
-Everything lands in `docs\evidence\s04-<timestamp>\`. Attach it whole.
+Everything lands in `docs\evidence\s04-<timestamp>\`. Attach it whole. Read
+`99-manifest.log` first — it now states the outcome, not just the line counts.
+
+### Two guards against a run that looks like it worked
+
+- **`DHRUVA_REQUIRE_DATABASE=1`** is set by the script. Under it, an unreachable
+  database is a hard collection error. Without it, the integration suite skips
+  quietly — and twelve `SKIPPED` lines in a log read exactly like a stage that
+  executed. They are not evidence of anything.
+- **`-p no:cacheprovider`** on every pytest invocation. `.pytest_cache` has
+  repeatedly become unwritable mid-run (`WinError 5`, `WinError 183`), aborting
+  collection for a reason unrelated to the code under test. The cache only buys
+  `--lf` and `--ff`, which a full run does not use.
 
 ---
 
@@ -103,10 +137,11 @@ Everything lands in `docs\evidence\s04-<timestamp>\`. Attach it whole.
 |---|---|---|
 | Gates | `All checks passed`, `Success: no issues`, `4 kept, 0 broken`, `OK`, `intact` | Genuine regression — send the log, do not proceed |
 | Unit suite | `937 passed, 5 skipped` (the 5 are intentional `skip` calls) | Send the log |
-| `30-migration-upgrade` | `Running upgrade -> 0001_initial` | Auth failure means the `DHRUVA_DB__*` translation did not apply — check `02-database-target.log` |
+| `03-database-versions` | `postgresql: 16.x`, `timescaledb: 2.17.x`, `isolation: read committed` | `NOT INSTALLED` for TimescaleDB means the extension is missing — use Option B. The run stops here by design |
+| `30-migration-upgrade` | `Running upgrade -> 0001_initial` | Auth failure as user `dhruva` means the `DHRUVA_DB__*` translation did not apply — check `02-database-target.log`, which now records every variable that was set |
 | `31/32` down + re-up | Both complete without error | A failing downgrade is a real finding; ADR-055 requires it to work |
 | Drift check | "No changes in schema detected" | If a body is printed, models and migrations disagree — that is a genuine defect |
-| Integration suite | 12 tests run | **Some may fail. They have never executed anywhere.** That is them working |
+| Integration suite | **12 tests run — not skipped.** Any `SKIPPED` here now means the run is invalid | **Some may fail. They have never executed anywhere.** That is them working |
 | Benchmarks | Numbers printed | Two known misses (TD-13, TD-14) may pass on real hardware |
 
 **On the integration suite specifically:** expect failures on first contact. A

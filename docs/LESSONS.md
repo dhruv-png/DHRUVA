@@ -20,6 +20,88 @@ to do instead.
 
 ---
 
+## S04 — The validation harness
+
+Six defects in the harness, found across two attempts by someone else trying to
+run it. None were in the code under test. All were mine.
+
+### A skip is not a result, and a log full of skips reads like a log full of work
+
+The integration gate was `skipif(not os.environ.get(DATABASE_URL_ENV))`,
+evaluated at import. The `database_url` fixture had a testcontainers fallback for
+machines with Docker — which could never run, because the skip fired first. The
+skip reason said "or run with Docker available so the container fixture can start
+one." That sentence was false for the entire life of the file.
+
+The consequence was worse than the bug. Twelve `SKIPPED` lines appeared in the
+evidence and were reported back as "integration stages execute." They executed
+nothing. A green-looking run that asserts nothing is more expensive than a red
+one, because it ends the investigation.
+
+**What to do.** Two things, and the second matters more:
+
+1. A capability gate must test the capability, not a proxy for it. Docker is
+   available when the daemon answers a ping — not when an environment variable
+   is set, and not when the library imports.
+2. Give the harness a mode in which skipping is a hard error
+   (`DHRUVA_REQUIRE_DATABASE=1`), and have the canonical runner set it. In a run
+   whose only purpose is to produce database-backed evidence, "no database" is a
+   failure, not a reason to pass quietly.
+
+### Provisioning that lives inside pytest cannot serve stages outside it
+
+Migration stages 30–35 invoke `alembic` as standalone processes. A testcontainers
+database exists only inside the pytest process, for the lifetime of the session.
+So a run without an explicit URL reached those stages with no database in
+existence, fell through to the settings defaults, and failed authenticating as
+user `dhruva` — six identical stack traces, none of which mentioned the actual
+cause.
+
+Making the parameter optional was the error. The script advertised a fallback
+that could not work for two thirds of its own stages.
+
+**What to do.** Whatever provisions a shared resource must outlive every consumer
+of it. The runner now starts and owns the container itself, before stage one, and
+tears it down in `finally`. Where a resource is required by any stage, make it
+required by the script — an optional parameter that half the stages depend on is
+a trap with a friendly signature.
+
+### Probe the dependency before running six stages against it
+
+The first evidence package contained six copies of the same
+`InvalidPasswordError`, spread across six logs, and the connection problem had to
+be inferred from a stack trace forty frames deep.
+
+**What to do.** One cheap probe up front — server version, extension version,
+isolation level — turns "six stages failed" into "the database is unreachable,
+and here is which user it tried." Where every later stage shares one dependency,
+that probe is also the only place a hard stop is justified in an
+otherwise-continue-on-failure runner.
+
+### A manifest that counts lines cannot report an outcome
+
+The evidence manifest listed each log and its line count. A run in which every
+database stage failed produced a manifest indistinguishable from a clean one —
+the failing logs were *longer*, because stack traces are verbose.
+
+**What to do.** Record exit codes, print a verdict per stage and an overall
+verdict, and put it at the top of the file. Volume of output correlates with
+failure at least as often as with success.
+
+### Byte-level things that cost real time
+
+- `Tee-Object` on Windows PowerShell 5.1 writes **UTF-16LE**. The evidence was
+  unreadable with ordinary text tooling until it was decoded. Write UTF-8
+  explicitly.
+- PowerShell 5.1 cannot parse a double-quoted string nested inside a `$()`
+  subexpression of another double-quoted string. Compute the value first.
+- `.pytest_cache` became unwritable mid-run on both Windows (`WinError 5`,
+  `WinError 183`) and a Linux FUSE mount, aborting collection for reasons
+  unrelated to the code. A full validation run has no use for `--lf` or `--ff`:
+  pass `-p no:cacheprovider` and remove the failure mode.
+
+---
+
 ## Estimation accuracy so far
 
 Kept because estimates that are never checked never improve.
