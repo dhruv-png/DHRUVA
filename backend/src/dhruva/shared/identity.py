@@ -58,12 +58,15 @@ class SurrogateId:
             would make ``InstrumentId("NIFTY")`` succeed, which is exactly the
             broker-identifier coupling this class exists to prevent.
         """
-        invariant(
-            isinstance(value, uuid.UUID),
-            f"{type(self).__name__} requires a UUID",
-            value=repr(value),
-            actual_type=type(value).__name__,
-        )
+        # Checked first; the message costs a repr and two type lookups and is
+        # built only on failure. Identifiers are constructed on every row read
+        # from S04 onward.
+        if type(value) is not uuid.UUID:
+            raise InvariantViolation(
+                f"{type(self).__name__} requires a UUID",
+                value=repr(value),
+                actual_type=type(value).__name__,
+            )
         object.__setattr__(self, "_value", value)
 
     def __setattr__(self, name: str, value: object) -> None:

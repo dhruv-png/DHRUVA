@@ -23,6 +23,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Protocol, Self, runtime_checkable
 
+from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.invariants import invariant
 
 __all__ = ["SessionKind", "TradingCalendar", "TradingDay", "TradingSession"]
@@ -74,12 +75,17 @@ class TradingDay:
             entire purpose of the type: a "trading day" that was a Sunday would
             otherwise propagate silently into a backtest.
         """
-        invariant(
-            calendar.is_session(day),
-            "date is not a trading session on this calendar",
-            day=day.isoformat(),
-            calendar=type(calendar).__name__,
-        )
+        # Checked first, message built only on failure. The eager form --
+        # invariant(cond, msg, **ctx) -- called day.isoformat() and
+        # type(calendar).__name__ on every construction. Harmless when a
+        # TradingDay was built once per request; measurable at S04, where every
+        # row read reconstructs one. Same defect class as the S03 Money guards.
+        if not calendar.is_session(day):
+            raise InvariantViolation(
+                "date is not a trading session on this calendar",
+                day=day.isoformat(),
+                calendar=type(calendar).__name__,
+            )
         return cls(day)
 
     @property
