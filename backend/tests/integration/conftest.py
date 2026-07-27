@@ -20,11 +20,14 @@ most tests, and the tests that genuinely need commits pay for them.
 
 from __future__ import annotations
 
+import inspect
 import os
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import pytest
+import pytest_asyncio
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
@@ -58,9 +61,17 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     them without having to remember.
     """
     for item in items:
-        if "tests/integration/" in item.nodeid.replace("\\", "/"):
-            item.add_marker(pytest.mark.integration)
-            item.add_marker(requires_database)
+        if "tests/integration/" not in item.nodeid.replace("\\", "/"):
+            continue
+        item.add_marker(pytest.mark.integration)
+        item.add_marker(requires_database)
+        # asyncio_mode is "strict", so an `async def test_` without this marker
+        # is not run at all -- pytest warns and moves on, which reads as a
+        # passing suite that executed nothing. loop_scope="session" so the tests
+        # share the loop that the session-scoped engine fixture was created on;
+        # a function-scoped loop cannot use a connection opened on another.
+        if inspect.iscoroutinefunction(getattr(item, "function", None)):
+            item.add_marker(pytest.mark.asyncio(loop_scope="session"))
 
 
 @pytest.fixture(scope="session")
@@ -72,6 +83,7 @@ def database_url() -> Iterator[str]:
     """
     supplied = os.environ.get(DATABASE_URL_ENV)
     if supplied:
+        export_database_settings(supplied)
         yield supplied
         return
 
@@ -81,10 +93,12 @@ def database_url() -> Iterator[str]:
     from testcontainers.postgres import PostgresContainer  # noqa: PLC0415 - optional dependency
 
     with PostgresContainer(POSTGRES_IMAGE, driver="asyncpg") as container:
-        yield container.get_connection_url()
+        url = container.get_connection_url()
+        export_database_settings(url)
+        yield url
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
     """Create the engine once and dispose of it at session end."""
     from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415 - test-only import
@@ -96,7 +110,7 @@ async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
         await created.dispose()
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def migrated(engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
     """Apply the full migration chain once, then hand back the engine.
 
@@ -116,7 +130,7 @@ async def migrated(engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
         _run_alembic("downgrade", "base")
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def connection(migrated: AsyncEngine) -> AsyncIterator[AsyncConnection]:
     """Open a connection inside a transaction that is always rolled back."""
     async with migrated.connect() as conn:
@@ -127,7 +141,7 @@ async def connection(migrated: AsyncEngine) -> AsyncIterator[AsyncConnection]:
             await transaction.rollback()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def session(connection: AsyncConnection) -> AsyncIterator[AsyncSession]:
     """Bind a session to the rolled-back connection.
 
@@ -140,7 +154,7 @@ async def session(connection: AsyncConnection) -> AsyncIterator[AsyncSession]:
         yield bound
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def committed_session(migrated: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """Provide a session whose commits genuinely commit, for concurrency tests.
 
@@ -160,8 +174,35 @@ async def committed_session(migrated: AsyncEngine) -> AsyncIterator[AsyncSession
                 await cleanup.execute(text("TRUNCATE daily_snapshot, outbox CASCADE"))
 
 
+def export_database_settings(url: str) -> None:
+    """Translate a connection URL into the ``DHRUVA_DB__*`` settings variables.
+
+    Alembic's ``env.py`` builds its URL from validated settings, because ADR-031
+    makes settings the single source of process configuration. That means it does
+    **not** read ``DHRUVA_TEST_DATABASE_URL`` -- and without this translation it
+    silently falls back to the defaults (user ``dhruva``), which is an
+    authentication failure against anybody else's database.
+
+    Rather than give Alembic a second configuration mechanism, the harness
+    exports one URL into the variables settings already understands. One knob for
+    the operator; one source of truth for the application.
+    """
+    parts = urlsplit(url)
+    if parts.hostname:
+        os.environ["DHRUVA_DB__HOST"] = parts.hostname
+    if parts.port:
+        os.environ["DHRUVA_DB__PORT"] = str(parts.port)
+    if parts.username:
+        os.environ["DHRUVA_DB__USER"] = parts.username
+    if parts.password:
+        os.environ["DHRUVA_DB__PASSWORD"] = parts.password
+    database = parts.path.lstrip("/")
+    if database:
+        os.environ["DHRUVA_DB__NAME"] = database
+
+
 def _run_alembic(command: str, revision: str) -> None:
-    """Run an Alembic command against the configured database."""
+    """Run an Alembic command against the database the fixtures are using."""
     from alembic import command as alembic_command  # noqa: PLC0415 - test-only import
     from alembic.config import Config  # noqa: PLC0415 - test-only import
 
