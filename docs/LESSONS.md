@@ -38,6 +38,85 @@ by roughly 30%. Worth watching at S04 and S05 before adjusting the plan.
 
 ---
 
+## S04 — Persistence
+
+### Eager guard evaluation recurs wherever a path becomes hot
+
+The defect fixed in S03's `Money` guards reappeared in `TradingDay.of` and
+`SurrogateId.__init__` at S04 — not because they regressed, but because a path
+that had been cold became hot. A `TradingDay` built once per request costs
+nothing; one built per row read costs a third of the reconstruction budget.
+
+```python
+invariant(calendar.is_session(day), "...", day=day.isoformat())  # isoformat() every call
+```
+
+**The general rule:** `invariant(cond, msg, **ctx)` evaluates every argument
+before the call. It is the right tool on cold paths and the wrong one on hot
+ones, and *which paths are hot changes as the system grows*. Re-check the guards
+in a module the first time it appears in a benchmark.
+
+Measured: record→domain mapping 11.4 µs → 7.7 µs.
+
+### Benchmark noise on a contended runner is indistinguishable from regression
+
+A different sub-microsecond benchmark failed on each run of the same commit. That
+signature — the failure *moving* — is measurement noise, not regression, and the
+wrong response is to tune the threshold until it passes.
+
+**What to do.** Gate sub-microsecond budgets behind an environment variable that
+the runner sets only when it can resolve them (`DHRUVA_CANONICAL_BENCHMARKS`).
+Millisecond-scale budgets are fine anywhere. Absolute thresholds remain correct;
+the machine was the problem.
+
+### Some costs belong to the framework, and the budget should say so
+
+ORM object construction measured 13 µs against a 10 µs budget. That is
+SQLAlchemy's declarative instrumentation for eight mapped columns, not anything
+this codebase controls. The original figure was guessed without first measuring
+the framework's baseline.
+
+**What to do.** Measure the framework's floor *before* setting a budget that
+includes it, then budget the delta you own. Revise with the reason recorded
+(ADR-036) rather than chasing a number that was never achievable.
+
+### `pytest-asyncio` event loops surface as failures in unrelated tests
+
+A Hypothesis test failed intermittently, and a *different* one each run. The
+cause was neither: pytest-asyncio creates an event loop per test, loops and their
+sockets are collected later, CPython emits `ResourceWarning` from `__del__`, and
+`filterwarnings = ["error"]` turned that into a failure attributed to whichever
+test happened to trigger the collection.
+
+**The tell.** When a failure moves between runs, suspect something *global* —
+warnings, GC, module state — rather than the test it lands on.
+
+**What to do.** Ignore the specific teardown warnings narrowly rather than
+relaxing `error` generally, so a leak the codebase actually owns still fails.
+
+### A `conftest.py` module-level `pytestmark` does not reach sibling modules
+
+Integration tests errored during fixture setup instead of skipping cleanly,
+because the `pytestmark` declaring them database-dependent lived in `conftest.py`
+rather than in each test module.
+
+**What to do.** Use `pytest_collection_modifyitems` to apply directory-wide
+markers. It works, and a new module in that directory inherits them without
+having to remember.
+
+### A test that filters too broadly can pass vacuously
+
+The migration-discipline check stripped every `ast.Expr` from a `downgrade()`
+body to skip the docstring — which also discarded every `op.drop_table()` call,
+since those are expression statements. It would have reported an empty downgrade
+for any migration that actually did work.
+
+Caught immediately because a real migration failed the check. **Worth
+generalising:** when a test filters a collection before asserting on it, verify
+the filter against a case that should *pass*, not only one that should fail.
+
+---
+
 ## S03 — Mutation testing
 
 ### Property-test shrinking dominates mutation cost
