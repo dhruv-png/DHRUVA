@@ -179,6 +179,13 @@ enable_error_code = [
 # unreachable dynamically. Rather than scatter thirty per-line suppressions
 # through the most-read code in the codebase, the check is disabled for this
 # package only. Every other module keeps it.
+# testcontainers ships no type stubs. It is a development-only dependency used
+# by the integration harness, and its absence must not fail the type gate for the
+# whole project.
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = ["dhruva.shared.money.*", "dhruva.shared.time.*"]
 warn_unreachable = false
@@ -206,7 +213,7 @@ addopts = [
 ]
 markers = [
   "unit: pure logic, no I/O, milliseconds",
-  "integration: real Postgres/Redis via testcontainers",
+  "integration: real PostgreSQL with TimescaleDB via testcontainers (ADR-058)",
   "contract: external adapter contract tests against recorded fixtures",
   "e2e: full journey through the API",
   "slow: takes more than one second",
