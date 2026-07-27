@@ -1,0 +1,20 @@
+captured_at_utc: 20260727T130452Z
+host_kernel:     Linux 6.6.87.2-microsoft-standard-WSL2
+cpu:             Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz
+cores:           8
+memory:          11Gi
+python:          scripts/canonical_validation.sh: line 39: uv: command not found
+uv:              scripts/canonical_validation.sh: line 40: uv: command not found
+docker:          
+The command 'docker' could not be found in this WSL 2 distro.
+We recommend to activate the WSL integration in Docker Desktop settings.
+
+For details about using Docker Desktop with WSL 2, visit:
+
+https://docs.docker.com/go/wsl2/
+
+not present
+sqlalchemy:      scripts/canonical_validation.sh: line 42: uv: command not found
+alembic:         scripts/canonical_validation.sh: line 43: uv: command not found
+asyncpg:         scripts/canonical_validation.sh: line 44: uv: command not found
+pytest:          scripts/canonical_validation.sh: line 45: uv: command not found

@@ -1,0 +1,34 @@
+
+=== environment ===
+
+=== 10-ruff-check ===
+
+=== 11-ruff-format ===
+
+=== 12-mypy ===
+
+=== 13-import-linter ===
+
+=== 14-boundaries ===
+
+=== 15-adr-guard ===
+
+=== 20-unit-suite ===
+
+=== 30-migration-upgrade ===
+
+=== 31-migration-downgrade ===
+
+=== 32-migration-reupgrade ===
+
+=== 33-migration-history ===
+
+=== 34-migration-current ===
+
+=== 35-autogenerate-empty-diff ===
+
+=== 40-integration-suite ===
+
+=== 50-benchmarks ===
+
+=== manifest ===
