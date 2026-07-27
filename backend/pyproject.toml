@@ -215,7 +215,17 @@ markers = [
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  # pytest-asyncio creates an event loop per test. Loops and their internal
+  # sockets are collected later, and CPython emits ResourceWarning from
+  # __del__ at that point -- which surfaces in whichever unrelated test happens
+  # to trigger the collection, producing a failure that moves around between
+  # runs. Narrowly ignored rather than relaxing "error" generally: a leak we
+  # own would still fail.
+  "ignore:unclosed event loop:ResourceWarning",
+  "ignore:unclosed <socket.socket:ResourceWarning",
+]
 
 # --------------------------------------------------------------------------- #
 # coverage - DoD section 10.1

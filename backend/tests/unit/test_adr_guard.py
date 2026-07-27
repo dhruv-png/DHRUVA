@@ -84,10 +84,10 @@ def test_real_decision_log_is_intact(adr_dir: Path) -> None:
 
 @pytest.mark.unit
 def test_real_decision_log_holds_all_approved_decisions(adr_dir: Path) -> None:
-    """Master Project Plan section 4 declares ADR-001 through ADR-050."""
+    """Master Project Plan section 4 declares ADR-001 through ADR-059."""
     records, problems = load_adrs(adr_dir)
     assert not problems
-    assert [r.number for r in records] == list(range(1, 51))
+    assert [r.number for r in records] == list(range(1, 60))
     # ADR-005 is superseded by ADR-042 and retained as history (ADR-027).
     superseded = [r for r in records if not r.is_accepted]
     assert [r.number for r in superseded] == [5]
