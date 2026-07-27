@@ -128,6 +128,17 @@ function Stop-CanonicalDatabase {
 Push-Location (Join-Path $RepoRoot 'backend')
 try {
     # --------------------------------------------------------------------- #
+    # 0. Remove a poisoned .pytest_cache.
+    #
+    #    A corrupted cache directory has twice killed pytest *after* the last
+    #    test but *before* the summary, taking the FAILURES section with it --
+    #    so three real failures were recorded as verdicts with no diagnostics.
+    #    Every pytest call below also passes -p no:cacheprovider, so this only
+    #    clears the existing damage. Failure to remove it is not fatal.
+    # --------------------------------------------------------------------- #
+    Remove-Item -Recurse -Force '.pytest_cache' -ErrorAction SilentlyContinue
+
+    # --------------------------------------------------------------------- #
     # 1. Environment provenance, recorded first so every number below is
     #    attributable to a specific stack.
     # --------------------------------------------------------------------- #
