@@ -51,23 +51,49 @@ class SurrogateId:
     def __init__(self, value: uuid.UUID, /) -> None:
         """Wrap a UUID.
 
+        Accepts any :class:`uuid.UUID`, including a driver's subclass of it, and
+        stores a plain :class:`uuid.UUID`. Rejects everything else.
+
         Raises
         ------
         InvariantViolation
             If ``value`` is not a :class:`uuid.UUID`. Accepting a string here
             would make ``InstrumentId("NIFTY")`` succeed, which is exactly the
             broker-identifier coupling this class exists to prevent.
+
+        Notes
+        -----
+        The check was originally ``type(value) is not uuid.UUID`` -- an exact
+        type test. asyncpg does not return :class:`uuid.UUID`; it returns
+        ``asyncpg.pgproto.pgproto.UUID``, a *subclass*. So every identifier read
+        back from PostgreSQL was rejected, and the entire persistence layer could
+        write rows it could never load. No unit test could see this: construct a
+        ``uuid.UUID`` in Python and the exact check passes. It took a real
+        database to produce a value of the real type, which is the case ADR-058
+        makes in one line of evidence.
+
+        ``isinstance`` is the correct test and loses nothing: ``str`` is not a
+        UUID subclass, so ``InstrumentId("NIFTY")`` still raises.
+
+        The subclass is then narrowed back to a plain ``uuid.UUID``. A domain
+        identifier holding ``asyncpg.pgproto.UUID`` would put a driver type
+        inside the domain model -- the exact leak the layering forbids -- and
+        would make an identifier's type depend on whether it was constructed or
+        loaded.
         """
-        # Checked first; the message costs a repr and two type lookups and is
-        # built only on failure. Identifiers are constructed on every row read
-        # from S04 onward.
-        if type(value) is not uuid.UUID:
-            raise InvariantViolation(
-                f"{type(self).__name__} requires a UUID",
-                value=repr(value),
-                actual_type=type(value).__name__,
-            )
-        object.__setattr__(self, "_value", value)
+        # Fast path first: the overwhelmingly common case is an exact uuid.UUID,
+        # and identifiers are constructed on every row read from S04 onward.
+        if type(value) is uuid.UUID:
+            object.__setattr__(self, "_value", value)
+            return
+        if isinstance(value, uuid.UUID):
+            object.__setattr__(self, "_value", uuid.UUID(int=value.int))
+            return
+        raise InvariantViolation(
+            f"{type(self).__name__} requires a UUID",
+            value=repr(value),
+            actual_type=type(value).__name__,
+        )
 
     def __setattr__(self, name: str, value: object) -> None:
         """Refuse mutation; identifiers are value objects."""
