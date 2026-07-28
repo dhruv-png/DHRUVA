@@ -20,6 +20,7 @@ most tests, and the tests that genuinely need commits pay for them.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 from collections.abc import AsyncIterator, Iterator
@@ -44,8 +45,11 @@ DATABASE_URL_ENV = "DHRUVA_TEST_DATABASE_URL"
 #: error at collection rather than twelve green-looking skips.
 REQUIRE_DATABASE_ENV = "DHRUVA_REQUIRE_DATABASE"
 
-#: TimescaleDB rather than plain PostgreSQL: hypertable DDL is part of what this
-#: suite verifies, and it does not exist without the extension.
+#: TimescaleDB rather than plain PostgreSQL, so that hypertable coverage can be
+#: added without changing the harness. Nothing in this suite requires it *yet* --
+#: see the ``timescale_available`` fixture -- so the suite also runs against a
+#: plain PostgreSQL 16. What is not negotiable is that the database is real
+#: PostgreSQL (ADR-058).
 POSTGRES_IMAGE = "timescale/timescaledb:2.17.2-pg16"
 
 
@@ -102,6 +106,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     rather than skipping cleanly. Applying the markers at collection is the
     mechanism that actually works, and it means a new integration module inherits
     them without having to remember.
+
+    The ``asyncio`` marker is deliberately **not** applied here. pytest-asyncio
+    has already decided how to invoke each item by the time this hook runs, so a
+    marker added now is seen too late and reported as
+    "marked with '@pytest.mark.asyncio' but it is not an async function" --
+    which, under ``filterwarnings = ["error"]``, fails every test in the suite.
+    Each integration module declares it in its own ``pytestmark`` instead.
     """
     selected = [i for i in items if "tests/integration/" in i.nodeid.replace("\\", "/")]
 
@@ -115,16 +126,26 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             f"but no database is reachable. {_SKIP_REASON}"
         )
 
+    # An async test with no asyncio marker is silently not run in strict mode, so
+    # a module that forgets it reports a passing suite that executed nothing.
+    # Refuse to collect rather than allow that.
+    unmarked = [
+        item.nodeid
+        for item in selected
+        if inspect.iscoroutinefunction(getattr(item, "function", None))
+        and not any(mark.name == "asyncio" for mark in item.iter_markers())
+    ]
+    if unmarked:
+        raise pytest.UsageError(
+            "async integration tests without an asyncio marker would be silently "
+            "skipped under asyncio_mode=strict. Add "
+            "`pytest.mark.asyncio(loop_scope='session')` to the module's "
+            "pytestmark. Offending tests: " + ", ".join(unmarked)
+        )
+
     for item in selected:
         item.add_marker(pytest.mark.integration)
         item.add_marker(requires_database)
-        # asyncio_mode is "strict", so an `async def test_` without this marker
-        # is not run at all -- pytest warns and moves on, which reads as a
-        # passing suite that executed nothing. loop_scope="session" so the tests
-        # share the loop that the session-scoped engine fixture was created on;
-        # a function-scoped loop cannot use a connection opened on another.
-        if inspect.iscoroutinefunction(getattr(item, "function", None)):
-            item.add_marker(pytest.mark.asyncio(loop_scope="session"))
 
 
 @pytest.fixture(scope="session")
@@ -164,6 +185,38 @@ async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def timescale_available(engine: AsyncEngine) -> bool:
+    """Report whether TimescaleDB is installed, without trying to install it.
+
+    Detection rather than creation, for three reasons.
+
+    The extension is not *created* here because the supported container image
+    installs it into ``template1``, so every database made from that template
+    already has it, and the image's own init script creates it as well. Racing
+    that init is how ``CREATE EXTENSION IF NOT EXISTS`` -- a statement whose
+    entire purpose is to be safe when the thing exists -- came to fail with a
+    duplicate key on ``pg_extension_name_index``. ``IF NOT EXISTS`` reads the
+    catalogue and is not atomic against a concurrent creator.
+
+    It is not *required* here because nothing in this suite uses it. Neither the
+    migration chain nor any of the tests below creates a hypertable. Demanding a
+    capability that nothing under test exercises made the whole suite
+    unrunnable against a plain PostgreSQL for no gain in what it verifies.
+
+    When hypertable coverage arrives, those tests take this fixture and skip on
+    it explicitly. That keeps the requirement attached to the tests that have it,
+    which is where a reader will look for it.
+    """
+    from sqlalchemy import text  # noqa: PLC0415 - test-only import
+
+    async with engine.connect() as connection:
+        installed = await connection.scalar(
+            text("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
+        )
+    return bool(installed)
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def migrated(engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
     """Apply the full migration chain once, then hand back the engine.
 
@@ -171,16 +224,20 @@ async def migrated(engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
     the schema migrations produce, or the suite verifies a schema that will never
     exist in production -- and the up/down/up test would be checking something
     different from what every other test runs against.
-    """
-    from sqlalchemy import text  # noqa: PLC0415 - test-only import
 
-    async with engine.begin() as connection:
-        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
-    _run_alembic("upgrade", "head")
+    Alembic is run in a worker thread. ``alembic/env.py`` drives the async
+    migration with ``asyncio.run()``, which refuses to start a loop when one is
+    already running -- and this fixture is async, so the session loop is running.
+    Calling it directly raised ``RuntimeError: asyncio.run() cannot be called
+    from a running event loop`` and errored every test in the suite at setup.
+    The thread gives ``env.py`` the bare thread it expects, without this harness
+    reaching into how migrations manage their own loop.
+    """
+    await asyncio.to_thread(_run_alembic, "upgrade", "head")
     try:
         yield engine
     finally:
-        _run_alembic("downgrade", "base")
+        await asyncio.to_thread(_run_alembic, "downgrade", "base")
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -208,23 +265,63 @@ async def session(connection: AsyncConnection) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def committed_session(migrated: AsyncEngine) -> AsyncIterator[AsyncSession]:
+async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
+    """Empty the worked-example tables after a test that genuinely commits.
+
+    Any test that commits must request this, whether or not it also wants
+    :func:`committed_session`. That was previously not possible -- the truncation
+    was welded inside ``committed_session``, so a test taking ``migrated``
+    directly had no way to clean up and simply did not.
+    ``test_deadlock_surfaces_as_a_driver_error`` is exactly that test: it commits
+    two rows and left them behind, and the next test's first insert then
+    collided with the unique constraint and failed for a reason that had nothing
+    to do with what it was asserting.
+
+    Separating the cleanup from the session makes the requirement something a
+    test can opt into on its own.
+    """
+    from sqlalchemy import text  # noqa: PLC0415 - test-only import
+
+    try:
+        yield
+    finally:
+        async with migrated.begin() as cleanup:
+            # A bounded wait, so a lock holder can never again present as a hang.
+            # If some future fixture reintroduces one, the suite fails in five
+            # seconds naming the table, which is a diagnosis rather than a
+            # symptom.
+            await cleanup.execute(text("SET LOCAL lock_timeout = '5s'"))
+            await cleanup.execute(text("TRUNCATE daily_snapshot, outbox CASCADE"))
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def committed_session(
+    migrated: AsyncEngine, truncated_after_test: None
+) -> AsyncIterator[AsyncSession]:
     """Provide a session whose commits genuinely commit, for concurrency tests.
 
     Cleans up explicitly at teardown, because nothing rolls it back. Tests using
     this fixture are the exception rather than the default -- committed state is
     what makes a suite order-dependent if it leaks.
+
+    Depends on :func:`truncated_after_test` rather than truncating inline, so
+    that the session is closed before the TRUNCATE runs. When the cleanup lived
+    inside ``async with factory() as bound``, the TRUNCATE ran while ``bound``
+    was still open: a test that finished with a read left that session idle in
+    transaction holding ACCESS SHARE on ``daily_snapshot``, and TRUNCATE wants
+    ACCESS EXCLUSIVE. There is no cycle for PostgreSQL to detect -- one side is
+    simply never going to be asked to give the lock up -- so the suite hung
+    forever instead of failing. It passed when the test ran alone, because alone
+    the session's last act was a commit and it held nothing.
     """
-    from sqlalchemy import text  # noqa: PLC0415 - test-only import
     from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: PLC0415 - test-only import
 
     factory = async_sessionmaker(bind=migrated, expire_on_commit=False)
-    async with factory() as bound:
-        try:
-            yield bound
-        finally:
-            async with migrated.begin() as cleanup:
-                await cleanup.execute(text("TRUNCATE daily_snapshot, outbox CASCADE"))
+    bound = factory()
+    try:
+        yield bound
+    finally:
+        await bound.close()
 
 
 def export_database_settings(url: str) -> None:

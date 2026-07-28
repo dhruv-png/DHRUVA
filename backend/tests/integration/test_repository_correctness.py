@@ -34,7 +34,19 @@ from dhruva.shared.time import TradingDay
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-pytestmark = pytest.mark.integration
+# asyncio_mode is "strict", so every async test needs the marker explicitly, and
+# it must be applied here rather than synthesised during collection: by the time
+# `pytest_collection_modifyitems` runs, pytest-asyncio has already decided how to
+# call each item, and a marker added afterwards produces
+# "marked with '@pytest.mark.asyncio' but it is not an async function".
+#
+# loop_scope="session" because the engine and the migrated schema are
+# session-scoped. A function-scoped loop cannot use a connection opened on
+# another one.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.asyncio(loop_scope="session"),
+]
 
 TUESDAY = date(2026, 7, 28)
 ACCOUNT = AccountId.deterministic("primary")
@@ -183,12 +195,18 @@ async def test_a_conflict_reports_which_version_it_expected(
     ),
     strict=False,
 )
-async def test_deadlock_surfaces_as_a_driver_error(migrated: AsyncEngine) -> None:
+async def test_deadlock_surfaces_as_a_driver_error(
+    migrated: AsyncEngine, truncated_after_test: None
+) -> None:
     """Two transactions locking two rows in opposite order.
 
     PostgreSQL detects the cycle and aborts one. What matters for the platform is
     that the abort surfaces as an exception a caller can branch on, rather than a
     hang.
+
+    Takes ``truncated_after_test`` because it commits rows of its own. Without it
+    the two rows survived into the next test, whose first insert then collided
+    with ``uq_daily_snapshot`` and failed for a reason unrelated to its subject.
     """
     factory = async_sessionmaker(bind=migrated, expire_on_commit=False)
     other_day = TradingDay(date(2026, 7, 29))
