@@ -59,6 +59,14 @@ itself, and every stage — Alembic and pytest alike — shares that one databas
 
 ---
 
+## Which option to use
+
+**Run it with no arguments unless you have a specific reason not to.** Supplying
+`-DatabaseUrl` tells the script you are providing the database yourself, and it
+will not start one. Pointing `-DatabaseUrl` at `localhost:55432` — the port the
+script's own container uses — asks for a database nobody started, and the probe
+stops the run with `ConnectionRefusedError`.
+
 ## Option A — your local PostgreSQL (fastest)
 
 TimescaleDB must be installed; three integration tests exercise hypertable DDL.
@@ -132,10 +140,17 @@ Everything lands in `docs\evidence\s04-<timestamp>\`. Attach it whole. Read
   database is a hard collection error. Without it, the integration suite skips
   quietly — and twelve `SKIPPED` lines in a log read exactly like a stage that
   executed. They are not evidence of anything.
-- **`-p no:cacheprovider`** on every pytest invocation. `.pytest_cache` has
-  repeatedly become unwritable mid-run (`WinError 5`, `WinError 183`), aborting
-  collection for a reason unrelated to the code under test. The cache only buys
-  `--lf` and `--ff`, which a full run does not use.
+- **`-p no:cacheprovider`** on every pytest invocation, **and** the run refuses
+  to start if `backend\.pytest_cache` cannot be removed. That directory has
+  become corrupt on this repository on both Windows (`WinError 5`, `WinError
+  183`) and Linux (`EACCES`), and `no:cacheprovider` alone is not enough: pytest
+  stats it during collection whether or not the cache plugin is loaded, so a
+  corrupt one aborts the run before a single test is collected. If the script
+  stops here, close whatever holds the directory and remove it:
+
+  ```powershell
+  Remove-Item -Recurse -Force backend\.pytest_cache
+  ```
 
 ---
 

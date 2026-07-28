@@ -138,10 +138,25 @@ try {
     #    A corrupted cache directory has twice killed pytest *after* the last
     #    test but *before* the summary, taking the FAILURES section with it --
     #    so three real failures were recorded as verdicts with no diagnostics.
-    #    Every pytest call below also passes -p no:cacheprovider, so this only
-    #    clears the existing damage. Failure to remove it is not fatal.
+    #
+    #    `-p no:cacheprovider` is NOT sufficient on its own: pytest stats this
+    #    directory during collection regardless of whether the cache plugin is
+    #    loaded, so a corrupt one aborts the run with a bare permission error
+    #    before a single test is collected. Reproduced on Windows (WinError 5)
+    #    and on Linux (EACCES) from the same directory, so removal has to
+    #    actually succeed -- silently continuing past a failure here buys a
+    #    confusing failure ten seconds later.
     # --------------------------------------------------------------------- #
     Remove-Item -Recurse -Force '.pytest_cache' -ErrorAction SilentlyContinue
+    if (Test-Path '.pytest_cache') {
+        throw (
+            "backend\.pytest_cache exists and could not be removed. pytest stats it " +
+            "during collection even with -p no:cacheprovider, so the run would fail " +
+            "with a permission error before collecting anything. Close any editor or " +
+            "terminal holding it, then remove it: " +
+            "Remove-Item -Recurse -Force backend\.pytest_cache"
+        )
+    }
 
     # --------------------------------------------------------------------- #
     # 1. Environment provenance, recorded first so every number below is
