@@ -20,6 +20,108 @@ to do instead.
 
 ---
 
+## S04 — What the first real database run found
+
+Six defects, found the first time the integration suite ever executed against a
+live PostgreSQL. Every one of them was invisible to 937 passing unit tests.
+
+### An exact type check rejects the driver's own UUID
+
+``Identifier.__init__`` tested ``type(value) is not uuid.UUID``. asyncpg does not
+return ``uuid.UUID``; it returns ``asyncpg.pgproto.pgproto.UUID``, a **subclass**.
+So every identifier read back from PostgreSQL was rejected, and the persistence
+layer could write rows it was structurally incapable of loading. The round trip
+was broken in one direction only, which is the direction no unit test looks at:
+construct a ``uuid.UUID`` in Python and the exact check passes every time.
+
+This is ADR-058 -- real PostgreSQL, no SQLite substitute -- earning its cost in a
+single defect. A fake would have handed back a plain ``uuid.UUID`` and agreed
+with the unit tests all the way to production.
+
+**What to do.** ``isinstance`` for the guard, and normalise to the plain type on
+the way in. ``isinstance`` loses nothing here -- ``str`` is not a UUID subclass,
+so the ``InstrumentId("NIFTY")`` case the guard exists for is still refused --
+and normalising keeps a driver type from taking up residence inside the domain
+model, where an identifier's class would otherwise depend on whether it was
+constructed or loaded.
+
+**Worth generalising:** an exact type check is a claim about who is allowed to
+construct your inputs. At a system boundary, you are not the one constructing
+them.
+
+### A cleanup nested inside the thing it cleans up waits for itself
+
+``committed_session`` ran ``TRUNCATE`` in a ``finally`` block *inside*
+``async with factory() as bound``. A test finishing on a read left that session
+idle in transaction holding ACCESS SHARE; TRUNCATE wants ACCESS EXCLUSIVE. There
+is no cycle for PostgreSQL to detect -- nobody is going to ask the first session
+for its lock, because the code that would close it is waiting on the TRUNCATE --
+so the suite **hung forever instead of failing**.
+
+It passed when that test ran alone, because alone the session's last act was a
+commit and it held nothing. Run in sequence, it hung. A test that passes in
+isolation and hangs in company is describing its fixture, not its subject.
+
+**What to do.** Release the resource, then clean up after it -- ordering, not
+nesting. And put a ``lock_timeout`` on any statement that takes an exclusive
+lock in a test: an infinite hang carries no information, while a five-second
+failure naming the table is a diagnosis.
+
+### A test that commits must own its cleanup, and must be able to
+
+``test_deadlock_surfaces_as_a_driver_error`` commits two rows and took ``migrated``
+directly, so the truncation welded inside ``committed_session`` never ran for it.
+The next test's first insert then collided with ``uq_daily_snapshot`` and failed
+for a reason with nothing to do with what it asserts.
+
+The rule was written down -- "tests that observe committed state clean up after
+themselves explicitly" -- and could not be followed, because the only cleanup
+available came bundled with a session fixture this test did not want.
+
+**What to do.** When a rule is stated in a docstring, check there is a mechanism
+for obeying it that does not require taking something unrelated. The cleanup is
+now its own fixture, so any committing test can opt in on its own terms.
+
+### asyncio.run() cannot be called from inside a running loop
+
+``alembic/env.py`` drives its async migration with ``asyncio.run()``. The
+``migrated`` fixture is async, so the session loop was already running, and every
+test in the suite errored at setup with
+``RuntimeError: asyncio.run() cannot be called from a running event loop``.
+
+**What to do.** ``await asyncio.to_thread(...)``. The migration tool owns how it
+manages its own loop; the harness should give it the bare thread it expects
+rather than reach inside and restructure it.
+
+### A marker added during collection arrives too late
+
+The asyncio marker was synthesised in ``pytest_collection_modifyitems``. By then
+pytest-asyncio has already decided how to invoke each item, so the marker was
+reported as ``"marked with '@pytest.mark.asyncio' but it is not an async
+function"`` -- which, under ``filterwarnings = ["error"]``, failed all twelve
+tests. The earlier symptom (async tests silently not running at all) was real;
+the fix was applied at the wrong point in the lifecycle.
+
+**What to do.** Declare it in the module's ``pytestmark``, where the plugin can
+see it during collection. The collection hook now *verifies* the marker is
+present and refuses to collect without it, which keeps the guarantee -- an async
+test can never be silently skipped -- without fighting the plugin for control of
+it.
+
+### A deprecation warning can be a total outage
+
+Alembic 1.16 warns when ``path_separator`` is absent from ``alembic.ini``. With
+``filterwarnings = ["error"]``, that warning was raised inside the ``migrated``
+fixture and every database-backed test errored during setup. A note about how a
+config key will be parsed in a future release presented as a complete failure of
+the persistence suite.
+
+**What to do.** ``filterwarnings = ["error"]`` is right and stays. The corollary
+is that a dependency's deprecation warning is a build break on a timer: address
+them when the dependency is upgraded, not when they detonate.
+
+---
+
 ## S04 — The validation harness
 
 Six defects in the harness, found across two attempts by someone else trying to
