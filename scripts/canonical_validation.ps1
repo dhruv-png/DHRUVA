@@ -109,11 +109,16 @@ function Start-CanonicalDatabase {
     }
     if (-not $ready) { throw "Database did not become ready within 120 seconds." }
 
-    # The image installs the extension into template1, so a database created at
-    # startup already has it. Asserting it costs nothing and turns a confusing
-    # hypertable failure much later into a clear one now.
-    docker exec $ContainerName psql -U dhruva_test -d dhruva_test `
-        -c 'CREATE EXTENSION IF NOT EXISTS timescaledb;' 2>&1 | Out-Host
+    # No CREATE EXTENSION here. The image installs timescaledb into template1, so
+    # POSTGRES_DB inherits it at creation, and the image's own init script also
+    # creates it -- which is why even `CREATE EXTENSION IF NOT EXISTS` failed
+    # with a duplicate key on pg_extension_name_index: IF NOT EXISTS checks the
+    # catalogue before the concurrent init has committed, then collides with it.
+    #
+    # The extension is *verified* instead, by the connection probe in stage 03,
+    # which reports its version and exits non-zero when it is absent. Verifying
+    # a precondition is the right move regardless; creating one that the image
+    # already guarantees was redundant work that could only ever fail.
 
     Write-Host "  container $ContainerName ready on port $ContainerPort" -ForegroundColor Green
     return "postgresql+asyncpg://dhruva_test:dhruva_test@localhost:$ContainerPort/dhruva_test"
@@ -204,21 +209,55 @@ try {
 
     # Prove the database is reachable *before* running six stages against it.
     # Failing here names the problem; failing later buries it in a stack trace.
-    $probe = Invoke-Captured '03-database-versions' {
-        uv run python -c @"
-import asyncio, os, re, asyncpg
-async def main():
-    url = re.sub(r'\+asyncpg', '', os.environ['DHRUVA_TEST_DATABASE_URL'])
-    c = await asyncpg.connect(url)
-    print('postgresql:', await c.fetchval('SHOW server_version'))
-    print('timescaledb:', await c.fetchval("SELECT extversion FROM pg_extension WHERE extname='timescaledb'") or 'NOT INSTALLED')
-    print('isolation:', await c.fetchval('SHOW transaction_isolation'))
-    await c.close()
-asyncio.run(main())
-"@
-    }
+    #
+    # The probe is written to a file and executed as a file. Passing Python
+    # source to `python -c` through PowerShell means the source crosses the
+    # native-command argument parser, which strips the inner double quotes --
+    # `c.fetchval("SELECT ...")` arrived at the interpreter as
+    # `c.fetchval(SELECT ...)` and died with `'(' was never closed`. A here-string
+    # does not prevent this; the mangling happens at the call boundary, after
+    # PowerShell has finished with the string. A file has no such boundary.
+    $probeScript = Join-Path $Evidence '03-database-versions.py'
+    @'
+"""Connection probe: prove the database is reachable and correctly provisioned."""
+import asyncio
+import os
+import re
+import sys
+
+import asyncpg
+
+EXTENSION_QUERY = "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'"
+
+
+async def main() -> int:
+    url = re.sub(r"\+asyncpg", "", os.environ["DHRUVA_TEST_DATABASE_URL"])
+    connection = await asyncpg.connect(url)
+    try:
+        print("postgresql: ", await connection.fetchval("SHOW server_version"))
+        extension = await connection.fetchval(EXTENSION_QUERY)
+        print("timescaledb:", extension or "NOT INSTALLED")
+        print("isolation:  ", await connection.fetchval("SHOW transaction_isolation"))
+        print("database:   ", await connection.fetchval("SELECT current_database()"))
+        print("user:       ", await connection.fetchval("SELECT current_user"))
+    finally:
+        await connection.close()
+
+    if not extension:
+        # Three integration tests exercise hypertable DDL, which does not exist
+        # without the extension. Continuing would produce failures that look like
+        # defects in the persistence layer.
+        print("FATAL: the timescaledb extension is not installed in this database.")
+        return 1
+    return 0
+
+
+sys.exit(asyncio.run(main()))
+'@ | Out-File -FilePath $probeScript -Encoding utf8
+
+    $probe = Invoke-Captured '03-database-versions' { uv run python $probeScript }
     if ($probe -ne 0) {
-        throw "Cannot connect to the database. See 03-database-versions.log. Nothing below this point would be meaningful, so the run stops here."
+        throw "Database probe failed. See 03-database-versions.log. Every stage below shares this dependency, so the run stops here rather than producing six copies of the same failure."
     }
 
     # --------------------------------------------------------------------- #

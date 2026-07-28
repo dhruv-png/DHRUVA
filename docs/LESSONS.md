@@ -88,6 +88,38 @@ the failing logs were *longer*, because stack traces are verbose.
 verdict, and put it at the top of the file. Volume of output correlates with
 failure at least as often as with success.
 
+### Do not send source code through a shell argument parser
+
+The stage 03 probe was Python passed to `python -c` from a PowerShell
+here-string. It arrived at the interpreter as `c.fetchval(SELECT extversion …)`
+and died with `'(' was never closed`. The inner double quotes were stripped by
+the **native-command argument parser**, which runs *after* PowerShell has
+finished evaluating the string — so a here-string, single quotes, or any amount
+of care with PowerShell's own quoting rules could not have prevented it. Nothing
+about the string was wrong when PowerShell was done with it.
+
+**What to do.** Write the program to a file and execute the file. There is no
+argument-parsing boundary for the source to cross, the code is syntax-checkable
+before it ships, and the file becomes part of the evidence — you can see exactly
+what ran. The rule generalises: `-c`, `-e`, `bash -c`, `psql -c` and every
+sibling are for one-liners with no quoting in them. Anything longer belongs in a
+file.
+
+### Do not create what the platform already guarantees
+
+`CREATE EXTENSION IF NOT EXISTS timescaledb` failed with a duplicate key on
+`pg_extension_name_index`. `IF NOT EXISTS` is not atomic against a concurrent
+creator: it reads the catalogue, finds nothing, and collides when the image's own
+init script commits first. The statement was redundant — the image installs the
+extension into `template1`, so `POSTGRES_DB` already had it — and a redundant
+statement can only ever fail.
+
+**What to do.** Distinguish provisioning from verification. A precondition the
+platform already guarantees should be *asserted*, not re-established. The check
+is cheaper, cannot race, and gives a better error: "the extension is missing"
+rather than "creating the extension failed", which are very different problems
+wearing the same message.
+
 ### Byte-level things that cost real time
 
 - `Tee-Object` on Windows PowerShell 5.1 writes **UTF-16LE**. The evidence was

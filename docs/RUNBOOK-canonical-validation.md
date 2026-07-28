@@ -92,6 +92,14 @@ The script starts `timescale/timescaledb:2.17.2-pg16` on port **55432** — not
 `pg_isready`, and removes the container in a `finally` block even if the run
 throws. First run pulls the image, which takes a few minutes.
 
+It does **not** create the TimescaleDB extension on this path. The image
+installs it into `template1`, so `POSTGRES_DB` inherits it, and the image's own
+init script creates it as well. Racing that init made even
+`CREATE EXTENSION IF NOT EXISTS` fail with a duplicate key on
+`pg_extension_name_index` — `IF NOT EXISTS` reads the catalogue before the
+concurrent init commits, then collides with it. The extension is verified by the
+stage 03 probe instead, which is the more useful check regardless.
+
 ---
 
 ## What the script does, in order
