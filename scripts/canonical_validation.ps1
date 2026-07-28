@@ -257,7 +257,22 @@ sys.exit(asyncio.run(main()))
 
     $probe = Invoke-Captured '03-database-versions' { uv run python $probeScript }
     if ($probe -ne 0) {
-        throw "Database probe failed. See 03-database-versions.log. Every stage below shares this dependency, so the run stops here rather than producing six copies of the same failure."
+        $advice = "See 03-database-versions.log."
+        if (-not $StartedContainer) {
+            # The overwhelmingly common cause: a URL was supplied for a database
+            # that is not running. Supplying one suppresses the container this
+            # script would otherwise have started -- so pointing -DatabaseUrl at
+            # port $ContainerPort, which is the port the container uses, asks for
+            # a database nobody started.
+            $advice = (
+                "Nothing answered at $($env:DHRUVA_DB__HOST):$($env:DHRUVA_DB__PORT). " +
+                "-DatabaseUrl was supplied, which tells this script you are providing the " +
+                "database yourself and suppresses the container it would otherwise start. " +
+                "To have one started for you, rerun with no arguments: " +
+                ".\scripts\canonical_validation.ps1"
+            )
+        }
+        throw "Database probe failed. $advice Every stage below shares this dependency, so the run stops here rather than producing six copies of the same failure."
     }
 
     # --------------------------------------------------------------------- #
