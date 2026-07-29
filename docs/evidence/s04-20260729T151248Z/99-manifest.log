@@ -1,0 +1,46 @@
+﻿S04 canonical validation evidence
+captured: 20260729T151248Z
+commit:   e1d0b5a71f514d54d7c1f79c250e24e5a2e852a0
+branch:   s04-persistence-foundation
+
+stage verdicts
+--------------
+03-database-versions                     PASS (exit 0)
+10-ruff-check                            PASS (exit 0)
+11-ruff-format                           PASS (exit 0)
+12-mypy                                  PASS (exit 0)
+13-import-linter                         PASS (exit 0)
+14-boundaries                            PASS (exit 0)
+15-adr-guard                             PASS (exit 0)
+20-unit-suite                            PASS (exit 0)
+30-migration-upgrade                     PASS (exit 0)
+31-migration-downgrade                   PASS (exit 0)
+32-migration-reupgrade                   PASS (exit 0)
+33-migration-history                     PASS (exit 0)
+34-migration-current                     PASS (exit 0)
+35-autogenerate-empty-diff               PASS (exit 0)
+40-integration-suite                     PASS (exit 0)
+50-benchmarks                            FAIL (exit 1)
+
+OVERALL: FAIL - 1 stage(s) failed: 50-benchmarks
+
+files
+-----
+01-environment.log                       12 lines
+02-database-target.log                   8 lines
+03-database-versions.log                 6 lines
+10-ruff-check.log                        2 lines
+11-ruff-format.log                       2 lines
+12-mypy.log                              2 lines
+13-import-linter.log                     18 lines
+14-boundaries.log                        2 lines
+15-adr-guard.log                         2 lines
+20-unit-suite.log                        978 lines
+30-migration-upgrade.log                 13 lines
+31-migration-downgrade.log               13 lines
+32-migration-reupgrade.log               13 lines
+33-migration-history.log                 52 lines
+34-migration-current.log                 43 lines
+35-autogenerate-empty-diff.log           16 lines
+40-integration-suite.log                 27 lines
+50-benchmarks.log                        164 lines
