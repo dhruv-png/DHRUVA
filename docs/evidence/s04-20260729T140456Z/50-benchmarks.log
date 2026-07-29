@@ -1,0 +1,135 @@
+﻿============================= test session starts =============================
+collecting ... collected 983 items / 954 deselected / 29 selected
+
+tests/benchmarks/test_budgets.py::test_settings_load_is_within_budget PASSED [  3%]
+tests/benchmarks/test_budgets.py::test_context_bind_is_within_budget PASSED [  6%]
+tests/benchmarks/test_budgets.py::test_log_emission_is_within_budget PASSED [ 10%]
+tests/benchmarks/test_budgets.py::test_redaction_overhead_is_within_budget PASSED [ 13%]
+tests/benchmarks/test_budgets.py::test_metrics_render_is_within_budget PASSED [ 17%]
+tests/benchmarks/test_budgets.py::test_readiness_evaluation_is_within_budget PASSED [ 20%]
+tests/benchmarks/test_persistence_layers.py::test_orm_object_construction_is_within_budget PASSED [ 24%]
+tests/benchmarks/test_persistence_layers.py::test_domain_to_record_is_within_budget PASSED [ 27%]
+tests/benchmarks/test_persistence_layers.py::test_record_to_domain_is_within_budget PASSED [ 31%]
+tests/benchmarks/test_persistence_layers.py::test_model_to_record_is_within_budget PASSED [ 34%]
+tests/benchmarks/test_persistence_layers.py::test_the_full_read_mapping_chain_is_bounded PASSED [ 37%]
+tests/benchmarks/test_persistence_layers.py::test_database_query_latency_is_within_budget FAILED [ 41%]
+tests/benchmarks/test_persistence_layers.py::test_end_to_end_repository_read_is_within_budget FAILED [ 44%]
+tests/benchmarks/test_persistence_layers.py::test_end_to_end_repository_write_is_within_budget FAILED [ 48%]
+tests/benchmarks/test_persistence_layers.py::test_bulk_timeseries_append_is_within_budget FAILED [ 51%]
+tests/benchmarks/test_primitives.py::test_money_addition_is_within_budget FAILED [ 55%]
+tests/benchmarks/test_primitives.py::test_money_scaling_is_within_budget FAILED [ 58%]
+tests/benchmarks/test_primitives.py::test_money_construction_is_within_budget XFAIL [ 62%]
+tests/benchmarks/test_primitives.py::test_notional_is_within_budget PASSED [ 65%]
+tests/benchmarks/test_primitives.py::test_rate_application_is_within_budget PASSED [ 68%]
+tests/benchmarks/test_primitives.py::test_allocation_is_within_budget PASSED [ 72%]
+tests/benchmarks/test_primitives.py::test_parsing_is_within_budget PASSED [ 75%]
+tests/benchmarks/test_primitives.py::test_trading_day_comparison_is_within_budget PASSED [ 79%]
+tests/benchmarks/test_primitives.py::test_clock_read_is_within_budget PASSED [ 82%]
+tests/benchmarks/test_primitives.py::test_frozen_clock_read_is_within_budget PASSED [ 86%]
+tests/benchmarks/test_primitives.py::test_a_million_money_additions_is_within_budget XFAIL [ 89%]
+tests/benchmarks/test_primitives.py::test_money_instances_are_small_enough_to_hold_a_million PASSED [ 93%]
+tests/benchmarks/test_primitives.py::test_identifier_creation_is_not_a_bottleneck PASSED [ 96%]
+tests/benchmarks/test_primitives.py::test_date_range_iteration_is_not_a_bottleneck FAILED [100%]
+
+================================== FAILURES ===================================
+________________ test_database_query_latency_is_within_budget _________________
+
+    @requires_database
+    def test_database_query_latency_is_within_budget() -> None:
+        """The round trip alone, with no mapping, so IO is attributable separately.
+    
+        REQUIRES CANONICAL VALIDATION. Budget: p95 < 3 ms for a primary-key read.
+        """
+>       pytest.fail("not yet implemented; requires the integration harness")
+E       Failed: not yet implemented; requires the integration harness
+
+tests\benchmarks\test_persistence_layers.py:182: Failed
+______________ test_end_to_end_repository_read_is_within_budget _______________
+
+    @requires_database
+    def test_end_to_end_repository_read_is_within_budget() -> None:
+        """Everything a caller experiences: query, ORM, mapping, reconstruction.
+    
+        REQUIRES CANONICAL VALIDATION. Budget: p95 < 3 ms.
+        """
+>       pytest.fail("not yet implemented; requires the integration harness")
+E       Failed: not yet implemented; requires the integration harness
+
+tests\benchmarks\test_persistence_layers.py:191: Failed
+______________ test_end_to_end_repository_write_is_within_budget ______________
+
+    @requires_database
+    def test_end_to_end_repository_write_is_within_budget() -> None:
+        """Insert plus commit, as a use case experiences it.
+    
+        REQUIRES CANONICAL VALIDATION. Budget: p95 < 5 ms.
+        """
+>       pytest.fail("not yet implemented; requires the integration harness")
+E       Failed: not yet implemented; requires the integration harness
+
+tests\benchmarks\test_persistence_layers.py:200: Failed
+________________ test_bulk_timeseries_append_is_within_budget _________________
+
+    @requires_database
+    def test_bulk_timeseries_append_is_within_budget() -> None:
+        """The ORM-bypass path (ADR-054), which S10 and S11 depend on.
+    
+        REQUIRES CANONICAL VALIDATION. Budget: 10,000 rows in under 500 ms.
+        """
+>       pytest.fail("not yet implemented; requires the integration harness")
+E       Failed: not yet implemented; requires the integration harness
+
+tests\benchmarks\test_persistence_layers.py:209: Failed
+____________________ test_money_addition_is_within_budget _____________________
+
+    @requires_stable_timing
+    def test_money_addition_is_within_budget() -> None:
+        """The single hottest operation in any backtest."""
+        a, b = Money.parse("1234.56"), Money.parse("78.90")
+    
+        measured = _per_call_us(lambda: a + b)
+    
+>       assert measured < BUDGET_MONEY_ADD_US, f"money add {measured:.3f}us"
+E       AssertionError: money add 0.572us
+E       assert 0.5724499933421612 < 0.5
+
+tests\benchmarks\test_primitives.py:94: AssertionError
+_____________________ test_money_scaling_is_within_budget _____________________
+
+    @requires_stable_timing
+    def test_money_scaling_is_within_budget() -> None:
+        """Exact, so no rounding work is involved."""
+        a = Money.parse("1234.56")
+    
+        measured = _per_call_us(lambda: a * 7)
+    
+>       assert measured < BUDGET_MONEY_MUL_US, f"money mul {measured:.3f}us"
+E       AssertionError: money mul 0.597us
+E       assert 0.5967500619590282 < 0.5
+
+tests\benchmarks\test_primitives.py:104: AssertionError
+________________ test_date_range_iteration_is_not_a_bottleneck ________________
+
+    def test_date_range_iteration_is_not_a_bottleneck() -> None:
+        """Backfill planning iterates ranges of up to a few thousand days."""
+        span = DateRange(date(2020, 1, 1), date(2020, 1, 1) + timedelta(days=2000))
+    
+        measured = _per_call_us(lambda: sum(1 for _ in span), batch=20, repeats=5)
+    
+>       assert measured < 1000.0, f"2000-day iteration {measured:.1f}us"
+E       AssertionError: 2000-day iteration 1009.3us
+E       assert 1009.2550073750317 < 1000.0
+
+tests\benchmarks\test_primitives.py:234: AssertionError
+=========================== short test summary info ===========================
+XFAIL tests/benchmarks/test_primitives.py::test_money_construction_is_within_budget - TD-13: 0.374us measured against a 0.30us budget on Python 3.10. Recorded rather than dropped (ADR-036); trigger for closure is re-measurement on the canonical 3.12 environment. xfail_strict is on, so this turns into a failure the day it passes -- which is the reminder to close the debt.
+XFAIL tests/benchmarks/test_primitives.py::test_a_million_money_additions_is_within_budget - TD-14: measured 0.525-0.614s against a 0.50s budget on Python 3.10, straddling the threshold depending on machine load. A 10 percent margin is not resolvable on a contended 2-vCPU sandbox, so this is marked non-strict deliberately: strict would flip between a false red and a false green and teach the author to ignore it. Resolve by measuring on the canonical environment, where the margin is meaningful.
+FAILED tests/benchmarks/test_persistence_layers.py::test_database_query_latency_is_within_budget
+FAILED tests/benchmarks/test_persistence_layers.py::test_end_to_end_repository_read_is_within_budget
+FAILED tests/benchmarks/test_persistence_layers.py::test_end_to_end_repository_write_is_within_budget
+FAILED tests/benchmarks/test_persistence_layers.py::test_bulk_timeseries_append_is_within_budget
+FAILED tests/benchmarks/test_primitives.py::test_money_addition_is_within_budget
+FAILED tests/benchmarks/test_primitives.py::test_money_scaling_is_within_budget
+FAILED tests/benchmarks/test_primitives.py::test_date_range_iteration_is_not_a_bottleneck
+=========== 7 failed, 20 passed, 954 deselected, 2 xfailed in 5.04s ===========
+exit_code: 1
