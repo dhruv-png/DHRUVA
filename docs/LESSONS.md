@@ -260,6 +260,29 @@ is cheaper, cannot race, and gives a better error: "the extension is missing"
 rather than "creating the extension failed", which are very different problems
 wearing the same message.
 
+### A script that exports into its caller's session sabotages its own next run
+
+`$env:X` in PowerShell is the *process* environment, and a script run in a shell
+is running in that shell's process. So exporting `DHRUVA_TEST_DATABASE_URL` for
+child processes left it set in the user's session after the run finished. The
+parameter defaulted to that variable. The container was removed on the way out.
+
+The second invocation in the same window therefore inherited a URL for a
+database that no longer existed, treated it as "the user is supplying their own
+database", skipped provisioning entirely, and failed connecting to a port
+nothing was listening on. Every individual piece behaved as designed.
+
+Two failures worth separating. The **leak**: a script should leave the
+environment as it found it, so state is saved on entry and restored in
+`finally`. The **conflation**: an explicit argument and an inherited variable had
+the same effect despite meaning opposite things — one is an instruction, the
+other is residue. They are now distinguished, and an inherited URL with nothing
+listening is discarded in favour of provisioning rather than obeyed.
+
+**Worth generalising:** when a default comes from ambient state, the code needs
+to know whether a value was *chosen* or merely *found*. Otherwise the failure
+mode is a run that silently does something the operator never asked for.
+
 ### `pg_isready` says yes while the database is still not there
 
 The container wait polled `docker exec pg_isready` and broke on the first

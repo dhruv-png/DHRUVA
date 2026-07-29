@@ -29,7 +29,35 @@
     .\scripts\canonical_validation.ps1 -DatabaseUrl "postgresql+asyncpg://postgres:postgres@localhost:5432/dhruva_test"
 #>
 [CmdletBinding()]
-param([string]$DatabaseUrl = $env:DHRUVA_TEST_DATABASE_URL)
+param([string]$DatabaseUrl)
+
+# Whether the URL was asked for or merely inherited. The distinction matters:
+# an explicit -DatabaseUrl is an instruction and is obeyed even when it fails,
+# but a value left in the session by an earlier run is an accident and must not
+# silently suppress container provisioning.
+if ($DatabaseUrl) {
+    $UrlSource = 'the -DatabaseUrl parameter'
+} elseif ($env:DHRUVA_TEST_DATABASE_URL) {
+    $DatabaseUrl = $env:DHRUVA_TEST_DATABASE_URL
+    $UrlSource = 'the DHRUVA_TEST_DATABASE_URL environment variable'
+} else {
+    $UrlSource = 'this script'
+}
+$UrlWasInherited = ($UrlSource -like '*environment variable*')
+
+# Saved so the session can be left as it was found. This script exports
+# DHRUVA_TEST_DATABASE_URL and DHRUVA_DB__* for its child processes, and
+# `$env:` in PowerShell is the *process* environment -- the caller's session.
+# Leaving them set is what made a second run in the same window inherit a URL
+# for a container the first run had already removed.
+$OriginalEnvironment = @{}
+foreach ($name in @(
+    'DHRUVA_TEST_DATABASE_URL', 'DHRUVA_REQUIRE_DATABASE', 'DHRUVA_CANONICAL_BENCHMARKS',
+    'DHRUVA_DB__HOST', 'DHRUVA_DB__PORT', 'DHRUVA_DB__NAME', 'DHRUVA_DB__USER',
+    'DHRUVA_DB__PASSWORD'
+)) {
+    $OriginalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 
 $ErrorActionPreference = 'Continue'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -143,6 +171,47 @@ function Start-CanonicalDatabase {
 
     Write-Host "  container $ContainerName ready on port $ContainerPort" -ForegroundColor Green
     return "postgresql+asyncpg://dhruva_test:dhruva_test@localhost:$ContainerPort/dhruva_test"
+}
+
+function Test-DatabasePort([string]$Url) {
+    <#
+        Is anything listening at the host and port in this URL?
+
+        A one-second TCP probe, deliberately dumber than the real connection
+        check in stage 03: this only has to answer "is that container still
+        there", and it must answer quickly enough to be worth asking before
+        deciding how to provision.
+    #>
+    try {
+        $uri = [System.Uri]($Url -replace '\+asyncpg', '')
+    } catch {
+        return $false
+    }
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $connecting = $client.BeginConnect($uri.Host, $uri.Port, $null, $null)
+        if (-not $connecting.AsyncWaitHandle.WaitOne(1000, $false)) { return $false }
+        $client.EndConnect($connecting)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+function Restore-Environment {
+    <#
+        Put the caller's session back as it was found.
+
+        Without this the script leaves DHRUVA_TEST_DATABASE_URL set, the
+        parameter defaults to it, and the *next* run in the same window silently
+        skips provisioning and connects to a container that has been removed --
+        the script sabotaging its own next invocation.
+    #>
+    foreach ($name in $OriginalEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $OriginalEnvironment[$name], 'Process')
+    }
 }
 
 function Write-Manifest {
@@ -267,6 +336,18 @@ try {
     # --------------------------------------------------------------------- #
     # 2. Database target, provisioned before any stage that needs one.
     # --------------------------------------------------------------------- #
+    # An inherited URL is a leftover, not an instruction. If nothing answers on
+    # it, prefer provisioning over failing: the previous run's container is gone,
+    # which is exactly why the variable is stale.
+    if ($DatabaseUrl -and $UrlWasInherited -and -not (Test-DatabasePort $DatabaseUrl)) {
+        Write-Host ""
+        Write-Host "Ignoring a stale DHRUVA_TEST_DATABASE_URL from the environment:" -ForegroundColor Yellow
+        Write-Host "  $($DatabaseUrl -replace ':[^:@/]+@', ':<redacted>@') -- nothing is listening there." -ForegroundColor Yellow
+        Write-Host "  Starting a container instead. Pass -DatabaseUrl explicitly to override." -ForegroundColor Yellow
+        $DatabaseUrl = ''
+        $UrlSource = 'this script'
+    }
+
     if (-not $DatabaseUrl) { $DatabaseUrl = Start-CanonicalDatabase }
 
     Write-Stage 'database target'
@@ -291,7 +372,7 @@ try {
     if ($StartedContainer) {
         $provisionedBy = "this script (container $ContainerName)"
     } else {
-        $provisionedBy = 'supplied via -DatabaseUrl'
+        $provisionedBy = "supplied via $UrlSource"
     }
     $redactedUrl = $DatabaseUrl -replace ':[^:@/]+@', ':<redacted>@'
 
@@ -497,5 +578,6 @@ finally {
     # states the outcome was the one file missing whenever the outcome was bad.
     Write-Manifest
     Stop-CanonicalDatabase
+    Restore-Environment
     Pop-Location
 }
