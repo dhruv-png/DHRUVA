@@ -535,13 +535,28 @@ sys.exit(asyncio.run(main()))
     $drift = Get-ChildItem 'alembic\versions' -Filter '*drift_check*' -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($drift) {
-        # A generated body means the mapped metadata and the migrated schema
-        # disagree. The body is the diff; it is recorded verbatim and the file
-        # removed so it cannot be mistaken for an intended migration.
-        '--- generated migration body: SCHEMA DRIFT DETECTED ---' | Add-Content $driftLog -Encoding utf8
-        Get-Content $drift.FullName | Add-Content $driftLog -Encoding utf8
+        # `alembic revision --autogenerate` ALWAYS writes a file. When the schema
+        # and the metadata agree, that file's upgrade() is just `pass`. Treating
+        # the file's existence as drift therefore failed this stage on every run
+        # including clean ones -- a false positive that reported a passing check
+        # as a defect, which is the more expensive direction to be wrong in.
+        #
+        # Drift is a *body with operations in it*. `op.` is what alembic emits
+        # for every operation it generates and appears nowhere else in the
+        # template, so its presence is the signal.
+        $body = Get-Content $drift.FullName -Raw
+        $operations = @([regex]::Matches($body, '(?m)^\s*op\.'))
         Remove-Item $drift.FullName -Force
-        $Verdicts['35-autogenerate-empty-diff'] = 1
+
+        if ($operations.Count -gt 0) {
+            '--- generated migration body: SCHEMA DRIFT DETECTED ---' | Add-Content $driftLog -Encoding utf8
+            $body | Add-Content $driftLog -Encoding utf8
+            $Verdicts['35-autogenerate-empty-diff'] = 1
+            Write-Host "  -> schema drift: $($operations.Count) operation(s) generated" -ForegroundColor Red
+        } else {
+            '--- generated migration body was empty: no schema drift ---' | Add-Content $driftLog -Encoding utf8
+            Write-Host "  -> no schema drift" -ForegroundColor Green
+        }
     }
 
     # --------------------------------------------------------------------- #
@@ -556,8 +571,12 @@ sys.exit(asyncio.run(main()))
     #    resolve sub-microsecond budgets; the development sandbox could not.
     # --------------------------------------------------------------------- #
     $env:DHRUVA_CANONICAL_BENCHMARKS = '1'
+    # -s so a *passing* benchmark's measured value reaches the log. Without it
+    # pytest captures stdout and shows it only for failures, which is how the
+    # persistence figures went unrecorded on the first run that produced them:
+    # the four numbers the S04 review asked for existed and were thrown away.
     Invoke-Captured '50-benchmarks' {
-        uv run pytest -v --no-header -p no:randomly -p no:cacheprovider -m benchmark
+        uv run pytest -v --no-header -p no:randomly -p no:cacheprovider -m benchmark -s
     } | Out-Null
 
     # --------------------------------------------------------------------- #
