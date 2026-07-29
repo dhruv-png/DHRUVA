@@ -1,0 +1,24 @@
+﻿ARG001 Unused function argument: `truncated_after_test`
+   --> tests\integration\conftest.py:303:28
+    |
+301 | @pytest_asyncio.fixture(loop_scope="session")
+302 | async def committed_session(
+303 |     migrated: AsyncEngine, truncated_after_test: None
+    |                            ^^^^^^^^^^^^^^^^^^^^
+304 | ) -> AsyncIterator[AsyncSession]:
+305 |     """Provide a session whose commits genuinely commit, for concurrency tests.
+    |
+
+ARG001 Unused function argument: `truncated_after_test`
+   --> tests\integration\test_repository_correctness.py:199:28
+    |
+197 | )
+198 | async def test_deadlock_surfaces_as_a_driver_error(
+199 |     migrated: AsyncEngine, truncated_after_test: None
+    |                            ^^^^^^^^^^^^^^^^^^^^
+200 | ) -> None:
+201 |     """Two transactions locking two rows in opposite order.
+    |
+
+Found 2 errors.
+exit_code: 1

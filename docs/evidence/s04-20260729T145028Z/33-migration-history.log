@@ -1,0 +1,56 @@
+﻿Rev: 0002_example_tick (head)
+Parent: 0001_initial
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260729_0000_example_tick_timeseries.py
+
+    The append-only timeseries worked example (ADR-054).
+    
+    Revision ID: 0002_example_tick
+    Revises: 0001_initial
+    Created: 2026-07-29
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0001_initial` drops the table and its
+        index. The table is append-only and holds observations rather than records
+        of decisions, so destroying it destroys no state any aggregate depends on --
+        which is why this downgrade is complete rather than merely structural.
+    Irreversible operations: none
+    Expected runtime: sub-second. The table is created empty and nothing existing is
+        altered.
+    Operational impact: no locks on existing objects. Safe during market hours.
+    
+    Why a second migration rather than an edit to 0001
+    --------------------------------------------------
+    0001 has been applied. Editing an applied migration makes the schema a function
+    of when you happened to run it (ADR-055), so this arrives as its own expand-only
+    step.
+    
+    Why no hypertable here
+    ----------------------
+    `create_hypertable` requires the TimescaleDB extension, and making the DDL
+    conditional on its presence would make the schema differ between environments --
+    which the drift check would then report as drift on whichever environment lost
+    the coin toss. This table exists to exercise the ORM-bypass *write path*, which
+    is plain PostgreSQL. Hypertable DDL arrives with the real tick table in S10,
+    where the retention and compression policies that justify it are also decided.
+
+Rev: 0001_initial
+Parent: <base>
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260726_0000_initial_schema.py
+
+    Initial schema: the worked example table and the transactional outbox.
+    
+    Revision ID: 0001_initial
+    Revises:
+    Created: 2026-07-26
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade base` drops both tables. No data
+        migration is involved, so the downgrade is complete -- it destroys the rows
+        along with the tables, which is expected for an initial schema and is stated
+        here rather than assumed.
+    Irreversible operations: none
+    Expected runtime: sub-second on any data volume; both tables are created empty.
+    Operational impact: no locks on existing objects, since nothing exists yet. Safe
+        to run at any time, including during market hours.
+
+exit_code: 0

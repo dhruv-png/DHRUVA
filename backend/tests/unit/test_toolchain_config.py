@@ -94,7 +94,16 @@ def test_pytest_is_configured_to_fail_loudly(pyproject: dict[str, Any]) -> None:
     assert "--strict-markers" in options["addopts"]
     assert "--strict-config" in options["addopts"]
     assert options["xfail_strict"] is True
-    assert options["filterwarnings"] == ["error"]
+    filters = options["filterwarnings"]
+
+    assert filters[0] == "error", "warnings must be errors by default"
+    for entry in filters[1:]:
+        assert entry.startswith("ignore:"), (
+            "every relaxation must be a narrowly targeted ignore, never a broad one"
+        )
+    assert len(filters) <= 4, (
+        "the ignore list is growing; each entry is a warning class nobody sees again"
+    )
 
 
 @pytest.mark.unit
@@ -116,6 +125,11 @@ DEPENDENCY_PROVENANCE: dict[str, str] = {
     "uvicorn": "S02 - serving the observability component (ADR-035)",
     "prometheus-client": "S02 - metrics registry and exposition (ADR-035)",
     "opentelemetry-api": "S02 - tracing facade (ADR-040)",
+    "sqlalchemy": "S04 - async ORM; models confined to infrastructure (ADR-052)",
+    "alembic": "S04 - versioned migrations with declared reversibility (ADR-055)",
+    "asyncpg": "S04 - the async PostgreSQL driver SQLAlchemy dispatches to",
+    "tzdata": "S04 - zoneinfo has no system tz database on Windows, so "
+    "`timezone = UTC` in alembic.ini cannot resolve without it (ADR-032)",
 }
 
 

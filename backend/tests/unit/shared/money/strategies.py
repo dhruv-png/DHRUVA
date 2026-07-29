@@ -70,6 +70,32 @@ def ratio() -> st.SearchStrategy[Ratio]:
     ).map(Ratio)
 
 
+def positive_ratio() -> st.SearchStrategy[Ratio]:
+    """Strictly positive ratios, generated rather than filtered.
+
+    A caller wanting these used ``ratio()`` with ``assume(rate.fraction > 0)``,
+    which discards roughly every input Hypothesis biases toward -- zero and the
+    negative half of the range -- and tripped the ``filter_too_much`` health
+    check: 7 inputs generated against 50 rejected. That failure is seed-dependent,
+    so the test passed or failed depending on the run, which is worse than either.
+
+    Filtering also distorts what remains. Hypothesis shrinks toward zero, and
+    zero is exactly what this strategy excludes, so the surviving examples were
+    drawn from the tail of a distribution aimed somewhere else. Generating the
+    intended domain directly is both faster and a better sample of it.
+
+    The smallest value is one unit at the eight-decimal scale, which is the
+    smallest positive rate the type can represent.
+    """
+    return st.decimals(
+        min_value=Decimal("0.00000001"),
+        max_value=Decimal("10"),
+        places=8,
+        allow_nan=False,
+        allow_infinity=False,
+    ).map(Ratio)
+
+
 def weights(*, max_parts: int = 12) -> st.SearchStrategy[list[int]]:
     """Allocation weight vectors that are non-empty and sum to a positive total."""
     return st.lists(

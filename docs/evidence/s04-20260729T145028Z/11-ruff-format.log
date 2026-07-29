@@ -1,0 +1,35 @@
+﻿unformatted: File would be reformatted
+   --> src\dhruva\contexts\platform\infrastructure\timeseries\storage.py:1:1
+    |
+142 |                 )
+    -             await driver.copy_records_to_table(
+    -                 table, records=records, columns=list(columns)
+    -             )
+143 +             await driver.copy_records_to_table(table, records=records, columns=list(columns))
+144 |         return len(rows)
+    |
+
+unformatted: File would be reformatted
+   --> tests\integration\conftest.py:1:1
+    |
+301 |             # fails for a reason unrelated to its subject.
+    -             await cleanup.execute(
+    -                 text("TRUNCATE daily_snapshot, outbox, example_tick CASCADE")
+    -             )
+302 +             await cleanup.execute(text("TRUNCATE daily_snapshot, outbox, example_tick CASCADE"))
+303 |
+    |
+
+unformatted: File would be reformatted
+  --> tests\integration\test_timeseries_storage.py:1:1
+   |
+79 |
+   - async def test_an_empty_batch_is_a_no_op(
+   -     migrated: AsyncEngine, truncated_after_test: None
+   - ) -> None:
+80 + async def test_an_empty_batch_is_a_no_op(migrated: AsyncEngine, truncated_after_test: None) -> None:
+81 |     """A caller draining an empty buffer should not need a guard."""
+   |
+
+3 files would be reformatted, 164 files already formatted
+exit_code: 1

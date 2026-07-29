@@ -1,0 +1,29 @@
+﻿============================= test session starts =============================
+collecting ... collected 999 items / 979 deselected / 20 selected
+
+tests/integration/test_repository_correctness.py::test_money_and_price_survive_a_real_round_trip PASSED [  5%]
+tests/integration/test_repository_correctness.py::test_a_currency_derivative_price_survives_storage PASSED [ 10%]
+tests/integration/test_repository_correctness.py::test_a_rolled_back_transaction_leaves_nothing PASSED [ 15%]
+tests/integration/test_repository_correctness.py::test_the_second_of_two_concurrent_writers_is_refused PASSED [ 20%]
+tests/integration/test_repository_correctness.py::test_a_conflict_reports_which_version_it_expected PASSED [ 25%]
+tests/integration/test_repository_correctness.py::test_deadlock_surfaces_as_a_driver_error XPASS [ 30%]
+tests/integration/test_repository_correctness.py::test_repeated_adds_of_the_same_natural_key_are_refused PASSED [ 35%]
+tests/integration/test_repository_correctness.py::test_the_default_isolation_level_is_read_committed PASSED [ 40%]
+tests/integration/test_repository_correctness.py::test_an_uncommitted_write_is_invisible_to_another_session PASSED [ 45%]
+tests/integration/test_repository_correctness.py::test_the_database_refuses_values_the_domain_would_refuse[turnover_minor_units--1-ck_daily_snapshot_turnover] PASSED [ 50%]
+tests/integration/test_repository_correctness.py::test_the_database_refuses_values_the_domain_would_refuse[close_scaled_units-0-ck_daily_snapshot_close] PASSED [ 55%]
+tests/integration/test_repository_correctness.py::test_the_database_refuses_values_the_domain_would_refuse[version-0-ck_daily_snapshot_version] PASSED [ 60%]
+tests/integration/test_timeseries_storage.py::test_appended_rows_are_readable_with_their_values_intact PASSED [ 65%]
+tests/integration/test_timeseries_storage.py::test_an_empty_batch_is_a_no_op PASSED [ 70%]
+tests/integration/test_timeseries_storage.py::test_a_table_off_the_allowlist_is_refused PASSED [ 75%]
+tests/integration/test_timeseries_storage.py::test_an_identifier_that_is_not_a_plain_name_is_refused_at_construction[example_tick; DROP TABLE daily_snapshot] PASSED [ 80%]
+tests/integration/test_timeseries_storage.py::test_an_identifier_that_is_not_a_plain_name_is_refused_at_construction[Example_Tick] PASSED [ 85%]
+tests/integration/test_timeseries_storage.py::test_an_identifier_that_is_not_a_plain_name_is_refused_at_construction[] PASSED [ 90%]
+tests/integration/test_timeseries_storage.py::test_a_row_missing_a_column_is_refused_before_any_write PASSED [ 95%]
+tests/integration/test_timeseries_storage.py::test_the_check_constraint_still_applies_on_this_path PASSED [100%]
+
+=================================== XPASSES ===================================
+=========================== short test summary info ===========================
+XPASS tests/integration/test_repository_correctness.py::test_deadlock_surfaces_as_a_driver_error - Deadlock detection is inherently timing-dependent: PostgreSQL may resolve the cycle before both statements block, in which case neither aborts. Marked non-strict so it records the behaviour without producing a flaky red. Treated as documentation of the expected failure mode rather than a guarantee -- deadlock *retry* is a caller concern and is tested there.
+================ 19 passed, 979 deselected, 1 xpassed in 3.42s ================
+exit_code: 0

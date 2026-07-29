@@ -1,0 +1,16 @@
+﻿S04 canonical validation evidence
+captured: 20260729T144401Z
+commit:   53ccb81a5753cfd9a9c39b2a150f1ff3618b06f7
+branch:   s04-persistence-foundation
+
+stage verdicts
+--------------
+03-database-versions                     FAIL (exit 1)
+
+OVERALL: FAIL - 1 stage(s) failed: 03-database-versions
+
+files
+-----
+01-environment.log                       12 lines
+02-database-target.log                   8 lines
+03-database-versions.log                 93 lines

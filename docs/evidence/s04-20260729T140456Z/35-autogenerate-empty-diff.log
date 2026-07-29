@@ -1,0 +1,15 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:388 char:9
++         uv run alembic revision --autogenerate -m "drift check" --rev ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlImpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.ddl.postgresql] Detected sequence named 'outbox_sequence_seq' as owned by integer column 
+'outbox(sequence)', assuming SERIAL and omitting
+INFO  [alembic.autogenerate.compare] Detected server default on column 'daily_snapshot.version'
+INFO  [alembic.autogenerate.compare] Detected server default on column 'outbox.attempts'
+ERROR [alembic.util.messaging] Can't locate timezone: UTC
+FAILED: Can't locate timezone: UTC
+exit_code: -1

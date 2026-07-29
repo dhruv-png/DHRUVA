@@ -1,0 +1,41 @@
+﻿uv : Traceback (most recent call last):
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:273 char:55
++ ... Invoke-Captured '03-database-versions' { uv run python $probeScript }
++                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\dhruv\Projects\DHRUVA\docs\evidence\s04-20260729T135928Z\03-database-versions.py", line 34, in <module>
+    sys.exit(asyncio.run(main()))
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\docs\evidence\s04-20260729T135928Z\03-database-versions.py", line 14, in main
+    connection = await asyncpg.connect(url)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connection.py", line 2421, in connect
+    return await connect_utils._connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 1075, in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 1049, in _connect
+    conn = await _connect_addr(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 886, in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 931, in __connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 810, in _create_ssl_connection
+    do_ssl_upgrade = await pr.on_data
+                     ^^^^^^^^^^^^^^^^
+ConnectionError: unexpected connection_lost() call
+exit_code: 1

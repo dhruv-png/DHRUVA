@@ -1,0 +1,24 @@
+S04 canonical validation evidence
+captured: 20260727T134654Z
+commit:   d59454d80f0db767aa413aa172f391faa91998dd
+branch:   s04-persistence-foundation
+
+00-run.log                               34 lines
+01-environment.log                       20 lines
+02-database-versions.log                 1 lines
+10-ruff-check.log                        1 lines
+11-ruff-format.log                       1 lines
+12-mypy.log                              1 lines
+13-import-linter.log                     1 lines
+14-boundaries.log                        1 lines
+15-adr-guard.log                         1 lines
+20-unit-suite.log                        1 lines
+30-migration-upgrade.log                 1 lines
+31-migration-downgrade.log               1 lines
+32-migration-reupgrade.log               1 lines
+33-migration-history.log                 1 lines
+34-migration-current.log                 1 lines
+35-autogenerate-empty-diff.log           1 lines
+40-integration-suite.log                 1 lines
+50-benchmarks.log                        1 lines
+99-manifest.log                          23 lines

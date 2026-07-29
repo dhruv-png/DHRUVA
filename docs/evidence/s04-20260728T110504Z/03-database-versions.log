@@ -1,0 +1,11 @@
+﻿uv :   File "<string>", line 6
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:208 char:9
++         uv run python -c @"
++         ~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  File "<string>", line 6:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    print('timescaledb:', await c.fetchval(SELECT
+                                          ^
+SyntaxError: '(' was never closed
+exit_code: 1

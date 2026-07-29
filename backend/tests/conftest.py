@@ -21,7 +21,11 @@ from dhruva.tooling.boundaries import find_repo_root
 settings.register_profile(
     "fast", max_examples=15, deadline=None, suppress_health_check=[HealthCheck.too_slow]
 )
-settings.register_profile("default", deadline=None)
+# too_slow is suppressed on the default profile as well. It fires when data
+# *generation* is slow, which on a contended runner reports the machine rather
+# than the property under test -- a flaky red that teaches people to re-run
+# rather than to look.
+settings.register_profile("default", deadline=None, suppress_health_check=[HealthCheck.too_slow])
 settings.load_profile("fast" if os.environ.get("DHRUVA_FAST_PROPERTY_TESTS") else "default")
 
 

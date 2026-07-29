@@ -1,0 +1,61 @@
+﻿RUF100 [*] Unused `noqa` directive (non-enabled: `BLE001`)
+  --> tests\integration\conftest.py:69:24
+   |
+67 |     try:
+68 |         client = docker.from_env()
+69 |     except Exception:  # noqa: BLE001 - a daemon that will not talk to us is simply absent
+   |                        ^^^^^^^^^^^^^^
+70 |         return False
+71 |     try:
+   |
+help: Remove unused `noqa` directive
+   |
+68 |         client = docker.from_env()
+   -     except Exception:  # noqa: BLE001 - a daemon that will not talk to us is simply absent
+69 +     except Exception:
+70 |         return False
+   |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `BLE001`)
+  --> tests\integration\conftest.py:73:24
+   |
+71 |     try:
+72 |         client.ping()
+73 |     except Exception:  # noqa: BLE001 - as above
+   |                        ^^^^^^^^^^^^^^
+74 |         return False
+75 |     else:
+   |
+help: Remove unused `noqa` directive
+   |
+72 |         client.ping()
+   -     except Exception:  # noqa: BLE001 - as above
+73 +     except Exception:
+74 |         return False
+   |
+
+ARG001 Unused function argument: `truncated_after_test`
+   --> tests\integration\conftest.py:299:28
+    |
+297 | @pytest_asyncio.fixture(loop_scope="session")
+298 | async def committed_session(
+299 |     migrated: AsyncEngine, truncated_after_test: None
+    |                            ^^^^^^^^^^^^^^^^^^^^
+300 | ) -> AsyncIterator[AsyncSession]:
+301 |     """Provide a session whose commits genuinely commit, for concurrency tests.
+    |
+
+ARG001 Unused function argument: `truncated_after_test`
+   --> tests\integration\test_repository_correctness.py:199:28
+    |
+197 | )
+198 | async def test_deadlock_surfaces_as_a_driver_error(
+199 |     migrated: AsyncEngine, truncated_after_test: None
+    |                            ^^^^^^^^^^^^^^^^^^^^
+200 | ) -> None:
+201 |     """Two transactions locking two rows in opposite order.
+    |
+
+Found 4 errors.
+[*] 2 fixable with the `--fix` option.
+exit_code: 1
