@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**59 decisions — 58 accepted, 1 superseded.** Records are immutable once accepted
+**60 decisions — 59 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |

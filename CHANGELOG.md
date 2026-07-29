@@ -17,6 +17,67 @@ capital (ADR-026, ADR-029).
 
 Nothing yet.
 
+## [0.4.0] — 2026-07-29 — S04 Persistence Foundation
+
+> **Approved with the benchmark budgets deferred to ADR-060.** Five performance
+> budgets are over on the Windows development environment and none is verified on
+> the deployment target. No threshold was relaxed; they are recorded as
+> *unverified*. ADR-060 makes the Linux CI benchmark job a stop-the-line item
+> before S06.
+
+The layer that turns domain objects into rows and back. Everything from here on
+stores something, so the cost of getting this wrong compounds.
+
+### Added
+
+- **Async persistence stack.** SQLAlchemy 2 async engine, `UnitOfWork` owning the
+  transaction (ADR-053), `DailySnapshotRepository` as the worked example, and a
+  four-layer mapping — domain ← factory ← record ← model ← row — that keeps the
+  domain persistence-ignorant (ADR-052).
+- **Transactional outbox.** `OutboxWriter` stages events inside the caller's
+  transaction, so an event and the change that caused it share one fate. The
+  platform guarantees transactional durability, at-least-once delivery, a stable
+  immutable `event_id`, per-aggregate ordering, and an idempotent consumer
+  contract. The relay that reads the outbox arrives in S05.
+- **The ORM-bypass write path (ADR-054).** `PostgresTimeSeriesStorage` appends
+  allowlisted column rows with asyncpg `COPY`. No update, no delete, no lookup by
+  identity — the interface enforces the exception rather than describing it.
+  Boundary rule R8 fails the build if anything in that package imports a domain
+  layer.
+- **Migrations** `0001_initial` and `0002_example_tick`, each declaring its
+  reversibility, rollback procedure and operational impact (ADR-055).
+- **Optimistic concurrency** via a `version` column, surfacing a `ConflictError`
+  that names the version it expected (ADR-057).
+- **Integration suite against real PostgreSQL** (ADR-058) — 19 tests covering
+  round trips, rollback, concurrent writers, isolation level, constraint
+  enforcement and the timeseries path.
+- **Nine benchmarks**, all implemented: five mapping-layer, four database-backed.
+
+### Fixed
+
+Three defects that only a real database could expose:
+
+- **`Identifier` rejected the driver's own UUID.** The guard tested
+  `type(value) is uuid.UUID`; asyncpg returns a *subclass*. Every identifier read
+  back from PostgreSQL was refused, so the persistence layer could write rows it
+  was structurally incapable of loading. A fake would have agreed with all 964
+  unit tests. This is the single clearest justification for ADR-058 in the
+  project so far.
+- **`server_default` drift.** Models declared only the ORM-side `default` while
+  the migration created DDL defaults, so `alembic revision --autogenerate`
+  proposed dropping them — meaning the next migration written for any unrelated
+  change would have carried that ALTER into production.
+- **A fixture that waited on a lock it was itself holding**, truncating inside
+  the session it was cleaning up after. No cycle for PostgreSQL to detect, so the
+  suite hung forever instead of failing — and passed when the test ran alone.
+
+### Decisions
+
+ADR-052 through ADR-060. ADR-060 establishes that benchmark budgets are enforced
+on the deployment target rather than the development machine, on the evidence
+that every database figure is 1.6–3.6× slower on an 8-core Windows laptop than on
+a contended 2-vCPU Linux sandbox.
+
 ## [0.3.0] — 2026-07-26 — S03 Domain Primitives & Shared Kernel
 
 > **Approved with one documented exception.** Mutation testing (ADR-049) did not
