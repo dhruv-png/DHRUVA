@@ -20,6 +20,44 @@ to do instead.
 
 ---
 
+## S04 — What the drift check found the first time it ran
+
+### A Python-side `default` is not the schema
+
+The models declared `default=1` and `default=0`; the migration created those
+columns with `server_default`. Both "worked": inserts through the ORM got the
+value, and every test passed. But the model metadata and the live schema
+disagreed, so `alembic revision --autogenerate` proposed
+`alter_column(..., server_default=None)` on both.
+
+The danger is not the drift itself. It is that the next person to autogenerate a
+migration for an entirely unrelated change would have found those two ALTERs
+bundled into it, and **dropping a server default in production is invisible until
+some writer that is not the ORM inserts a row**. A background job, a manual
+backfill, a second service — anything that does not go through SQLAlchemy would
+start writing NULLs into a NOT NULL column.
+
+`default` is an ORM convenience. `server_default` is a guarantee. They are not
+alternatives and the model must declare whichever the migration created.
+
+**Worth generalising:** the drift check is not a tidiness gate. It is the only
+mechanism that notices when the thing you declare and the thing you deployed
+have quietly become different, and it earns its place the first time it runs.
+
+### A formatting hook can fail a migration
+
+The post-write hook used `type = console_scripts`, which resolves the tool
+through `importlib.metadata` entry points inside Alembic's process. Recent ruff
+wheels ship a native binary without that entry point, so the hook failed with
+"Could not find entrypoint console_scripts.ruff" — **after** the revision file
+had been written. A code-formatting step reported itself as a migration failure.
+
+**What to do.** `type = exec`, which runs the executable from PATH. More
+generally: a cosmetic post-step should not be able to fail the operation it
+decorates, and when it can, its error must not be mistaken for the operation's.
+
+---
+
 ## S04 — What the first real database run found
 
 Six defects, found the first time the integration suite ever executed against a
