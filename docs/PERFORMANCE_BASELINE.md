@@ -18,7 +18,7 @@ that produced it.
 | ID | Description |
 |---|---|
 | **E1** | Intel Core i5-10300H @ 2.50 GHz · 2 vCPU · 3 GB RAM · Linux 6.8.0 · **CPython 3.10.12** · sandbox, contended |
-| **E2** | *Canonical.* Python 3.12 · PostgreSQL + TimescaleDB · Docker · **not yet run** |
+| **E2** | *Canonical.* Intel Core i5-10300H @ 2.50 GHz · 8 logical cores · 23.9 GB RAM · Windows 11 Home Single Language · **CPython 3.12.13** · PostgreSQL 16.6 + TimescaleDB 2.17.2 in Docker · first run 2026-07-29T14:04:56Z |
 
 **E1 caveat.** The target runtime is 3.12; 3.11 and 3.12 carry substantial
 interpreter speedups on small-object arithmetic, so every E1 figure is
@@ -112,6 +112,60 @@ until E2 has run.**
 | `upgrade head` on empty database | < 10 s | — | **PENDING** |
 | `upgrade head` → `downgrade base` | < 20 s | — | **PENDING** |
 | Integration suite, cold container | < 90 s | — | **PENDING** |
+
+---
+
+## E2 — first canonical measurement (2026-07-29T14:04:56Z)
+
+Evidence: `docs/evidence/s04-20260729T140456Z/50-benchmarks.log`. Appended, not
+merged into the E1 sections above.
+
+Suite result: **20 passed, 7 failed, 2 xfailed**.
+
+### Budgets missed on E2
+
+| Benchmark | Budget | E2 measured | Over by |
+|---|---|---|---|
+| `test_money_addition_is_within_budget` | 0.500 µs | **0.572 µs** | 14.5% |
+| `test_money_scaling_is_within_budget` | 0.500 µs | **0.597 µs** | 19.3% |
+| `test_date_range_iteration_is_not_a_bottleneck` (2000 days) | 1000.0 µs | **1009.3 µs** | 0.9% |
+
+The date-range figure is within 1% of its budget and is not distinguishable from
+run-to-run variation on a single sample. It needs repeat measurement before it
+is called either a pass or a regression; one number 0.9% over the line is not
+evidence of anything.
+
+The two money figures are a real, reproducible miss and are **not** noise: both
+exceed budget by more than 14% on an uncontended machine, which is the condition
+E1 could not provide.
+
+### Still xfail on E2
+
+| Benchmark | Debt | Status |
+|---|---|---|
+| `test_money_construction_is_within_budget` | TD-13 | Still over 0.30 µs; xfail holds. `xfail_strict` means it fails the day it passes |
+| `test_a_million_money_additions_is_within_budget` | TD-14 | Non-strict; needs a figure recorded on E2 |
+
+### Not measured — the benchmarks are unimplemented
+
+These four are `pytest.fail("not yet implemented; requires the integration
+harness")` stubs. They were **skipped** before, because the skip was gated on a
+database being configured, so their absence looked like an environment
+limitation. With a real database present they run, fail, and are now visible for
+what they are: unwritten.
+
+| Benchmark | Declared budget |
+|---|---|
+| `test_database_query_latency_is_within_budget` | p95 < 3 ms, primary-key read |
+| `test_end_to_end_repository_read_is_within_budget` | — |
+| `test_end_to_end_repository_write_is_within_budget` | insert plus commit |
+| `test_bulk_timeseries_append_is_within_budget` | — |
+
+This is the mapping-performance breakdown requested at S04 review — SQL
+execution, asyncpg latency, row materialisation, mapper in both directions,
+repository and Unit-of-Work overhead. **It remains outstanding work, not a
+measurement problem**, and S04 cannot be called complete against the review
+criteria until these four produce numbers.
 
 ---
 
