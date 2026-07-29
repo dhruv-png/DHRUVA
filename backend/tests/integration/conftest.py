@@ -64,13 +64,17 @@ def _docker_is_available() -> bool:
         import docker  # noqa: PLC0415 - optional dependency, probed deliberately
     except ImportError:
         return False
+    # Broad excepts are deliberate: a daemon that will not talk to us is simply
+    # absent, and docker-py raises several unrelated types for that one fact.
+    # No `noqa` -- BLE001 is not in the enabled rule set, so a suppression for it
+    # is itself a lint error (RUF100).
     try:
         client = docker.from_env()
-    except Exception:  # noqa: BLE001 - a daemon that will not talk to us is simply absent
+    except Exception:
         return False
     try:
         client.ping()
-    except Exception:  # noqa: BLE001 - as above
+    except Exception:
         return False
     else:
         return True

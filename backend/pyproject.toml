@@ -46,6 +46,16 @@ dependencies = [
   "sqlalchemy==2.0.44",
   "alembic==1.16.5",
   "asyncpg==0.30.0",
+  # alembic.ini sets `timezone = UTC` so migration filenames carry a UTC stamp
+  # rather than whatever the author's clock said. Alembic resolves that name
+  # through `zoneinfo`, which reads the *system* tz database -- and Windows does
+  # not ship one. Without this package `alembic revision` fails on Windows with
+  # "Can't locate timezone: UTC", so the schema-drift check cannot run there
+  # while upgrade and downgrade work perfectly. A platform marker would leave
+  # Linux and Windows resolving timezones from different sources, which is
+  # exactly the kind of environment-dependent behaviour reproducible builds
+  # (ADR-032) exist to remove, so it is installed everywhere.
+  "tzdata==2025.2",
 ]
 
 [project.optional-dependencies]
