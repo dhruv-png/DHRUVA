@@ -19,16 +19,20 @@ from uuid import UUID
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Column,
     Date,
+    DateTime,
+    Index,
     Integer,
     String,
+    Table,
     UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-__all__ = ["Base", "DailySnapshotModel"]
+__all__ = ["Base", "DailySnapshotModel", "example_tick_table"]
 
 
 class Base(DeclarativeBase):
@@ -75,3 +79,36 @@ class DailySnapshotModel(Base):
     version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default=text("1")
     )
+
+
+# --------------------------------------------------------------------------- #
+# The ORM-bypass path (ADR-054)
+# --------------------------------------------------------------------------- #
+
+#: Worked example of an append-only timeseries table.
+#:
+#: A Core ``Table``, deliberately **not** a declarative model. There is no ORM
+#: class because there is nothing to map: rows on this path have no identity, no
+#: lifecycle and no invariant beyond their column constraints, and giving them a
+#: class would invite exactly the domain coupling ADR-054 forbids. Writes go
+#: through ``PostgresTimeSeriesStorage`` in the ``timeseries`` package.
+#:
+#: It is registered in ``Base.metadata`` all the same, because Alembic compares
+#: metadata against the live schema. A table created by a migration and absent
+#: from metadata is drift: autogenerate would propose dropping it, and the next
+#: migration generated for an unrelated change would carry that DROP along.
+#: Declaring the schema and mapping it to a class are different things, and only
+#: the second is what ADR-052 rules out.
+example_tick_table = Table(
+    "example_tick",
+    Base.metadata,
+    Column("instrument_id", postgresql.UUID(as_uuid=True), nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("price_scaled_units", BigInteger, nullable=False),
+    Column("quantity_units", BigInteger, nullable=False),
+    # No primary key. Ticks are observations, not entities: the same instrument
+    # can legitimately trade twice at the same microsecond, and inventing a
+    # surrogate key to forbid that would be the model overruling the market.
+    Index("ix_example_tick_instrument_observed", "instrument_id", "observed_at"),
+    CheckConstraint("quantity_units > 0", name="ck_example_tick_quantity"),
+)
