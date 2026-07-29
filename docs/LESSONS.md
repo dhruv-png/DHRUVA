@@ -222,6 +222,30 @@ is cheaper, cannot race, and gives a better error: "the extension is missing"
 rather than "creating the extension failed", which are very different problems
 wearing the same message.
 
+### `pg_isready` says yes while the database is still not there
+
+The container wait polled `docker exec pg_isready` and broke on the first
+success. The postgres entrypoint runs `initdb`, then starts a **temporary**
+server with `listen_addresses=''` to execute the init scripts, then stops it,
+then starts the real one. During that middle phase the temporary server answers
+on the unix socket, so `pg_isready` reports success — while nothing is listening
+on TCP. Docker has already published the port, so the host's connection is
+accepted and immediately dropped, and asyncpg reports
+`ConnectionError: unexpected connection_lost() call` from inside SSL
+negotiation: an alarming message for an entirely ordinary race.
+
+**What to do.** Two things, because one is not enough.
+
+Test the thing you actually need. `pg_isready` over a unix socket does not
+answer "can a client reach this over TCP". The precise discriminator is the log
+line: the temporary server binds no TCP address and therefore never logs
+`listening on IPv4 address`, so only the real server does.
+
+Then retry anyway, because readiness checks race by nature — but **retry only
+what a wait could cure**. Connection-level errors are transient; a wrong
+password is not. Sitting in a loop re-sending bad credentials for ninety seconds
+converts an instant, clearly worded failure into a slow, vague one.
+
 ### Byte-level things that cost real time
 
 - `Tee-Object` on Windows PowerShell 5.1 writes **UTF-16LE**. The evidence was

@@ -160,7 +160,7 @@ Everything lands in `docs\evidence\s04-<timestamp>\`. Attach it whole. Read
 |---|---|---|
 | Gates | `All checks passed`, `Success: no issues`, `4 kept, 0 broken`, `OK`, `intact` | Genuine regression — send the log, do not proceed |
 | Unit suite | `937 passed, 5 skipped` (the 5 are intentional `skip` calls) | Send the log |
-| `03-database-versions` | `postgresql: 16.x`, `timescaledb: 2.17.x`, `isolation: read committed` | `NOT INSTALLED` for TimescaleDB means the extension is missing — use Option B. The run stops here by design |
+| `03-database-versions` | `postgresql: 16.x`, `timescaledb: 2.17.x`, `isolation: read committed`, plus the database and user. A few `attempt N: ... retrying` lines are normal on a cold container | `NOT INSTALLED` for TimescaleDB means the extension is missing — use Option B. The run stops here by design |
 | `30-migration-upgrade` | `Running upgrade -> 0001_initial` | Auth failure as user `dhruva` means the `DHRUVA_DB__*` translation did not apply — check `02-database-target.log`, which now records every variable that was set |
 | `31/32` down + re-up | Both complete without error | A failing downgrade is a real finding; ADR-055 requires it to work |
 | Drift check | "No changes in schema detected" | If a body is printed, models and migrations disagree — that is a genuine defect |

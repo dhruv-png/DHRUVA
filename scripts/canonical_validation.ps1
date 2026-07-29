@@ -100,14 +100,35 @@ function Start-CanonicalDatabase {
     if ($LASTEXITCODE -ne 0) { throw "Could not start container $ContainerName." }
     $script:StartedContainer = $true
 
-    Write-Host "  waiting for the database to accept connections"
+    # Readiness, done properly.
+    #
+    # `docker exec pg_isready` is not a sufficient test, and trusting it is what
+    # produced `ConnectionError: unexpected connection_lost() call` during SSL
+    # negotiation. The postgres entrypoint runs initdb, then starts a
+    # *temporary* server with `listen_addresses=''` to execute the init scripts,
+    # then stops it, then starts the real one. During that middle phase the
+    # temporary server answers on the unix socket, so `pg_isready` reports
+    # success -- while nothing is listening on TCP. Docker has already published
+    # the port, so a host connection is accepted and immediately dropped, which
+    # asyncpg reports as the connection being lost mid-handshake.
+    #
+    # The discriminator is the log line. The temporary server binds no TCP
+    # address and therefore never logs one; only the real server does.
+    Write-Host "  waiting for the database to accept TCP connections"
     $ready = $false
-    foreach ($attempt in 1..60) {
-        docker exec $ContainerName pg_isready -U dhruva_test -d dhruva_test 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    foreach ($attempt in 1..90) {
+        $logs = (docker logs $ContainerName 2>&1) -join "`n"
+        if ($logs -match 'listening on IPv4 address') {
+            docker exec $ContainerName pg_isready -q -U dhruva_test -d dhruva_test 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+        }
+        if ($attempt % 10 -eq 0) { Write-Host "  still initialising ($($attempt * 2)s)" }
         Start-Sleep -Seconds 2
     }
-    if (-not $ready) { throw "Database did not become ready within 120 seconds." }
+    if (-not $ready) {
+        docker logs $ContainerName 2>&1 | Select-Object -Last 30 | Out-Host
+        throw "Database did not begin listening on TCP within 180 seconds. Container log above."
+    }
 
     # No CREATE EXTENSION here. The image installs timescaledb into template1, so
     # POSTGRES_DB inherits it at creation, and the image's own init script also
@@ -244,10 +265,50 @@ import asyncpg
 
 EXTENSION_QUERY = "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'"
 
+#: How long to keep retrying a *transient* connection failure.
+CONNECT_DEADLINE_SECONDS = 90.0
+
+#: Failures that mean "not up yet" rather than "wrong". A server that is still
+#: starting accepts the socket and closes it again, which asyncpg surfaces as
+#: ConnectionError("unexpected connection_lost() call") from inside SSL
+#: negotiation -- an unhelpful message for an entirely ordinary race.
+TRANSIENT = (
+    ConnectionError,
+    OSError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.TooManyConnectionsError,
+)
+
+
+async def connect_with_retry(url: str) -> asyncpg.Connection:
+    """Connect, retrying only failures that a wait could plausibly cure.
+
+    A wrong password or a missing database is not retried: sitting in a loop for
+    ninety seconds re-sending bad credentials turns an instant, clearly worded
+    failure into a slow, vague one.
+    """
+    deadline = asyncio.get_event_loop().time() + CONNECT_DEADLINE_SECONDS
+    delay = 0.5
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await asyncpg.connect(url)
+        except TRANSIENT as error:
+            if asyncio.get_event_loop().time() >= deadline:
+                print(
+                    f"FATAL: no usable connection after {attempt} attempts "
+                    f"over {CONNECT_DEADLINE_SECONDS:.0f}s. Last error: {error!r}"
+                )
+                raise
+            print(f"  attempt {attempt}: {type(error).__name__} -- retrying in {delay:.1f}s")
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 5.0)
+
 
 async def main() -> int:
     url = re.sub(r"\+asyncpg", "", os.environ["DHRUVA_TEST_DATABASE_URL"])
-    connection = await asyncpg.connect(url)
+    connection = await connect_with_retry(url)
     try:
         print("postgresql: ", await connection.fetchval("SHOW server_version"))
         extension = await connection.fetchval(EXTENSION_QUERY)
