@@ -16,7 +16,15 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Date,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -57,4 +65,13 @@ class DailySnapshotModel(Base):
     close_scaled_units: Mapped[int] = mapped_column(BigInteger, nullable=False)
     turnover_minor_units: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # `default` is applied by the ORM on insert; `server_default` is DDL and is
+    # what the migration actually created. Declaring only the first left the
+    # model's metadata disagreeing with the live schema, so
+    # `alembic revision --autogenerate` proposed dropping the server default --
+    # meaning the next migration anyone generated for an unrelated change would
+    # have silently carried an ALTER removing it in production. Both are
+    # declared: the ORM path and any writer that bypasses it must agree.
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )

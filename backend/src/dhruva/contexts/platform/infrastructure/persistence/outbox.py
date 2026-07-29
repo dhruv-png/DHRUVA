@@ -47,7 +47,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -93,7 +93,12 @@ class OutboxRow(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # server_default as well as default: the migration creates the column with
+    # a DDL default, and a model that declares only the ORM-side one makes
+    # autogenerate propose dropping it. See models.py for the full reasoning.
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
