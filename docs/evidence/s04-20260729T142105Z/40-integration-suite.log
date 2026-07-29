@@ -1,0 +1,21 @@
+﻿============================= test session starts =============================
+collecting ... collected 983 items / 971 deselected / 12 selected
+
+tests/integration/test_repository_correctness.py::test_money_and_price_survive_a_real_round_trip PASSED [  8%]
+tests/integration/test_repository_correctness.py::test_a_currency_derivative_price_survives_storage PASSED [ 16%]
+tests/integration/test_repository_correctness.py::test_a_rolled_back_transaction_leaves_nothing PASSED [ 25%]
+tests/integration/test_repository_correctness.py::test_the_second_of_two_concurrent_writers_is_refused PASSED [ 33%]
+tests/integration/test_repository_correctness.py::test_a_conflict_reports_which_version_it_expected PASSED [ 41%]
+tests/integration/test_repository_correctness.py::test_deadlock_surfaces_as_a_driver_error XPASS [ 50%]
+tests/integration/test_repository_correctness.py::test_repeated_adds_of_the_same_natural_key_are_refused PASSED [ 58%]
+tests/integration/test_repository_correctness.py::test_the_default_isolation_level_is_read_committed PASSED [ 66%]
+tests/integration/test_repository_correctness.py::test_an_uncommitted_write_is_invisible_to_another_session PASSED [ 75%]
+tests/integration/test_repository_correctness.py::test_the_database_refuses_values_the_domain_would_refuse[turnover_minor_units--1-ck_daily_snapshot_turnover] PASSED [ 83%]
+tests/integration/test_repository_correctness.py::test_the_database_refuses_values_the_domain_would_refuse[close_scaled_units-0-ck_daily_snapshot_close] PASSED [ 91%]
+tests/integration/test_repository_correctness.py::test_the_database_refuses_values_the_domain_would_refuse[version-0-ck_daily_snapshot_version] PASSED [100%]
+
+=================================== XPASSES ===================================
+=========================== short test summary info ===========================
+XPASS tests/integration/test_repository_correctness.py::test_deadlock_surfaces_as_a_driver_error - Deadlock detection is inherently timing-dependent: PostgreSQL may resolve the cycle before both statements block, in which case neither aborts. Marked non-strict so it records the behaviour without producing a flaky red. Treated as documentation of the expected failure mode rather than a guarantee -- deadlock *retry* is a caller concern and is tested there.
+================ 11 passed, 971 deselected, 1 xpassed in 3.78s ================
+exit_code: 0
