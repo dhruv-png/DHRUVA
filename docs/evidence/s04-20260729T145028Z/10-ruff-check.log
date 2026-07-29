@@ -1,0 +1,141 @@
+﻿I001 [*] Import block is un-sorted or un-formatted
+  --> tests\benchmarks\test_persistence_layers.py:53:5
+   |
+52 |   if TYPE_CHECKING:
+53 | /     from collections.abc import Awaitable, Callable, Iterator, Sequence
+54 | |
+55 | |     from sqlalchemy.ext.asyncio import AsyncConnection
+56 | |     from uuid import UUID
+   | |_________________________^
+   |
+help: Organize imports
+   |
+53 |     from collections.abc import Awaitable, Callable, Iterator, Sequence
+54 +     from uuid import UUID
+55 |
+56 |     from sqlalchemy.ext.asyncio import AsyncConnection
+   -     from uuid import UUID
+57 |
+   |
+
+D401 First line of docstring should be in imperative mood: "A migrated database holding exactly one snapshot, for the read benchmarks."
+   --> tests\benchmarks\test_persistence_layers.py:148:5
+    |
+146 |   @pytest.fixture(scope="module")
+147 |   def seeded() -> Iterator[_Fixture]:
+148 | /     """A migrated database holding exactly one snapshot, for the read benchmarks.
+149 | |
+150 | |     Module-scoped: connecting and migrating are startup costs, and paying them
+151 | |     inside a latency sample would measure the harness rather than the platform.
+152 | |
+153 | |     The schema is applied with Alembic rather than ``metadata.create_all`` for
+154 | |     the same reason the integration suite does: a benchmark against a schema
+155 | |     that migrations never produce is measuring something that will not exist.
+156 | |     ``upgrade head`` is idempotent, so this is a no-op when the canonical run has
+157 | |     already migrated in an earlier stage.
+158 | |
+159 | |     Cleans up its own rows and leaves the schema in place, because other stages
+160 | |     of the same run share this database.
+161 | |     """
+    | |_______^
+162 |       url = os.environ[DATABASE_URL_ENV]
+163 |       _run_alembic("upgrade", "head")
+    |
+
+T201 `print` found
+   --> tests\benchmarks\test_persistence_layers.py:380:5
+    |
+379 |     measured = asyncio.run(run())
+380 |     print(f"\ndatabase query p95: {measured:.3f} ms")
+    |     ^^^^^
+381 |
+382 |     assert measured < BUDGET_QUERY_P95_MS, f"query p95 {measured:.3f}ms"
+    |
+help: Remove `print`
+
+T201 `print` found
+   --> tests\benchmarks\test_persistence_layers.py:407:5
+    |
+406 |     measured = asyncio.run(run())
+407 |     print(f"\nend-to-end read p95: {measured:.3f} ms")
+    |     ^^^^^
+408 |
+409 |     assert measured < BUDGET_READ_P95_MS, f"end-to-end read p95 {measured:.3f}ms"
+    |
+help: Remove `print`
+
+T201 `print` found
+   --> tests\benchmarks\test_persistence_layers.py:445:5
+    |
+444 |     measured = asyncio.run(run())
+445 |     print(f"\nend-to-end write p95: {measured:.3f} ms")
+    |     ^^^^^
+446 |
+447 |     assert measured < BUDGET_WRITE_P95_MS, f"end-to-end write p95 {measured:.3f}ms"
+    |
+help: Remove `print`
+
+T201 `print` found
+   --> tests\benchmarks\test_persistence_layers.py:490:5
+    |
+489 |     written, measured = asyncio.run(run())
+490 |     print(f"\nbulk append {BULK_ROWS} rows: {measured:.1f} ms")
+    |     ^^^^^
+491 |
+492 |     assert written == BULK_ROWS, f"appended {written} of {BULK_ROWS}"
+    |
+help: Remove `print`
+
+ARG001 Unused function argument: `truncated_after_test`
+  --> tests\integration\test_timeseries_storage.py:49:28
+   |
+48 | async def test_appended_rows_are_readable_with_their_values_intact(
+49 |     migrated: AsyncEngine, truncated_after_test: None
+   |                            ^^^^^^^^^^^^^^^^^^^^
+50 | ) -> None:
+51 |     """The round trip that matters: what went in is what comes out.
+   |
+
+ARG001 Unused function argument: `truncated_after_test`
+  --> tests\integration\test_timeseries_storage.py:81:28
+   |
+80 | async def test_an_empty_batch_is_a_no_op(
+81 |     migrated: AsyncEngine, truncated_after_test: None
+   |                            ^^^^^^^^^^^^^^^^^^^^
+82 | ) -> None:
+83 |     """A caller draining an empty buffer should not need a guard."""
+   |
+
+ARG001 Unused function argument: `truncated_after_test`
+  --> tests\integration\test_timeseries_storage.py:88:28
+   |
+87 | async def test_a_table_off_the_allowlist_is_refused(
+88 |     migrated: AsyncEngine, truncated_after_test: None
+   |                            ^^^^^^^^^^^^^^^^^^^^
+89 | ) -> None:
+90 |     """The allowlist is the reason a table name may be interpolated at all."""
+   |
+
+ARG001 Unused function argument: `truncated_after_test`
+   --> tests\integration\test_timeseries_storage.py:110:28
+    |
+109 | async def test_a_row_missing_a_column_is_refused_before_any_write(
+110 |     migrated: AsyncEngine, truncated_after_test: None
+    |                            ^^^^^^^^^^^^^^^^^^^^
+111 | ) -> None:
+112 |     """A partial row on a bulk path is a silent NULL discovered 10,000 rows later.
+    |
+
+ARG001 Unused function argument: `truncated_after_test`
+   --> tests\integration\test_timeseries_storage.py:130:28
+    |
+129 | async def test_the_check_constraint_still_applies_on_this_path(
+130 |     migrated: AsyncEngine, truncated_after_test: None
+    |                            ^^^^^^^^^^^^^^^^^^^^
+131 | ) -> None:
+132 |     """Bypassing the mapper does not mean bypassing the schema.
+    |
+
+Found 11 errors.
+[*] 1 fixable with the `--fix` option (4 hidden fixes can be enabled with the `--unsafe-fixes` option).
+exit_code: 1
