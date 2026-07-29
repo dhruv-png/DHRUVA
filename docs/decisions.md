@@ -68,6 +68,7 @@ should not have been made gets caught.
 | [ADR-057](ADR-057-explicit-change-tracking.md) | Explicit change tracking with optimistic concurrency | Accepted |
 | [ADR-058](ADR-058-integration-tests-use-a-real-database.md) | Integration tests run against real PostgreSQL with TimescaleDB | Accepted |
 | [ADR-059](ADR-059-boundary-rules-r7-and-r8.md) | Boundary rules R7 and R8: the domain imports no persistence, the timeseries path imports no domain | Accepted |
+| [ADR-060](ADR-060-benchmark-budgets-are-enforced-on-the-deployment-target.md) | Benchmark budgets are enforced on the deployment target, not the development machine | Accepted |
 
 ## Reading order for someone new
 

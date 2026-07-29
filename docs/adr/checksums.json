@@ -57,5 +57,6 @@
   "ADR-056-async-session-discipline.md": "a53e8f3991380d66ae4207dde1ff3ca77033205eeb0467765ba37186365a9be8",
   "ADR-057-explicit-change-tracking.md": "b2f19177dcdfec94eb493619f84c8c94b91f477edd763ac6a1b187897a6865f1",
   "ADR-058-integration-tests-use-a-real-database.md": "a1c38765743c223251d1015c5848f1409b5bafd99f2a38da6ec2325506db901b",
-  "ADR-059-boundary-rules-r7-and-r8.md": "ef02d724231d612a759a29ea6640cfdbe7c8f468da790df6ed0b729cffa9eac0"
+  "ADR-059-boundary-rules-r7-and-r8.md": "ef02d724231d612a759a29ea6640cfdbe7c8f468da790df6ed0b729cffa9eac0",
+  "ADR-060-benchmark-budgets-are-enforced-on-the-deployment-target.md": "9c2c0486f954222caeca23d962c513b9327af9a8b13b77003c3c0ba9921a0ea4"
 }
