@@ -252,10 +252,15 @@ def test_applying_a_unit_rate_is_the_identity(amount: Money) -> None:
     assert amount.apply(Ratio.from_percent(100), CHARGE_TO_PAISE) == amount
 
 
-@given(amount=gen.positive_money(), rate=gen.ratio())
+@given(amount=gen.positive_money(), rate=gen.positive_ratio())
 def test_conservative_rounding_never_understates_a_charge(amount: Money, rate: Ratio) -> None:
-    """Optimistic cost estimates are how a strategy appears profitable and is not."""
-    assume(rate.fraction > 0)
+    """Optimistic cost estimates are how a strategy appears profitable and is not.
+
+    Takes ``positive_ratio()`` rather than ``ratio()`` with an ``assume``. The
+    filtered version rejected roughly seven inputs in eight and failed the
+    ``filter_too_much`` health check on some seeds and not others, which made
+    this test's result a property of the random seed rather than of the code.
+    """
     conservative = amount.apply(rate, CONSERVATIVE_TO_TRADER)
     statistical = amount.apply(rate, STATISTICAL)
 
