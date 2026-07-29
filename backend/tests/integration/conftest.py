@@ -295,7 +295,13 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # seconds naming the table, which is a diagnosis rather than a
             # symptom.
             await cleanup.execute(text("SET LOCAL lock_timeout = '5s'"))
-            await cleanup.execute(text("TRUNCATE daily_snapshot, outbox CASCADE"))
+            # Every table a test can commit to, named in one place. Adding a
+            # table to the schema and forgetting it here is how order-dependence
+            # gets reintroduced: the row survives into the next test, which then
+            # fails for a reason unrelated to its subject.
+            await cleanup.execute(
+                text("TRUNCATE daily_snapshot, outbox, example_tick CASCADE")
+            )
 
 
 @pytest_asyncio.fixture(loop_scope="session")
