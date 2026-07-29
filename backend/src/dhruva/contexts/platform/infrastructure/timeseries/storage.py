@@ -140,9 +140,7 @@ class PostgresTimeSeriesStorage:
                 raise UnknownTimeSeriesTableError(
                     "the timeseries path requires the asyncpg driver", table=table
                 )
-            await driver.copy_records_to_table(
-                table, records=records, columns=list(columns)
-            )
+            await driver.copy_records_to_table(table, records=records, columns=list(columns))
         return len(rows)
 
     def _resolve_columns(self, table: str) -> tuple[str, ...]:

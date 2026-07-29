@@ -51,9 +51,9 @@ from dhruva.shared.time import TradingDay
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Sequence
+    from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncConnection
-    from uuid import UUID
 
 
 pytestmark = [pytest.mark.benchmark, pytest.mark.slow]
