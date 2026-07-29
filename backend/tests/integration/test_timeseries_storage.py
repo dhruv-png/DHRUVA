@@ -45,9 +45,8 @@ def _tick(instrument: object, index: int = 0, *, quantity: int = 10) -> dict[str
     }
 
 
-async def test_appended_rows_are_readable_with_their_values_intact(
-    migrated: AsyncEngine, truncated_after_test: None
-) -> None:
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_appended_rows_are_readable_with_their_values_intact(migrated: AsyncEngine) -> None:
     """The round trip that matters: what went in is what comes out.
 
     BIGINT price at eight-decimal scale specifically, because a driver that
@@ -77,16 +76,14 @@ async def test_appended_rows_are_readable_with_their_values_intact(
     ]
 
 
-async def test_an_empty_batch_is_a_no_op(
-    migrated: AsyncEngine, truncated_after_test: None
-) -> None:
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_an_empty_batch_is_a_no_op(migrated: AsyncEngine) -> None:
     """A caller draining an empty buffer should not need a guard."""
     assert await _storage(migrated).append("example_tick", []) == 0
 
 
-async def test_a_table_off_the_allowlist_is_refused(
-    migrated: AsyncEngine, truncated_after_test: None
-) -> None:
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_a_table_off_the_allowlist_is_refused(migrated: AsyncEngine) -> None:
     """The allowlist is the reason a table name may be interpolated at all."""
     with pytest.raises(UnknownTimeSeriesTableError, match="allowlist"):
         await _storage(migrated).append("daily_snapshot", [_tick(uuid4())])
@@ -106,9 +103,8 @@ async def test_an_identifier_that_is_not_a_plain_name_is_refused_at_construction
         PostgresTimeSeriesStorage(migrated, {name: COLUMNS})
 
 
-async def test_a_row_missing_a_column_is_refused_before_any_write(
-    migrated: AsyncEngine, truncated_after_test: None
-) -> None:
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_a_row_missing_a_column_is_refused_before_any_write(migrated: AsyncEngine) -> None:
     """A partial row on a bulk path is a silent NULL discovered 10,000 rows later.
 
     Asserted to write *nothing*: the batch is validated before COPY begins, so a
@@ -126,9 +122,8 @@ async def test_a_row_missing_a_column_is_refused_before_any_write(
     assert remaining == 0
 
 
-async def test_the_check_constraint_still_applies_on_this_path(
-    migrated: AsyncEngine, truncated_after_test: None
-) -> None:
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_the_check_constraint_still_applies_on_this_path(migrated: AsyncEngine) -> None:
     """Bypassing the mapper does not mean bypassing the schema.
 
     The domain is not consulted on this path (ADR-054), so the database

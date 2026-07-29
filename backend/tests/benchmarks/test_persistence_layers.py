@@ -145,7 +145,7 @@ class _Fixture:
 
 @pytest.fixture(scope="module")
 def seeded() -> Iterator[_Fixture]:
-    """A migrated database holding exactly one snapshot, for the read benchmarks.
+    """Provide a migrated database holding one snapshot, for the read benchmarks.
 
     Module-scoped: connecting and migrating are startup costs, and paying them
     inside a latency sample would measure the harness rather than the platform.
@@ -325,6 +325,18 @@ LATENCY_SAMPLES = 200
 LATENCY_WARMUP = 20
 
 
+def _report(label: str, value: str) -> None:
+    """Emit a measured value into the run's captured output.
+
+    The evidence package must contain the number for a benchmark that *passed*,
+    not only for one that failed -- an assertion message appears only on failure,
+    which is how the persistence figures went unrecorded on the first canonical
+    run that produced them. The validation script runs this stage with `-s` so
+    these reach the log.
+    """
+    print(f"{label}: {value}")  # noqa: T201 - the measurement is the deliverable
+
+
 def _percentile(samples: Sequence[float], fraction: float) -> float:
     """Nearest-rank percentile of already-collected samples.
 
@@ -377,7 +389,7 @@ def test_database_query_latency_is_within_budget(seeded: _Fixture) -> None:
             await engine.dispose()
 
     measured = asyncio.run(run())
-    print(f"\ndatabase query p95: {measured:.3f} ms")
+    _report("database query p95", f"{measured:.3f} ms")
 
     assert measured < BUDGET_QUERY_P95_MS, f"query p95 {measured:.3f}ms"
 
@@ -404,7 +416,7 @@ def test_end_to_end_repository_read_is_within_budget(seeded: _Fixture) -> None:
             await engine.dispose()
 
     measured = asyncio.run(run())
-    print(f"\nend-to-end read p95: {measured:.3f} ms")
+    _report("end-to-end read p95", f"{measured:.3f} ms")
 
     assert measured < BUDGET_READ_P95_MS, f"end-to-end read p95 {measured:.3f}ms"
 
@@ -442,7 +454,7 @@ def test_end_to_end_repository_write_is_within_budget(seeded: _Fixture) -> None:
             await engine.dispose()
 
     measured = asyncio.run(run())
-    print(f"\nend-to-end write p95: {measured:.3f} ms")
+    _report("end-to-end write p95", f"{measured:.3f} ms")
 
     assert measured < BUDGET_WRITE_P95_MS, f"end-to-end write p95 {measured:.3f}ms"
 
@@ -487,7 +499,7 @@ def test_bulk_timeseries_append_is_within_budget(seeded: _Fixture) -> None:
             await engine.dispose()
 
     written, measured = asyncio.run(run())
-    print(f"\nbulk append {BULK_ROWS} rows: {measured:.1f} ms")
+    _report(f"bulk append {BULK_ROWS} rows", f"{measured:.1f} ms")
 
     assert written == BULK_ROWS, f"appended {written} of {BULK_ROWS}"
     assert measured < BUDGET_BULK_APPEND_MS, f"bulk append {measured:.1f}ms"
