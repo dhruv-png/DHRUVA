@@ -1,0 +1,93 @@
+﻿  attempt 1: ConnectionRefusedError -- retrying in 0.5s
+  attempt 2: ConnectionRefusedError -- retrying in 0.8s
+  attempt 3: ConnectionRefusedError -- retrying in 1.1s
+  attempt 4: ConnectionRefusedError -- retrying in 1.7s
+  attempt 5: ConnectionRefusedError -- retrying in 2.5s
+  attempt 6: ConnectionRefusedError -- retrying in 3.8s
+  attempt 7: ConnectionRefusedError -- retrying in 5.0s
+  attempt 8: ConnectionRefusedError -- retrying in 5.0s
+  attempt 9: ConnectionRefusedError -- retrying in 5.0s
+uv : Traceback (most recent call last):
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:397 char:55
++ ... Invoke-Captured '03-database-versions' { uv run python $probeScript }
++                                              ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  attempt 10: ConnectionRefusedError -- retrying in 5.0s
+  attempt 11: ConnectionRefusedError -- retrying in 5.0s
+  attempt 12: ConnectionRefusedError -- retrying in 5.0s
+FATAL: no usable connection after 13 attempts over 90s. Last error: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+  File "C:\Users\dhruv\Projects\DHRUVA\docs\evidence\s04-20260729T144401Z\03-database-versions.py", line 74, 
+in <module>
+    sys.exit(asyncio.run(main()))
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", 
+line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", 
+line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", 
+line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\docs\evidence\s04-20260729T144401Z\03-database-versions.py", line 54, 
+in main
+    connection = await connect_with_retry(url)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\docs\evidence\s04-20260729T144401Z\03-database-versions.py", line 39, 
+in connect_with_retry
+    return await asyncpg.connect(url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connection.py", line 2421, in 
+connect
+    return await connect_utils._connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 1075, 
+in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 1049, 
+in _connect
+    conn = await _connect_addr(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 886, in 
+_connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 931, in 
+__connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\Projects\DHRUVA\backend\.venv\Lib\site-packages\asyncpg\connect_utils.py", line 802, in 
+_create_ssl_connection
+    tr, pr = await loop.create_connection(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", 
+line 1137, in create_connection
+    raise exceptions[0]
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", 
+line 1107, in create_connection
+    sock = await self._connect_sock(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", 
+line 1010, in _connect_sock
+    await self.sock_connect(sock, address)
+  File 
+"C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\proactor_events.py", 
+line 729, in sock_connect
+    return await self._proactor.connect(sock, address)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File 
+"C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\windows_events.py", 
+line 803, in _poll
+    value = callback(transferred, key, ov)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File 
+"C:\Users\dhruv\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\windows_events.py", 
+line 599, in finish_connect
+    ov.getresult()
+ConnectionRefusedError: [WinError 1225] The remote computer refused the network connection
+exit_code: 1
