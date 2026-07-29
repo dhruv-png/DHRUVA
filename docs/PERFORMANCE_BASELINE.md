@@ -146,9 +146,42 @@ E1 could not provide.
 | `test_money_construction_is_within_budget` | TD-13 | Still over 0.30 µs; xfail holds. `xfail_strict` means it fails the day it passes |
 | `test_a_million_money_additions_is_within_budget` | TD-14 | Non-strict; needs a figure recorded on E2 |
 
-### Not measured — the benchmarks are unimplemented
+### Persistence benchmarks — implemented, first figures on E3
 
-These four are `pytest.fail("not yet implemented; requires the integration
+The four stubs are now real measurements. E3 below is a *development* sandbox and
+its numbers are indicative only; the canonical figures come from the next E2 run.
+
+| ID | Description |
+|---|---|
+| **E3** | Linux · 2 vCPU, contended · CPython 3.10 · PostgreSQL 16.2, local TCP · sandbox |
+
+| Benchmark | Budget | E3 measured (isolated) | E3 (full stage) |
+|---|---|---|---|
+| `test_database_query_latency_is_within_budget` | p95 < 3 ms | **0.463 ms** | 0.957 ms |
+| `test_end_to_end_repository_read_is_within_budget` | p95 < 3 ms | **1.507 ms** | **3.719 ms — over** |
+| `test_end_to_end_repository_write_is_within_budget` | p95 < 5 ms | **4.368 ms** | 4.461 ms |
+| `test_bulk_timeseries_append_is_within_budget` | 10,000 rows < 500 ms | **35.5 ms** | 47.9 ms |
+
+Two observations worth carrying into the E2 run.
+
+**The read p95 is sensitive to what ran before it.** Isolated it is 1.5 ms;
+after five CPU-bound micro-benchmarks in the same process on a 2-vCPU machine it
+is 3.7 ms. That is a property of E3, not evidence about the code — but it means
+the read budget is the one to watch, and the canonical figure is the one that
+counts. The budget has deliberately **not** been adjusted: ADR-036 requires
+budgets to be declared before implementation and changed only with a recorded
+reason, and "it failed on a contended sandbox" is not one.
+
+**The write path has the least headroom** — 4.4 ms against a 5 ms budget, ~12%.
+Worth watching on E2, where Docker Desktop's network stack adds a hop that E3
+does not have.
+
+**Bulk append is comfortable**: 10,000 rows in 35–48 ms against a 500 ms budget,
+roughly 10x margin. `COPY` is doing what ADR-054 said it would.
+
+### Previously not measured — the benchmarks were unimplemented
+
+These four **were** `pytest.fail("not yet implemented; requires the integration
 harness")` stubs. They were **skipped** before, because the skip was gated on a
 database being configured, so their absence looked like an environment
 limitation. With a real database present they run, fail, and are now visible for
