@@ -202,6 +202,62 @@ criteria until these four produce numbers.
 
 ---
 
+## E2 — complete canonical measurement (2026-07-29T15:12:48Z, commit `e1d0b5a`)
+
+Evidence: `docs/evidence/s04-20260729T151248Z/`. The first run in which every
+stage except the benchmarks passed, and the first in which a *passing*
+benchmark's figure was recorded rather than discarded.
+
+Suite result: **22 passed, 5 failed, 2 xfailed**.
+
+### Persistence layer, measured
+
+| Benchmark | Budget | **E2 (Windows, Docker)** | E3 (Linux, local) | E2 ÷ E3 |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | **1.573 ms** ✓ | 0.438 ms | 3.6× |
+| End-to-end read p95 | < 3 ms | **4.281 ms** ✗ | 1.979 ms | 2.2× |
+| End-to-end write p95 | < 5 ms | **6.111 ms** ✗ | 3.883 ms | 1.6× |
+| Bulk append, 10,000 rows | < 500 ms | **84.2 ms** ✓ | 39.3 ms | 2.1× |
+
+**Every database figure is 1.6–3.6× slower on E2 than on E3 — on hardware that
+is four times larger.** E3 is a 2-vCPU, 3 GB contended sandbox; E2 is an 8-core,
+24 GB laptop. The persistence code is identical. The difference is the transport:
+E3 talks to PostgreSQL over a local TCP socket, E2 through Docker Desktop's port
+forwarding on Windows.
+
+The single clearest indicator is the raw query: **1.573 ms for one indexed
+primary-key lookup**. That is not a query cost, it is a round-trip cost. Whatever
+these four numbers measure, a meaningful part of it is Docker Desktop's network
+stack rather than this codebase.
+
+### CPU-bound primitives on E2
+
+| Benchmark | Budget | E2 | E1 (Linux 3.10) | Over budget |
+|---|---|---|---|---|
+| `money add` | 0.500 µs | **0.584 µs** | 0.456 µs | +17% |
+| `money mul` | 0.500 µs | **0.625 µs** | 0.455 µs | +25% |
+| 2000-day range iteration | 1000 µs | **1062.9 µs** | — | +6.3% |
+
+`Money + Money` is **28% slower on E2 than E1** — newer Python, far better
+hardware, identical code, no database involved. Across three runs the E2 figure
+is stable at 0.572 / 0.582 / 0.584 µs, so this is a reproducible property of the
+platform, not noise.
+
+### What this means for the budgets
+
+Five budgets are missed and **not one of them has been traced to a defect in the
+persistence layer**. The measurements are honest; the question is what
+environment they should be taken in. DHRUVA deploys on Linux. Tuning code until
+it hits 0.500 µs through a Windows timer, or until a read completes in 3 ms
+through Docker Desktop's port forwarding, optimises against a machine that will
+never run this system — and would likely make the code worse on the one that
+will.
+
+Recorded here without adjusting any budget. ADR-036 requires a declared reason
+for a budget change, and this is the evidence such a decision would rest on.
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing
