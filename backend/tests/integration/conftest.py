@@ -300,7 +300,8 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def committed_session(
-    migrated: AsyncEngine, truncated_after_test: None
+    migrated: AsyncEngine,
+    truncated_after_test: None,  # noqa: ARG001 - requested for its teardown, not its value
 ) -> AsyncIterator[AsyncSession]:
     """Provide a session whose commits genuinely commit, for concurrency tests.
 

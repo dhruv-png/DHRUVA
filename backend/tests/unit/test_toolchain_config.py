@@ -128,6 +128,8 @@ DEPENDENCY_PROVENANCE: dict[str, str] = {
     "sqlalchemy": "S04 - async ORM; models confined to infrastructure (ADR-052)",
     "alembic": "S04 - versioned migrations with declared reversibility (ADR-055)",
     "asyncpg": "S04 - the async PostgreSQL driver SQLAlchemy dispatches to",
+    "tzdata": "S04 - zoneinfo has no system tz database on Windows, so "
+    "`timezone = UTC` in alembic.ini cannot resolve without it (ADR-032)",
 }
 
 

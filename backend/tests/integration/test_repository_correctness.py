@@ -195,9 +195,8 @@ async def test_a_conflict_reports_which_version_it_expected(
     ),
     strict=False,
 )
-async def test_deadlock_surfaces_as_a_driver_error(
-    migrated: AsyncEngine, truncated_after_test: None
-) -> None:
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_deadlock_surfaces_as_a_driver_error(migrated: AsyncEngine) -> None:
     """Two transactions locking two rows in opposite order.
 
     PostgreSQL detects the cycle and aborts one. What matters for the platform is
