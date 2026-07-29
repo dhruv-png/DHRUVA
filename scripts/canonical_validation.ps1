@@ -145,6 +145,69 @@ function Start-CanonicalDatabase {
     return "postgresql+asyncpg://dhruva_test:dhruva_test@localhost:$ContainerPort/dhruva_test"
 }
 
+function Write-Manifest {
+    <#
+        Summarise the run: a verdict per stage and one overall verdict.
+
+        Idempotent, and safe to call when nothing has run yet -- it is invoked
+        from `finally` as well as at the end of the happy path, so that a run
+        stopped by a throw still says what happened. Line counts describe output;
+        exit codes describe outcome, and only the second is a result.
+    #>
+    if ($script:ManifestWritten) { return }
+    $script:ManifestWritten = $true
+    if ($Verdicts.Count -eq 0) { return }
+
+    Write-Stage 'manifest'
+    $failed = @($Verdicts.GetEnumerator() | Where-Object { $_.Value -ne 0 })
+
+    # git may be absent from PATH; the manifest must not die for want of a SHA.
+    $commit = 'unknown (git not available)'
+    $branch = 'unknown'
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $commit = (git -C $RepoRoot rev-parse HEAD 2>&1)
+        $branch = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>&1)
+    }
+
+    if ($failed.Count -eq 0) {
+        $overall = 'OVERALL: PASS - every stage exited 0.'
+    } else {
+        $names = ($failed | ForEach-Object { $_.Key }) -join ', '
+        $overall = "OVERALL: FAIL - $($failed.Count) stage(s) failed: $names"
+    }
+
+    $manifest = @(
+        'S04 canonical validation evidence'
+        "captured: $Stamp"
+        "commit:   $commit"
+        "branch:   $branch"
+        ''
+        'stage verdicts'
+        '--------------'
+    ) + ($Verdicts.GetEnumerator() | ForEach-Object {
+        if ($_.Value -eq 0) { $verdict = 'PASS' } else { $verdict = 'FAIL' }
+        '{0,-40} {1} (exit {2})' -f $_.Key, $verdict, $_.Value
+    }) + @(
+        ''
+        $overall
+        ''
+        'files'
+        '-----'
+    ) + (Get-ChildItem $Evidence -Filter '*.log' | ForEach-Object {
+        '{0,-40} {1} lines' -f $_.Name, (Get-Content $_.FullName | Measure-Object -Line).Lines
+    })
+    Write-Log '99-manifest' $manifest | Out-Null
+
+    Write-Host ''
+    Write-Host "Evidence written to: $Evidence" -ForegroundColor Green
+    if ($failed.Count -eq 0) {
+        Write-Host 'OVERALL: PASS' -ForegroundColor Green
+    } else {
+        Write-Host $overall -ForegroundColor Red
+    }
+    Write-Host 'Attach the whole directory; do not summarise it.' -ForegroundColor Green
+}
+
 function Stop-CanonicalDatabase {
     if (-not $script:StartedContainer) { return }
     Write-Stage 'removing database container'
@@ -424,43 +487,15 @@ sys.exit(asyncio.run(main()))
     #    described as "the stages execute". Line counts measure output, not
     #    outcome. Exit codes measure outcome.
     # --------------------------------------------------------------------- #
-    Write-Stage 'manifest'
-    $failed = @($Verdicts.GetEnumerator() | Where-Object { $_.Value -ne 0 })
-    $manifest = @(
-        'S04 canonical validation evidence'
-        "captured: $Stamp"
-        "commit:   $(git -C $RepoRoot rev-parse HEAD)"
-        "branch:   $(git -C $RepoRoot rev-parse --abbrev-ref HEAD)"
-        ''
-        'stage verdicts'
-        '--------------'
-    ) + ($Verdicts.GetEnumerator() | ForEach-Object {
-        '{0,-40} {1} (exit {2})' -f $_.Key, $(if ($_.Value -eq 0) { 'PASS' } else { 'FAIL' }), $_.Value
-    }) + @(
-        ''
-        $(if ($failed.Count -eq 0) {
-            'OVERALL: PASS - every stage exited 0.'
-        } else {
-            "OVERALL: FAIL - $($failed.Count) stage(s) failed: $($failed.Key -join ', ')"
-        })
-        ''
-        'files'
-        '-----'
-    ) + (Get-ChildItem $Evidence -Filter '*.log' | ForEach-Object {
-        '{0,-40} {1} lines' -f $_.Name, (Get-Content $_.FullName | Measure-Object -Line).Lines
-    })
-    Write-Log '99-manifest' $manifest | Out-Null
-
-    Write-Host ""
-    Write-Host "Evidence written to: $Evidence" -ForegroundColor Green
-    if ($failed.Count -eq 0) {
-        Write-Host "OVERALL: PASS" -ForegroundColor Green
-    } else {
-        Write-Host "OVERALL: FAIL - $($failed.Count) stage(s): $($failed.Key -join ', ')" -ForegroundColor Red
-    }
-    Write-Host "Attach the whole directory; do not summarise it." -ForegroundColor Green
+    Write-Manifest
 }
 finally {
+    # The manifest is written from `finally` as well, so that a run stopped by a
+    # throw -- an unremovable cache, an unreachable database -- still produces a
+    # summary of what did happen. The 14:04 run reached the benchmarks and then
+    # ended without a 99-manifest.log at all, which meant the one file that
+    # states the outcome was the one file missing whenever the outcome was bad.
+    Write-Manifest
     Stop-CanonicalDatabase
     Pop-Location
 }
