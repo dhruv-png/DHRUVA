@@ -399,10 +399,11 @@ and audit retention. Three things remain.
    a dependency — I verified `pyproject.toml` and `requirements.lock`. S06 needs
    all three (conventionally: `cryptography` for AES-GCM, `pyjwt`, and
    `argon2-cffi`). Each needs a provenance entry that `test_toolchain_config.py`
-   enforces, and all four lockfiles must be regenerated with the canonical
-   `uv pip compile` commands — which S05 established is work on the canonical
-   Windows environment, not here. **Please confirm the three libraries before
-   ADR-070 and ADR-072 assume them.**
+   enforces, and all three lockfiles must be regenerated — which S05 established
+   is work on the canonical Windows environment, not here. The exact commands,
+   provenance entries and integration points are prepared in
+   `docs/design/S06-dependency-plan.md`. **Please confirm the three libraries
+   before ADR-070 and ADR-072 assume them.**
 2. **Who are the actors?** The catalogue says JWT+refresh but not whether S06
    authenticates humans only, or services too. Service-to-service authentication
    has different lifetimes and different revocation needs, and 15 minutes with a
