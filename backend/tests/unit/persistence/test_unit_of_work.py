@@ -18,16 +18,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 
 from dhruva.contexts.platform.infrastructure.database.unit_of_work import SqlAlchemyUnitOfWork
+from dhruva.contexts.platform.infrastructure.persistence.outbox import OutboxRow
 from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.events import DomainEvent
+from dhruva.shared.time import FrozenClock
 from tests.unit.persistence.fakes import (
     CommittingRepository,
     FakeSessionFactory,
-    RecordingPublisher,
 )
 
 pytestmark = pytest.mark.unit
@@ -41,8 +43,8 @@ def _event() -> _Happened:
     return _Happened(occurred_at=datetime(2026, 7, 28, tzinfo=UTC))
 
 
-def _uow(factory: FakeSessionFactory, publisher: RecordingPublisher | None = None) -> Any:
-    return SqlAlchemyUnitOfWork(cast("Any", factory), cast("Any", publisher) if publisher else None)
+def _uow(factory: FakeSessionFactory) -> Any:
+    return SqlAlchemyUnitOfWork(cast("Any", factory))
 
 
 # --------------------------------------------------------------------------- #
@@ -242,43 +244,57 @@ async def test_a_repository_committing_is_visible_as_an_extra_commit() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Domain event publication
+# Domain event staging (AR-001b)
 # --------------------------------------------------------------------------- #
+#
+# These assert on outbox rows in the session rather than on a publisher, because
+# `add_event` now writes into the transaction instead of holding events in memory
+# for publication after commit. The guarantees are the same ones the previous
+# tests covered; they are simply enforced by the transaction now, which is
+# stronger -- the earlier version could not test the window between a commit
+# returning and an in-process publish completing, because with a fake session
+# there was no durability boundary to crash between.
+
+
+def _staged_rows(factory: FakeSessionFactory) -> list[Any]:
+    """Return the outbox rows staged into the current session."""
+    return [row for row in factory.latest.added if isinstance(row, OutboxRow)]
 
 
 @pytest.mark.asyncio
-async def test_events_publish_only_after_a_successful_commit() -> None:
-    """A consumer must never observe an event for work that later rolls back."""
-    factory, publisher = FakeSessionFactory(), RecordingPublisher()
+async def test_an_event_is_staged_into_the_transaction_not_published() -> None:
+    """The event row is written to the session, so it shares the work's fate."""
+    factory = FakeSessionFactory()
 
-    async with _uow(factory, publisher) as uow:
+    async with _uow(factory) as uow:
         uow.add_event(_event())
-        assert publisher.calls == 0, "published before commit"
+
+        rows = _staged_rows(factory)
+        assert len(rows) == 1, "event was not staged into the session"
         await uow.commit()
 
-    assert publisher.calls == 1
-    assert len(publisher.published) == 1
+    assert "commit" in factory.latest.calls
 
 
 @pytest.mark.asyncio
-async def test_events_are_discarded_when_the_transaction_rolls_back() -> None:
+async def test_a_staged_event_is_discarded_when_the_transaction_rolls_back() -> None:
     """Nothing observable happened, so nothing should be observed."""
-    factory, publisher = FakeSessionFactory(), RecordingPublisher()
+    factory = FakeSessionFactory()
 
     with pytest.raises(RuntimeError):
-        async with _uow(factory, publisher) as uow:
+        async with _uow(factory) as uow:
             uow.add_event(_event())
             raise RuntimeError("boom")
 
-    assert publisher.calls == 0
-    assert publisher.published == []
+    assert _staged_rows(factory) == []
+    assert "rollback" in factory.latest.calls
 
 
 @pytest.mark.asyncio
-async def test_events_are_discarded_when_the_commit_fails() -> None:
-    """The commit raised, so the work did not happen and neither did the events."""
-    factory, publisher = FakeSessionFactory(), RecordingPublisher()
-    uow = _uow(factory, publisher)
+async def test_a_staged_event_is_discarded_when_the_commit_fails() -> None:
+    """The commit raised, so the work did not happen and neither did the event."""
+    factory = FakeSessionFactory()
+    uow = _uow(factory)
 
     with pytest.raises(ValueError, match="constraint violation"):
         async with uow:
@@ -286,14 +302,14 @@ async def test_events_are_discarded_when_the_commit_fails() -> None:
             uow.add_event(_event())
             await uow.commit()
 
-    assert publisher.calls == 0
+    assert _staged_rows(factory) == []
 
 
 @pytest.mark.asyncio
 async def test_events_do_not_leak_between_transactions() -> None:
-    """A staged event from a rolled-back transaction must not publish in the next."""
-    factory, publisher = FakeSessionFactory(), RecordingPublisher()
-    uow = _uow(factory, publisher)
+    """A staged event from a rolled-back transaction must not reappear."""
+    factory = FakeSessionFactory()
+    uow = _uow(factory)
 
     with pytest.raises(RuntimeError):
         async with uow:
@@ -303,11 +319,11 @@ async def test_events_do_not_leak_between_transactions() -> None:
     async with uow:
         await uow.commit()
 
-    assert publisher.calls == 0
+    assert _staged_rows(factory) == [], "a second transaction inherited a staged event"
 
 
 @pytest.mark.asyncio
-async def test_staged_events_are_visible_before_publication() -> None:
+async def test_staged_events_are_visible_before_commit() -> None:
     """So a use case can assert on what it raised without reaching into the bus."""
     factory = FakeSessionFactory()
 
@@ -318,11 +334,38 @@ async def test_staged_events_are_visible_before_publication() -> None:
 
 
 @pytest.mark.asyncio
-async def test_committing_with_no_events_does_not_call_the_publisher() -> None:
-    """Most transactions raise nothing; they should not pay for the machinery."""
-    factory, publisher = FakeSessionFactory(), RecordingPublisher()
+async def test_the_staged_row_carries_the_bitemporal_pair_from_the_clock() -> None:
+    """`occurred_at` is the event's; `recorded_at` comes from the injected clock.
 
-    async with _uow(factory, publisher) as uow:
-        await uow.commit()
+    Conflating them is how lookahead bias enters a backtest (ADR-007), and taking
+    `recorded_at` from a wall clock rather than an injected one is what would make
+    the `as_of` bound of ADR-069 unenforceable in replay.
+    """
+    factory = FakeSessionFactory()
+    frozen = datetime(2026, 7, 29, 10, 30, tzinfo=UTC)
+    event = _event()
 
-    assert publisher.calls == 0
+    async with SqlAlchemyUnitOfWork(cast("Any", factory), clock=FrozenClock(frozen)) as uow:
+        uow.add_event(event)
+
+        # Read inside the block: leaving it rolls back, and a rollback discards
+        # staged rows. Asserting afterwards would pass vacuously on an empty
+        # list, which is the shape of a test that checks nothing.
+        row = _staged_rows(factory)[0]
+        assert row.recorded_at == frozen
+        assert row.occurred_at == event.occurred_at
+        assert row.recorded_at != row.occurred_at
+
+
+@pytest.mark.asyncio
+async def test_the_staged_row_carries_aggregate_and_account_scope() -> None:
+    """Per-aggregate ordering (ADR-062) and tenant scope (ADR-004) need these."""
+    factory = FakeSessionFactory()
+    aggregate, account = uuid4(), uuid4()
+
+    async with _uow(factory) as uow:
+        uow.add_event(_event(), aggregate_id=aggregate, account_id=account)
+
+        row = _staged_rows(factory)[0]
+        assert row.aggregate_id == aggregate
+        assert row.account_id == account

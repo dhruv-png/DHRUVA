@@ -26,7 +26,12 @@ from typing import Protocol, Self, runtime_checkable
 from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.invariants import invariant
 
-__all__ = ["SessionKind", "TradingCalendar", "TradingDay", "TradingSession"]
+# `DateRangeLike` is exported although it is only a parameter type. A protocol
+# whose signature names a type nobody can import is a protocol nobody can
+# implement type-safely: an implementer annotating the narrower `DateRange`
+# instead violates contravariance and fails `mypy --strict`, which is how this
+# omission was found.
+__all__ = ["DateRangeLike", "SessionKind", "TradingCalendar", "TradingDay", "TradingSession"]
 
 
 class SessionKind(StrEnum):

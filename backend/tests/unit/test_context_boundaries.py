@@ -247,3 +247,60 @@ def test_find_repo_root_raises_when_no_marker_exists(tmp_path: Path) -> None:
     """Failing loudly beats silently checking the wrong tree."""
     with pytest.raises(FileNotFoundError, match=r"\.dhruva-root"):
         find_repo_root(tmp_path)
+
+
+@pytest.mark.unit
+def test_r9_detects_a_transport_import_in_a_domain_module(synthetic_source: Path) -> None:
+    """A domain module naming Redis is a module nobody can backtest (ADR-068)."""
+    _write(
+        synthetic_source,
+        "dhruva.contexts.trading.domain.order",
+        "import redis\n",
+    )
+
+    violations = check_tree(synthetic_source)
+
+    assert "R9" in _rules(violations)
+    assert "redis" in violations[0].message
+
+
+@pytest.mark.unit
+def test_r9_detects_a_transport_import_in_a_strategy_module(synthetic_source: Path) -> None:
+    """`strategy` does not exist yet, so the rule is proven on a synthetic tree.
+
+    Writing it now means the first real module placed there is already covered,
+    rather than the rule being retrofitted against existing violations.
+    """
+    _write(
+        synthetic_source,
+        "dhruva.contexts.trading.strategy.momentum",
+        "from celery import shared_task\n",
+    )
+
+    violations = check_tree(synthetic_source)
+
+    assert "R9" in _rules(violations)
+
+
+@pytest.mark.unit
+def test_r9_permits_a_transport_in_infrastructure(synthetic_source: Path) -> None:
+    """Adapters are exactly where a transport belongs (ADR-067)."""
+    _write(
+        synthetic_source,
+        "dhruva.contexts.platform.infrastructure.messaging.redis_streams",
+        "import redis\n",
+    )
+
+    assert "R9" not in _rules(check_tree(synthetic_source))
+
+
+@pytest.mark.unit
+def test_r9_permits_the_messaging_ports_in_domain_code(synthetic_source: Path) -> None:
+    """The port is the sanctioned route, so importing it must stay legal."""
+    _write(
+        synthetic_source,
+        "dhruva.contexts.trading.domain.order",
+        "from dhruva.shared.messaging import EventEnvelope\n",
+    )
+
+    assert "R9" not in _rules(check_tree(synthetic_source))

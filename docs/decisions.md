@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**60 decisions — 59 accepted, 1 superseded.** Records are immutable once accepted
+**69 decisions — 68 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -69,6 +69,15 @@ should not have been made gets caught.
 | [ADR-058](ADR-058-integration-tests-use-a-real-database.md) | Integration tests run against real PostgreSQL with TimescaleDB | Accepted |
 | [ADR-059](ADR-059-boundary-rules-r7-and-r8.md) | Boundary rules R7 and R8: the domain imports no persistence, the timeseries path imports no domain | Accepted |
 | [ADR-060](ADR-060-benchmark-budgets-are-enforced-on-the-deployment-target.md) | Benchmark budgets are enforced on the deployment target, not the development machine | Accepted |
+| [ADR-061](ADR-061-event-envelope-is-versioned-and-transport-agnostic.md) | The event envelope is versioned, self-describing and transport-agnostic | Accepted |
+| [ADR-062](ADR-062-at-least-once-delivery-and-ordering-guarantees.md) | At-least-once delivery; per-aggregate ordering live, total deterministic ordering in replay | Accepted |
+| [ADR-063](ADR-063-outbox-relay-is-a-dedicated-process.md) | The outbox relay is a dedicated process, not a Celery beat task | Accepted |
+| [ADR-064](ADR-064-dead-letter-policy.md) | Dead-letter policy: classified failures, bounded retries, explicit replay | Accepted |
+| [ADR-065](ADR-065-run-scoped-idempotency-ledger.md) | Consumers deduplicate through a run-scoped ledger written in their own transaction | Accepted |
+| [ADR-066](ADR-066-scheduling-is-defined-in-trading-day-terms.md) | Scheduled work is defined in trading-day terms, not cron | Accepted |
+| [ADR-067](ADR-067-eventstream-is-a-port-live-and-replay-are-peers.md) | EventStream is a port; live and replay are peer adapters | Accepted |
+| [ADR-068](ADR-068-boundary-rule-r9-no-transport-in-domain-or-strategy.md) | Boundary rule R9: no strategy or domain module imports a transport | Accepted |
+| [ADR-069](ADR-069-replay-is-bitemporally-correct-by-construction.md) | Replay is bitemporally correct by construction: as_of is structural, not a filter | Accepted |
 
 ## Reading order for someone new
 
@@ -95,4 +104,15 @@ approval and a reissued Master Project Plan.
 
 | AR | Date | Change | Plan version |
 |---|---|---|---|
-| — | — | — | — |
+| **AR-001b** | 2026-07-29 | **The Unit of Work stages events into the outbox; it does not publish them.** Amends the scope of ADR-053, which said events publish after commit. `add_event()` now writes an `OutboxRow` inside the caller's transaction; `_publish`, `_discard_events` and the publisher constructor argument are removed. Approved in writing by the Product Owner after an evidence review. | v1.6 (no plan change) |
+
+**Why AR-001b was necessary.** ADR-053's post-commit publication left a window in
+which the transaction was durable and the event existed only in process memory: a
+crash there lost the event while keeping the change that caused it — the
+dual-write problem the outbox exists to solve, sitting beside the outbox. A
+publisher failure also raised out of `commit()` for work that had succeeded, so a
+retrying caller would apply a non-idempotent use case twice.
+
+ADR-053 itself is unmodified, as ADR-027 requires of an accepted record. Its
+transaction-ownership decision stands unchanged; only the event-publication
+clause is superseded, and this row is where that is recorded.

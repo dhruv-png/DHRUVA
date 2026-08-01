@@ -10,6 +10,7 @@ arguments, and bound context.
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 import pytest
 import structlog
@@ -249,5 +250,56 @@ def test_console_format_is_available_for_humans(
     SecretValue(LEAKED)
 
     get_logger("t").info("connecting", api_key=LEAKED)
+
+    assert LEAKED not in capsys.readouterr().err
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("log_format", ["json", "console"])
+def test_logging_an_exception_warns_about_nothing(
+    capsys: pytest.CaptureFixture[str], log_format: Literal["json", "console"]
+) -> None:
+    """``log.exception()`` must be usable, in either format, without a warning.
+
+    structlog's console renderer chooses its exception formatter by *probing for
+    an installed package*: with ``rich`` importable it renders pretty tracebacks,
+    which are incompatible with ``format_exc_info`` in the processor chain, and it
+    says so with a ``UserWarning`` at render time. The whole suite runs under
+    ``filterwarnings = ["error"]``, so that warning is a failure -- and it lands
+    in whichever test logs an exception first, which is nowhere near the cause.
+
+    The reason to pin the formatter is not the warning. It is that the log format
+    would otherwise depend on whether an unrelated dependency had pulled ``rich``
+    into the environment (ADR-032).
+    """
+    configure_logging(
+        level="INFO", log_format=log_format, service="t", version="0", environment="local"
+    )
+    capsys.readouterr()
+
+    try:
+        raise ValueError("something went wrong")  # noqa: TRY301 - the subject of the test
+    except ValueError:
+        get_logger("t").exception("handling failed")
+
+    assert "something went wrong" in capsys.readouterr().err
+
+
+@pytest.mark.unit
+def test_a_secret_inside_a_traceback_is_redacted(capsys: pytest.CaptureFixture[str]) -> None:
+    """ADR-037. A traceback is text like any other, and carries argument values.
+
+    This is why ``format_exc_info`` stays in the chain rather than being deferred
+    to the renderer: it turns the traceback into a string *before* the redactor
+    runs, so the redactor sees everything that will be printed.
+    """
+    configure_logging(level="INFO", log_format="json", service="t", version="0", environment="test")
+    capsys.readouterr()
+    SecretValue(LEAKED)
+
+    try:
+        raise RuntimeError(f"broker rejected {LEAKED}")  # noqa: TRY301 - the subject of the test
+    except RuntimeError:
+        get_logger("t").exception("publish failed")
 
     assert LEAKED not in capsys.readouterr().err

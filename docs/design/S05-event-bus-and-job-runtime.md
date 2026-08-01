@@ -254,7 +254,7 @@ One stream per aggregate type: `dhruva:events:{aggregate_type}`. One consumer
 group per logical consumer: `dhruva:cg:{consumer_name}`.
 
 - `XADD` with an explicit ID derived from `sequence` so the stream is idempotent
-  under relay retry.
+  under relay retry. **Withdrawn during implementation — see the erratum below.**
 - `XREADGROUP` with `NOACK=false`; `XACK` **only after** the consumer's
   transaction commits.
 - `XAUTOCLAIM` reclaims entries idle beyond a threshold — this is crash recovery
@@ -284,6 +284,34 @@ covers every requirement, and the `EventPublisher` port keeps Kafka a
 substitution rather than a rewrite if S20+ volume justifies one.
 
 RabbitMQ is eliminated on replay alone: queues drain, and §11 needs history.
+
+### Erratum (2026-07-31): explicit stream ids were withdrawn
+
+Recorded here rather than edited away, because a design document that quietly
+agrees with the code teaches nobody why the code is what it is.
+
+Redis requires an explicitly supplied entry id to be **strictly greater than the
+top of the stream**. Streams are per aggregate *type* and carry many aggregates,
+while retry is per *message* (ADR-064): sequence 10 fails, 11 and 12 succeed, and
+10 is re-offered behind them. `XADD` with `10-0` against a stream topped by `12-0`
+is refused.
+
+Falling back to a generated id on refusal is worse than useless. A generated id is
+a millisecond timestamp — roughly 1.7e12 — so one fallback puts the stream top
+permanently beyond every future `sequence`, and every subsequent explicit id
+fails. The scheme degrades to generated ids on first use, having added a silent
+mode on the way.
+
+Nothing is lost. Transport-level de-duplication could never have protected a
+consumer's side effect, because it happens in a different transaction from the
+work. ADR-065 puts the ledger write in the *same* transaction as the effect it
+guards, which is strictly stronger, and ADR-062 already states that a duplicate
+is correct behaviour. No accepted ADR asserted the withdrawn scheme; it appeared
+only here.
+
+`XADD *` is what the adapter does, and
+`test_publishing_the_same_envelope_twice_produces_two_entries` asserts the
+consequence rather than leaving it implicit.
 
 ---
 
@@ -575,6 +603,37 @@ PostgreSQL writer, which is a Phase-2 concern, not Stage 1.
 
 ---
 
+## 16b. Trace context is transport metadata, not domain state
+
+**Decided by the Product Owner, 2026-07-31.** Recorded here rather than as a new
+ADR because it settles *where* an existing decision applies rather than changing
+one: ADR-067 already says the envelope carries no transport field, and this is
+that sentence applied to tracing.
+
+**The decision.** Cross-process trace context travels as transport metadata
+alongside the envelope. `EventEnvelope` is not modified.
+
+**Why the alternative was rejected.** Putting a `traceparent` on the envelope
+would make it part of the versioned wire contract (ADR-061) and part of what
+`canonical_json` hashes -- so two runs of the same replay, traced differently,
+would serialise differently and ADR-069's determinism would be gone. A field
+that changes the bytes of an event depending on who was watching is not domain
+state.
+
+**What this costs, stated plainly.** A replay adapter carrying no trace context
+is not a peer of the live adapter *in observability*, though it remains one in
+every behavioural respect the conformance suite asserts. That is the trade: the
+suite tests what a consumer can observe about delivery, and trace context is
+deliberately not something a consumer can observe at all. A consumer that could
+read it could branch on it, and would then be a consumer that cannot run against
+replay -- which is the leak ADR-067 exists to prevent.
+
+**Where it lands in Redis.** A second entry field beside `envelope`, written by
+the publisher and read by the stream adapter, never surfaced through the
+`EventStream` port. Unimplemented at the time of writing; recorded as TD-S05-16.
+
+---
+
 ## 17. Deliberately deferred debt
 
 | ID | Item | Why deferred |
@@ -582,10 +641,19 @@ PostgreSQL writer, which is a Phase-2 concern, not Stage 1.
 | TD-S05-1 | Boundary rule R6 (no float) does not reach serialisation code | Extend R6 or add R10 during implementation; noted so it is not forgotten |
 | TD-S05-2 | No schema registry | §5. The version integer suffices until external consumers exist |
 | TD-S05-3 | Outbox pruning is time-based, not consumer-ack-based | Ack-based needs consumer progress tracking; scheduled prune with a generous window first |
-| TD-S05-4 | The replay engine itself | §15. Port now, engine when a strategy exists |
+| ~~TD-S05-4~~ | ~~The replay engine itself~~ | **Resolved for the adapter.** `OutboxReplayStream` implements `EventStream` over persisted rows and passes the conformance suite unchanged. What remains deferred is a replay *engine* driving a strategy, which belongs to the subsystem that has one |
 | TD-S05-5 | No cross-region or multi-broker fan-out | Out of scope for Stage 1 |
 | TD-S05-6 | DLQ replay is a CLI command, not a UI | UI is S3x |
 | TD-S05-7 | `event_version` columns land nullable; the contract step is deferred | ADR-055 expand/contract; contract once no writer omits them |
+| TD-S05-8 | The publisher issues one `XADD` per envelope rather than pipelining a batch | Per-envelope failure attribution is what the relay needs to retry precisely, and a scheme where that attribution is subtle will one day retry the wrong message. Revisit against the §15 budget, on the deployment target (ADR-060) |
+| TD-S05-9 | `reclaim` is explicit and nothing calls it yet | It is a supervisor's decision about a process that has stopped, and the supervisor arrives with step 8. Until then a dead consumer's held entries wait — a latency cliff, not a loss, because the outbox remains the record |
+| TD-S05-10 | A malformed entry stops the consumer; there is no consumer-side dead letter | ADR-064 covers the producer side. Stopping is deliberate (ADR-022) and the entry stays pending and recoverable, but a consumer-side classification belongs with step 6 |
+| TD-S05-11 | No benchmark covers the Redis publish path | ADR-060 A1 makes the Linux CI benchmark job stop-the-line before S06; measuring on a development machine would record the machine |
+| TD-S05-12 | Ledger retention has no scheduled job | `prune_before` and `prune_run` exist and are tested; nothing calls them until the beat of step 8 exists. The ledger grows with event volume until then, which is a disk concern rather than a correctness one |
+| TD-S05-13 | Celery cannot be added from the implementation sandbox | ADR-032 requires every dependency to be pinned, hash-locked and regenerated with the canonical `uv pip compile` on the deployment target. The sandbox has no route to do that, so step 8's executor is blocked on a dependency change rather than on design |
+| TD-S05-14 | An exception chain does not survive a worker boundary | `BaseException.__reduce__` carries no `__cause__`, and overriding it would make an error whose cause is unpicklable fail to serialise at all. Mitigated by recording the cause as `reason=` context, which is tested; recorded so nobody spends an afternoon looking for the chain |
+| ~~TD-S05-15~~ | ~~No job registry binding names to schedules~~ | **Resolved.** `dhruva.workers.registry` declares jobs as data and installs them from the composition root |
+| TD-S05-16 | Trace context is not yet propagated across the bus | The decision is made (§16b) and the producer half is straightforward, but the *consumer* half has nowhere to attach an extracted context: `EventStream.read` returns a batch, and the port deliberately exposes no per-delivery scope. Completing it needs either a port addition -- an ADR-level change -- or the consumer runtime that would own the scope, which S05 does not build. Implementing only the producer half would leave a field written and never read |
 
 ---
 

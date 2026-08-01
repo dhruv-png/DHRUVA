@@ -26,11 +26,13 @@ import os
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 
 if TYPE_CHECKING:
+    from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 #: Set by CI, or by a developer with Docker available. When absent the whole
@@ -51,6 +53,26 @@ REQUIRE_DATABASE_ENV = "DHRUVA_REQUIRE_DATABASE"
 #: plain PostgreSQL 16. What is not negotiable is that the database is real
 #: PostgreSQL (ADR-058).
 POSTGRES_IMAGE = "timescale/timescaledb:2.17.2-pg16"
+
+#: Set by CI, or by a developer with a Redis they would rather reuse. Same
+#: contract as the database variable above: supplied wins, container is the
+#: fallback.
+REDIS_URL_ENV = "DHRUVA_TEST_REDIS_URL"
+
+#: The Redis counterpart of ``DHRUVA_REQUIRE_DATABASE``. Under canonical
+#: validation a skipped transport suite proves nothing about the transport.
+REQUIRE_REDIS_ENV = "DHRUVA_REQUIRE_REDIS"
+
+#: Pinned rather than ``redis:latest``, for the same reason every other version
+#: in this project is pinned (ADR-032). 7.4 is what the deployment target runs;
+#: the adapter is written to also read Redis 6.2's shorter ``XAUTOCLAIM`` reply,
+#: and a unit test covers that shape because pinning here means this suite never
+#: sees it.
+REDIS_IMAGE = "redis:7.4.1-alpine"
+
+#: The port inside the container. Named rather than read off the container
+#: object, so the harness does not depend on a testcontainers attribute name.
+REDIS_PORT = 6379
 
 
 def _docker_is_available() -> bool:
@@ -93,13 +115,42 @@ def database_is_available() -> bool:
     return bool(os.environ.get(DATABASE_URL_ENV)) or _docker_is_available()
 
 
+def redis_is_available() -> bool:
+    """Report whether the suite has any way to reach a Redis."""
+    return bool(os.environ.get(REDIS_URL_ENV)) or _docker_is_available()
+
+
 _SKIP_REASON = (
     f"integration tests require PostgreSQL with TimescaleDB. Set {DATABASE_URL_ENV}, "
     f"or start Docker so the container fixture can provision one. "
     f"No SQLite substitute is permitted (ADR-058)."
 )
 
+_REDIS_SKIP_REASON = (
+    f"transport integration tests require a real Redis. Set {REDIS_URL_ENV}, or start "
+    f"Docker so the container fixture can provision one. No fake substitute is "
+    f"permitted here: a fake cannot have a consumer group (ADR-067)."
+)
+
 requires_database = pytest.mark.skipif(not database_is_available(), reason=_SKIP_REASON)
+requires_redis = pytest.mark.skipif(not redis_is_available(), reason=_REDIS_SKIP_REASON)
+
+#: Fixtures whose presence means a test genuinely needs PostgreSQL.
+_DATABASE_FIXTURES = frozenset(
+    {
+        "committed_session",
+        "connection",
+        "database_url",
+        "engine",
+        "migrated",
+        "session",
+        "timescale_available",
+        "truncated_after_test",
+    }
+)
+
+#: Fixtures whose presence means a test genuinely needs Redis.
+_REDIS_FIXTURES = frozenset({"namespace", "redis_client", "redis_url"})
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -120,14 +171,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     selected = [i for i in items if "tests/integration/" in i.nodeid.replace("\\", "/")]
 
+    needs_database = [i for i in selected if _fixtures(i) & _DATABASE_FIXTURES]
+    needs_redis = [i for i in selected if _fixtures(i) & _REDIS_FIXTURES]
+
     # Under canonical validation, refuse to skip. A run whose evidence consists
     # of twelve SKIPPED lines proves nothing, and the failure is far cheaper to
     # diagnose here -- with the reason attached -- than in a log file three days
     # later.
-    if selected and os.environ.get(REQUIRE_DATABASE_ENV) and not database_is_available():
+    if needs_database and os.environ.get(REQUIRE_DATABASE_ENV) and not database_is_available():
         raise pytest.UsageError(
             f"{REQUIRE_DATABASE_ENV} is set, so the integration suite must run, "
             f"but no database is reachable. {_SKIP_REASON}"
+        )
+    if needs_redis and os.environ.get(REQUIRE_REDIS_ENV) and not redis_is_available():
+        raise pytest.UsageError(
+            f"{REQUIRE_REDIS_ENV} is set, so the transport suite must run, "
+            f"but no Redis is reachable. {_REDIS_SKIP_REASON}"
         )
 
     # An async test with no asyncio marker is silently not run in strict mode, so
@@ -147,9 +206,25 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             "pytestmark. Offending tests: " + ", ".join(unmarked)
         )
 
+    # Applied per dependency rather than to the directory. Marking every
+    # integration test as requiring PostgreSQL was correct while PostgreSQL was
+    # the only external dependency; it stopped being correct the moment a
+    # transport suite arrived, because a Redis test would then have skipped on a
+    # machine with Redis and no database -- and, under
+    # ``DHRUVA_REQUIRE_DATABASE``, refused to collect for wanting something it
+    # never touches.
     for item in selected:
         item.add_marker(pytest.mark.integration)
-        item.add_marker(requires_database)
+        uses = _fixtures(item)
+        if uses & _DATABASE_FIXTURES:
+            item.add_marker(requires_database)
+        if uses & _REDIS_FIXTURES:
+            item.add_marker(requires_redis)
+
+
+def _fixtures(item: pytest.Item) -> frozenset[str]:
+    """Return the fixture names an item requests, or an empty set if it has none."""
+    return frozenset(getattr(item, "fixturenames", ()))
 
 
 @pytest.fixture(scope="session")
@@ -299,7 +374,9 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # table to the schema and forgetting it here is how order-dependence
             # gets reintroduced: the row survives into the next test, which then
             # fails for a reason unrelated to its subject.
-            await cleanup.execute(text("TRUNCATE daily_snapshot, outbox, example_tick CASCADE"))
+            await cleanup.execute(
+                text("TRUNCATE daily_snapshot, outbox, example_tick, processed_event CASCADE")
+            )
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -331,6 +408,72 @@ async def committed_session(
         yield bound
     finally:
         await bound.close()
+
+
+# --------------------------------------------------------------------------- #
+# Redis (ADR-002, ADR-067)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    """Provide a Redis URL, starting a container when one is not supplied.
+
+    No fake, and no in-process substitute, for the same reason ADR-058 refuses
+    SQLite. The behaviour under test *is* the broker's: consumer groups, pending
+    entries, ``XAUTOCLAIM``, capped trimming. A stand-in would be asserting that
+    the adapter calls the methods it calls.
+
+    ``redislite`` was tried and withdrawn -- it publishes no Windows wheel, and a
+    harness that only starts on one platform splits the suite in two.
+    """
+    supplied = os.environ.get(REDIS_URL_ENV)
+    if supplied:
+        yield supplied
+        return
+
+    from testcontainers.redis import RedisContainer  # noqa: PLC0415 - optional dependency
+
+    with RedisContainer(REDIS_IMAGE) as container:
+        host = container.get_container_host_ip()
+        yield f"redis://{host}:{container.get_exposed_port(REDIS_PORT)}/0"
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def redis_client(redis_url: str) -> AsyncIterator[Redis]:
+    """Open a client on the session loop and close it at teardown.
+
+    Function-scoped deliberately. A session-scoped pool outlives the tests that
+    fail, and a connection left open by a failing test then produces its
+    ``ResourceWarning`` inside whichever unrelated test triggers collection --
+    which under ``filterwarnings = ["error"]`` is a failure that moves around
+    between runs.
+    """
+    from redis.asyncio import Redis as AsyncRedis  # noqa: PLC0415 - test-only import
+
+    client: Redis = AsyncRedis.from_url(redis_url)
+    try:
+        yield client
+    finally:
+        await client.aclose()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def namespace(redis_client: Redis) -> AsyncIterator[str]:
+    """Give each test its own key prefix, and delete it afterwards.
+
+    Isolation without ``FLUSHALL``: the URL may point at a Redis somebody else is
+    using, and a harness that empties a developer's cache to run its own tests
+    will be run once. A prefix per test also means these tests are safe to run
+    in parallel, which the database suite cannot be.
+    """
+    prefix = f"dhruvatest:{uuid4().hex[:12]}"
+    try:
+        yield prefix
+    finally:
+        keys = [key async for key in redis_client.scan_iter(match=f"{prefix}*")]
+        if keys:
+            await redis_client.delete(*keys)
 
 
 def export_database_settings(url: str) -> None:

@@ -23,6 +23,7 @@ from __future__ import annotations
 from dhruva.shared.time.clock import Clock, FrozenClock, SystemClock
 from dhruva.shared.time.ranges import DateRange, TimeRange
 from dhruva.shared.time.trading_day import (
+    DateRangeLike,
     SessionKind,
     TradingCalendar,
     TradingDay,
@@ -32,6 +33,7 @@ from dhruva.shared.time.trading_day import (
 __all__ = [
     "Clock",
     "DateRange",
+    "DateRangeLike",
     "FrozenClock",
     "SessionKind",
     "SystemClock",

@@ -125,10 +125,27 @@ def configure_logging(  # noqa: PLR0913 - six independent, keyword-only settings
         make_redactor(scan_values=scan_values),
     ]
 
+    # `exception_formatter` is pinned rather than left to default. structlog picks
+    # its default by *probing for an installed package*: with `rich` importable it
+    # renders pretty tracebacks, and pretty rendering is incompatible with
+    # `format_exc_info` above -- so it emits a UserWarning on the first
+    # `log.exception()` call, which under `filterwarnings = ["error"]` is a test
+    # failure in whichever test happens to log an exception first.
+    #
+    # The reason to pin it is not the warning. It is that the log format would
+    # otherwise depend on whether some unrelated dependency had pulled `rich` into
+    # the environment, which is precisely the environment-dependent behaviour
+    # ADR-032 exists to remove. `format_exc_info` stays: it renders the traceback
+    # to a string *before* the redactor runs, and ADR-037 requires redaction to
+    # see everything that will be printed -- a traceback can carry a credential in
+    # a local variable's repr.
     renderer: Any = (
         structlog.processors.JSONRenderer(sort_keys=True)
         if log_format == "json"
-        else structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty())
+        else structlog.dev.ConsoleRenderer(
+            colors=sys.stderr.isatty(),
+            exception_formatter=structlog.dev.plain_traceback,
+        )
     )
 
     structlog.configure(

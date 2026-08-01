@@ -56,6 +56,8 @@ dependencies = [
   # exactly the kind of environment-dependent behaviour reproducible builds
   # (ADR-032) exist to remove, so it is installed everywhere.
   "tzdata==2025.2",
+  "redis==6.4.0",
+  "celery==5.5.3",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +71,9 @@ tracing = [
 [project.scripts]
 dhruva-check-boundaries = "dhruva.tooling.boundaries:main"
 dhruva-adr-guard = "dhruva.tooling.adr_guard:main"
+# An operator tool and a composition root (ADR-064): it builds an engine from
+# settings, which nothing under `tooling` is permitted to do.
+dhruva-dlq = "dhruva.workers.dlq:main"
 
 [dependency-groups]
 dev = [
@@ -82,7 +87,7 @@ dev = [
   "pip-audit==2.9.0",
   "pytest-benchmark==5.1.0",
   "httpx==0.28.1",
-  "testcontainers[postgres]==4.9.1",
+  "testcontainers[postgres,redis]==4.9.1",
   "pytest-asyncio==1.2.0",
 ]
 
@@ -196,6 +201,17 @@ enable_error_code = [
 # whole project.
 [[tool.mypy.overrides]]
 module = ["testcontainers.*", "docker.*"]
+ignore_missing_imports = true
+
+# Celery ships no `py.typed` marker, so every symbol imported from it is `Any`.
+# Unlike the two above this is a *runtime* dependency, and the containment is
+# what makes it acceptable: `beat.py` and `celery_app.py` are the only modules
+# that import it, both are in the `workers` composition root, and boundary rule
+# R9 (ADR-068) fails the build if anything in a domain or strategy package does.
+# The decisions themselves are elsewhere and are checked strictly: scheduling in
+# `contexts/platform/domain/scheduling`, configuration in `shared/config`.
+[[tool.mypy.overrides]]
+module = ["celery.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

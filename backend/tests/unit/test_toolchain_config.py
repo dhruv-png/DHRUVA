@@ -130,6 +130,13 @@ DEPENDENCY_PROVENANCE: dict[str, str] = {
     "asyncpg": "S04 - the async PostgreSQL driver SQLAlchemy dispatches to",
     "tzdata": "S04 - zoneinfo has no system tz database on Windows, so "
     "`timezone = UTC` in alembic.ini cannot resolve without it (ADR-032)",
+    "redis": "S05 - the Redis Streams client (ADR-002), confined to the messaging "
+    "adapter by boundary rule R9 (ADR-068). A runtime dependency rather than a "
+    "development one: the relay publishes through it in production",
+    "celery": (
+        "S05 - asynchronous job execution and scheduling runtime, "
+        "confined to the infrastructure execution adapters."
+    ),
 }
 
 
@@ -164,6 +171,37 @@ def test_the_tracing_sdk_is_an_extra_not_a_library_dependency(
 
 
 @pytest.mark.unit
+def test_the_deployment_lockfile_contains_every_runtime_dependency(
+    repo_root: Path, pyproject: dict[str, Any]
+) -> None:
+    """`requirements.lock` is what gets installed, and it must not drift from pyproject.
+
+    Two lockfiles are maintained deliberately. `uv.lock` is uv's own resolution
+    and is updated by `uv add` / `uv lock`; `requirements.lock` is the
+    hash-pinned artefact a deployment installs, and is produced by the
+    `uv pip compile` command recorded in its own header. **`uv add` does not
+    update the second one.**
+
+    Nothing caught that before this test. The existing lockfile check asserts
+    only that hashes are present, so a dependency added with `uv add` produced a
+    green suite, a satisfied provenance map, and a deployment artefact that would
+    not have installed the new package at all -- discovered on the deployment
+    target rather than here.
+    """
+    lock = (repo_root / "backend" / "requirements.lock").read_text(encoding="utf-8")
+    pinned = {line.split("==")[0].strip() for line in lock.splitlines() if "==" in line}
+    declared = {spec.split("==")[0] for spec in pyproject["project"]["dependencies"]}
+
+    missing = sorted(declared - pinned)
+    assert not missing, (
+        f"{missing} are declared in pyproject.toml but absent from requirements.lock. "
+        f"`uv add` updates uv.lock only; regenerate both with the `uv pip compile` "
+        f"commands recorded in the headers of requirements.lock and "
+        f"requirements-dev.lock (ADR-032)."
+    )
+
+
+@pytest.mark.unit
 def test_lockfiles_are_committed_and_hash_pinned(repo_root: Path) -> None:
     """ADR-032. A lockfile without hashes does not pin what it claims to pin."""
     for name in ("requirements.lock", "requirements-dev.lock"):
@@ -194,6 +232,10 @@ def test_console_scripts_expose_the_architectural_controls(pyproject: dict[str, 
     scripts = pyproject["project"]["scripts"]
     assert scripts["dhruva-check-boundaries"] == "dhruva.tooling.boundaries:main"
     assert scripts["dhruva-adr-guard"] == "dhruva.tooling.adr_guard:main"
+    # The dead-letter command is an operator's tool and a composition root
+    # (ADR-064): it may build an engine from settings, which nothing in
+    # `tooling` is allowed to do.
+    assert scripts["dhruva-dlq"] == "dhruva.workers.dlq:main"
 
 
 @pytest.mark.unit

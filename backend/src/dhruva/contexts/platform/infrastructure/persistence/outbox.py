@@ -43,7 +43,7 @@ publishes to.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -52,6 +52,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from dhruva.contexts.platform.infrastructure.persistence.models import Base
+from dhruva.shared.messaging import encode_value
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,6 +80,14 @@ class OutboxRow(Base):
     __table_args__ = (
         Index("ix_outbox_unpublished", "published_at", "next_attempt_at"),
         Index("ix_outbox_aggregate", "aggregate_id", "sequence"),
+        Index(
+            "ix_outbox_claimable",
+            "next_attempt_at",
+            "claimed_at",
+            postgresql_where=text("published_at IS NULL AND dead_lettered_at IS NULL"),
+        ),
+        Index("ix_outbox_causation", "causation_id"),
+        Index("ix_outbox_correlation", "correlation_id"),
     )
 
     sequence: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -86,6 +95,10 @@ class OutboxRow(Base):
         postgresql.UUID(as_uuid=True), nullable=False, unique=True
     )
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Added by migration 0005. The routing key of ADR-062: a stream is chosen by
+    # aggregate type, so a derived value would route events to a stream named
+    # after a guess. The producer states it; infrastructure never infers it.
+    aggregate_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     aggregate_id: Mapped[UUID | None] = mapped_column(postgresql.UUID(as_uuid=True), nullable=True)
     account_id: Mapped[UUID | None] = mapped_column(postgresql.UUID(as_uuid=True), nullable=True)
     payload: Mapped[str] = mapped_column(Text, nullable=False)
@@ -100,6 +113,39 @@ class OutboxRow(Base):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # The remaining three fields ADR-002 fixed in Phase 0, added by migration
+    # 0003. Nullable during expand (ADR-055): existing rows have no value and
+    # inventing one would fabricate provenance. The contract step that makes
+    # them NOT NULL is TD-S05-7.
+    #
+    # `event_version` defaults to 1 because every row written before this
+    # migration is by definition version 1 of its schema -- a fact, not a guess.
+    # The identifiers take no default: a fabricated correlation asserts a
+    # relationship nobody observed, which is worse than an absent one.
+    event_version: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, server_default=text("1")
+    )
+    correlation_id: Mapped[UUID | None] = mapped_column(
+        postgresql.UUID(as_uuid=True), nullable=True
+    )
+    causation_id: Mapped[UUID | None] = mapped_column(postgresql.UUID(as_uuid=True), nullable=True)
+
+    # Lease and dead-letter state, added by migration 0004.
+    #
+    # The relay stamps a lease and commits before publishing, so a row is
+    # reserved without a database lock being held across a network call
+    # (ADR-063). A relay that dies mid-publish leaves rows invisible until the
+    # lease expires -- a latency cliff, not a loss.
+    #
+    # Dead letters stay in this table rather than moving to a second one, so a
+    # dead-lettered event keeps its identity, attempt history and last error
+    # together, and `dead_lettered_at IS NOT NULL` is the whole query (ADR-064).
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[UUID | None] = mapped_column(postgresql.UUID(as_uuid=True), nullable=True)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class OutboxWriter:
@@ -126,6 +172,7 @@ class OutboxWriter:
         *,
         recorded_at: datetime,
         aggregate_id: UUID | None = None,
+        aggregate_type: str | None = None,
         account_id: UUID | None = None,
     ) -> None:
         """Write the event row into the current transaction.
@@ -142,6 +189,10 @@ class OutboxWriter:
         aggregate_id
             Used for per-aggregate ordering. Optional, because not every event
             belongs to an aggregate.
+        aggregate_type
+            Which kind of aggregate, and the stream routing key (ADR-062). Stated
+            by the producer rather than derived: a value that determines routing
+            must not be inferred from a naming convention.
         account_id
             Present from day one so no row is retrofitted at S44 (ADR-004).
         """
@@ -150,6 +201,7 @@ class OutboxWriter:
                 event_id=event.event_id,
                 event_type=event.event_type,
                 aggregate_id=aggregate_id,
+                aggregate_type=aggregate_type,
                 account_id=account_id,
                 payload=self._serialise(event),
                 occurred_at=event.occurred_at,
@@ -163,27 +215,33 @@ class OutboxWriter:
 
 
 def _default_payload(event: DomainEvent) -> str:
-    """Serialise an event's fields to JSON.
+    """Serialise an event's fields with the versioned envelope codecs (ADR-061).
 
-    Deliberately simple, and deliberately not a general object serialiser. S05
-    replaces this with the versioned envelope encoder once the event schema
-    matters for compatibility; until then a readable JSON body is worth more than
-    a clever one.
+    S05 replaced the placeholder this used to be, and the replacement was overdue
+    in a way the isolated tests could not show.
+
+    The placeholder wrote ``datetime`` and ``UUID`` as bare strings and fell back
+    to ``str()`` for everything else -- while the read side, in the relay, decodes
+    with :func:`decode_value`, which expects the discriminated form. Both sides
+    were internally consistent and every test of each passed. What actually
+    happened was that a ``Decimal`` committed by a use case arrived at a consumer
+    as a string: the same characters, a different type, and no error anywhere.
+    A consumer would then have added it to a number, or compared it to one, and
+    been wrong about a position with nothing to report. Found by the end-to-end
+    test, which is the only test that could have found it.
+
+    :func:`encode_value` refuses a type it has no codec for rather than calling
+    ``str()`` on it, which converts that whole class of silent loss into a loud
+    failure at the moment of writing (ADR-061). It also refuses ``float``
+    outright, so a value that should have been ``Money`` cannot enter the wire
+    format by the back door.
+
+    ``event_id`` is excluded because it is a column of its own; storing it twice
+    invites the two copies to disagree.
     """
     fields = {
-        name: _encode(getattr(event, name))
+        name: encode_value(getattr(event, name))
         for name in getattr(event, "__dataclass_fields__", {})
         if name != "event_id"
     }
-    return json.dumps(fields, sort_keys=True)
-
-
-def _encode(value: object) -> object:
-    """Convert a field to something JSON can carry, without losing precision."""
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat()
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, str | int | bool | type(None)):
-        return value
-    return str(value)
+    return json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

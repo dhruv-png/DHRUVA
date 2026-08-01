@@ -11,8 +11,12 @@ Four behaviours are load-bearing and each is tested:
 * **Nesting is refused, not joined.** Joining an outer transaction would make an
   inner ``commit()`` a no-op that appears to succeed, and the caller could not
   tell.
-* **Events publish after commit, never inside it.** Publishing inside means a
-  consumer can observe an event for a transaction that later rolls back.
+* **Events are staged into the outbox, inside the transaction** (AR-001b). They
+  are not held in memory and published after commit: the window between a commit
+  returning and an in-process publish completing is a crash window in which the
+  change is durable and the event is not. Staging into the outbox closes it --
+  the event row commits or rolls back with the work that caused it, and the S05
+  relay delivers it afterwards from durable state.
 * **The session is always disposed**, on every path including an exception during
   commit itself.
 """
@@ -21,30 +25,21 @@ from __future__ import annotations
 
 from types import TracebackType
 from typing import TYPE_CHECKING, Self
+from uuid import UUID
 
+from dhruva.contexts.platform.infrastructure.persistence.outbox import OutboxWriter
 from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.logging import get_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from dhruva.shared.events import DomainEvent
+    from dhruva.shared.time import Clock
 
 __all__ = ["SqlAlchemyUnitOfWork"]
 
 _log = get_logger(__name__)
-
-
-async def _discard_events(events: Sequence[DomainEvent]) -> None:
-    """Default publisher: record and drop.
-
-    Used until S05 provides a real bus. Logs at debug so that events raised
-    before the bus exists are visible in development rather than silently lost.
-    """
-    if events:
-        _log.debug("domain events discarded; no publisher configured", count=len(events))
 
 
 class SqlAlchemyUnitOfWork:
@@ -60,12 +55,13 @@ class SqlAlchemyUnitOfWork:
             await uow.commit()
     """
 
-    __slots__ = ("_committed", "_events", "_publish", "_session", "_session_factory")
+    __slots__ = ("_clock", "_committed", "_events", "_session", "_session_factory")
 
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
-        publish: Callable[[Sequence[DomainEvent]], Awaitable[None]] | None = None,
+        *,
+        clock: Clock | None = None,
     ) -> None:
         """Create a Unit of Work bound to a session factory.
 
@@ -74,12 +70,17 @@ class SqlAlchemyUnitOfWork:
         session_factory
             Produces one session per Unit of Work. Never shared across tasks
             (ADR-056).
-        publish
-            Called with the collected events **after** a successful commit.
-            Defaults to discarding them, which is correct until S05.
+        clock
+            Supplies ``recorded_at`` when an event is staged -- when the platform
+            *learned* a fact, as distinct from when it became true (ADR-007).
+            Injected rather than read from the wall clock (ADR-011) so a replay
+            controls it, which is what makes the ``as_of`` bound of ADR-069
+            enforceable. Defaults to :class:`SystemClock`.
         """
+        from dhruva.shared.time import SystemClock  # noqa: PLC0415 - avoids an import cycle
+
         self._session_factory = session_factory
-        self._publish = publish or _discard_events
+        self._clock = clock or SystemClock()
         self._session: AsyncSession | None = None
         self._events: list[DomainEvent] = []
         self._committed = False
@@ -100,12 +101,59 @@ class SqlAlchemyUnitOfWork:
             raise InvariantViolation(msg)
         return self._session
 
-    def add_event(self, event: DomainEvent) -> None:
-        """Stage a domain event for publication after commit.
+    def add_event(
+        self,
+        event: DomainEvent,
+        *,
+        aggregate_id: UUID | None = None,
+        aggregate_type: str | None = None,
+        account_id: UUID | None = None,
+    ) -> None:
+        """Stage a domain event into the outbox, inside this transaction.
 
-        Staged rather than published, because an event published inside the
-        transaction can be observed for work that later rolls back.
+        The event row is written to the session, so it commits or rolls back with
+        the aggregate change that caused it. Nothing is published here and
+        nothing is published at commit; the S05 relay reads the outbox and
+        delivers from durable state.
+
+        Parameters
+        ----------
+        event
+            The fact that occurred. Its ``occurred_at`` is when it became true;
+            ``recorded_at`` is taken from the injected clock, because those two
+            differ whenever data arrives late and conflating them is how
+            lookahead bias enters a backtest (ADR-007).
+        aggregate_id
+            Which aggregate this concerns, used for per-aggregate ordering
+            (ADR-062). Optional: not every event belongs to an aggregate.
+        aggregate_type
+            Which kind of aggregate. The stream routing key (ADR-062), stated
+            rather than derived -- a routing value inferred from a naming
+            convention sends events to a stream named after a guess.
+        account_id
+            Tenant scope, present from day one so no row is retrofitted (ADR-004).
+
+        Notes
+        -----
+        This method previously appended to an in-memory list which was published
+        after ``commit()`` returned. That left a window in which the transaction
+        was durable and the event existed only in process memory, so a crash lost
+        it -- the dual-write problem the outbox exists to solve, sitting beside
+        the outbox. AR-001b closed it by making this method write to the outbox
+        rather than to a list.
+
+        The rollback semantics callers relied on are unchanged, and now hold more
+        strongly: they are a property of the transaction rather than of a
+        ``finally`` block that clears a list.
         """
+        writer = OutboxWriter(self.session)
+        writer.stage(
+            event,
+            recorded_at=self._clock.now(),
+            aggregate_id=aggregate_id,
+            aggregate_type=aggregate_type,
+            account_id=account_id,
+        )
         self._events.append(event)
 
     @property
@@ -152,21 +200,22 @@ class SqlAlchemyUnitOfWork:
             self._committed = False
 
     async def commit(self) -> None:
-        """Commit the transaction, then publish staged events.
+        """Commit the transaction, including any staged outbox rows.
 
         Notes
         -----
-        Events publish only after the commit returns. If the commit raises, the
-        events are discarded by ``__aexit__`` along with everything else -- which
-        is the point: nothing observable happened, so nothing should be observed.
+        Nothing is published here. The staged events are already rows in this
+        transaction, so committing makes them durable and the relay delivers them
+        afterwards. If the commit raises, the rows go with it.
+
+        This method used to publish in-process after the commit returned. A
+        publisher failure then surfaced as an exception from ``commit()`` for work
+        that had actually succeeded, and a caller that retried would apply the use
+        case twice. Removing the publication removes that failure mode with it.
         """
         await self.session.commit()
         self._committed = True
-
-        events = tuple(self._events)
         self._events.clear()
-        if events:
-            await self._publish(events)
 
     async def rollback(self) -> None:
         """Discard everything staged in this transaction, including events."""

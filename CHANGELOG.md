@@ -17,6 +17,156 @@ capital (ADR-026, ADR-029).
 
 Nothing yet.
 
+## [0.5.0] — 2026-08-01 — S05 Event Bus & Job Runtime
+
+S04 made events durable. This release makes them arrive — and makes a backtest
+receive them the same way production does. The outbox now has a relay, a
+transport, a dead-letter queue an operator can act on, a consumer idempotency
+ledger and a job runtime; beside the live transport sits a replay adapter
+reading the same rows, and both pass one unchanged conformance suite.
+
+Trace propagation is deferred as TD-S05-16 with its reason recorded: the
+consumer half has nowhere to attach an extracted context without a port
+addition, which is an ADR-level change.
+
+### Added
+
+- **The Redis Streams adapter.** `RedisStreamPublisher` and `RedisEventStream`,
+  the only code in the repository that knows what a stream id is. Deliberately
+  thin: no retry, leasing, routing, ordering or dead-letter behaviour, all of
+  which already live in the relay and in the domain policy.
+- **A transport conformance suite.** Fourteen assertions written in the ports'
+  vocabulary and nothing else, which every adapter must pass unchanged. ADR-067
+  says live delivery and replay are peers; this is what makes that claim
+  testable rather than aspirational. `InMemoryBus` is the second implementation
+  that turns the suite from a description into a contract.
+- **End-to-end coverage.** A fact committed by a use case, drained by the relay,
+  and read by a consumer off a real Redis — the only tests that exercise the
+  composition rather than the parts.
+- **The consumer idempotency ledger** (ADR-065) and migration `0006`.
+  `processed_event`, keyed `(consumer_group, event_id, run_id)`, written in the
+  consumer's own transaction so a duplicate rolls the side effect back with it.
+  Deliberately offers no `already_processed()` query: a check followed by a
+  write is two statements with a gap, and two workers in one group can both
+  pass the check before either writes.
+- **Dead-letter inspection and explicit re-queue** (ADR-064), with the
+  `dhruva-dlq` command. A published event and an event still being retried are
+  both refused, each for a reason that would otherwise be discovered in
+  production. Re-queueing without `--yes` is refused: the failure mode of a
+  bulk re-queue is an outage.
+- **Calendar-aware scheduling** (ADR-066). `TradingDaySchedule` declares a
+  session-relative moment — `market_open + 5min`, `market_close - 15min` — and
+  the calendar decides whether the day qualifies and what instant that is. A
+  cron expression is wrong on every holiday and is a string no test can
+  contradict; this is asserted against a weekend, a declared Monday holiday, a
+  shortened session and Muhurat without waiting for any of them. Offsets are
+  capped at a day, because beyond that the moment belongs to a different session
+  than the one it names.
+- **The Celery beat adapter.** `TradingDayBeatSchedule` answers beat's
+  `is_due(last_run_at)` by delegating to the domain policy — no part of *when*
+  lives in it, which is what makes ADR-066's "replacing Celery is an adapter
+  swap" true rather than aspirational. The sleep is capped at five minutes so a
+  beat holding a stale calendar re-evaluates; the next firing is sought after
+  `last_run_at` rather than after now, so a restarted worker catches a run it
+  slept through.
+- **Replay as an `EventStream`** (ADR-069). `OutboxReplayStream` reads persisted
+  events as a peer of the Redis adapter, and needed no migration: the relay
+  already copies the outbox ordinal into the envelope and Redis stores it
+  verbatim, so both transports report the same `sequence` by construction. The
+  `as_of` bound is a constructor parameter enforced in the `WHERE` clause, so a
+  replay is *incapable* of returning an event the platform had not yet learned —
+  a filter a caller may forget is not protection. Acknowledgement writes nothing:
+  a replay reads history and must not edit the record it is reading.
+- **The Celery job runtime.** An application built from a settings slice rather
+  than imported as a module-level global (ADR-031); a composition root sharing
+  the API's one startup sequence, so worker records carry the same identity and
+  the same redaction processor; `register_job`, which turns a plain function
+  into a task so job modules import no Celery and are testable without a broker;
+  and a declarative registry that refuses a duplicate name, a malformed name,
+  and a scheduled job with no calendar to resolve it against.
+- **A test that every platform error survives the worker boundary**, required by
+  ADR-066 by name. The taxonomy is discovered by walking the subclass tree, so a
+  new error class is covered the moment it exists rather than when someone
+  remembers to add it to a list.
+- **Redis in the integration harness**, with `DHRUVA_TEST_REDIS_URL` and
+  `DHRUVA_REQUIRE_REDIS` mirroring the database variables. Integration tests are
+  now marked from the fixtures they request, so a Redis test no longer demands a
+  database it never touches.
+
+### Fixed
+
+- **The outbox wrote payloads with a different encoder than the relay reads
+  them with.** A `Decimal` committed by a producer arrived at a consumer as a
+  string: same characters, different type, no error anywhere. S05 had wired the
+  envelope codecs into the read path only. Found by the first end-to-end test,
+  because both sides were internally consistent and every isolated test passed.
+- **`Celery.task()` leaks a job into every application built afterwards.** Its
+  `shared=True` default appends a finalizer to a *module-level* list — the same
+  mechanism `shared_task` uses — so a job registered on one application is
+  re-created on every application finalized after it. That is the ambient global
+  `set_as_current=False` was chosen to avoid, arriving through a different door.
+  Found by the test asserting two applications do not share a registry.
+- **The retry policy raised `OverflowError` at 1024 attempts.** Reachable: the
+  count is read from a database column and a re-queued dead letter carries its
+  attempts intact. Found by a property test on the policy's first day of having
+  any unit tests at all.
+- **`log.exception()` emitted a warning that failed an unrelated test.** The
+  console renderer chose its exception formatter by probing for an installed
+  package, so the log format depended on whether something had pulled `rich`
+  into the environment (ADR-032).
+- **The ADR corpus test asserted a frozen range** and had been red on this
+  branch since ADR-060 was recorded. It now cross-checks the corpus against
+  `docs/decisions.md`, which stays true as the corpus grows.
+- **`__version__` was a release behind.** It read `0.3.0` while `v0.4.0` was
+  tagged and released, so a deployed S04 build reported the previous version at
+  `/health` and in its distribution metadata. Every gate stayed green: the
+  existing assertions ask whether the version is *well-formed*, and all of them
+  are true of `0.3.0`. A test now compares it against the newest released
+  changelog heading — against the changelog rather than a git tag, so it fails
+  in CI on the commit that forgets rather than later on whichever machine tags.
+- **The deployment lockfiles had silently drifted from `pyproject.toml`.**
+  `uv add` updates `uv.lock` only, so celery was declared, provenance-mapped and
+  resolved — while `requirements.lock`, the hash-pinned artefact a deployment
+  installs, did not mention it. The suite was green throughout: the existing
+  check asserts only that hashes are present, which is true of a lockfile missing
+  half its dependencies. It would have been found on the deployment target, by a
+  worker that would not start. There is now a test that compares the two.
+- **`mypy --strict` had twenty-two errors** in the relay's integration tests and
+  had been red since that file landed. The whole tree checks clean.
+
+### Changed
+
+- **The conformance suite is scoped to the port.** Running it against replay
+  failed one assertion — that a redelivery is preserved — and failed it for a
+  correct reason: the outbox refuses a duplicate `event_id`, because it records
+  what happened rather than what was delivered. Redelivery is what ADR-062
+  promises of a *live* transport and what ADR-065's ledger absorbs; it is not a
+  property of `EventStream`. The assertion moved to the Redis tests. The suite
+  now asserts less, and what it asserts is true of every adapter rather than of
+  most of them — the difference between a contract and a description of the
+  first implementation.
+
+- **Trace context is transport metadata, not domain state** (design §16b,
+  decided by the Product Owner). `EventEnvelope` is unchanged. Putting a
+  `traceparent` on it would make tracing part of the versioned wire contract and
+  part of what `canonical_json` hashes — so two runs of the same replay, traced
+  differently, would serialise differently and ADR-069's determinism would be
+  gone. A field that changes an event's bytes depending on who was watching is
+  not domain state.
+- **`DateRangeLike` is now exported** from `dhruva.shared.time`. It is a
+  parameter type in the `TradingCalendar` protocol and was not importable, so an
+  implementer annotating the narrower `DateRange` violated contravariance and
+  failed `mypy --strict`. Found by writing the first calendar implementation
+  outside the package that defines the port — which is the only way that
+  omission shows.
+
+- **Explicit Redis stream ids were withdrawn** from the S05 design (§7 erratum).
+  Redis requires an explicit entry id to exceed the top of the stream, and retry
+  is per message while a stream is per aggregate type — so a retried sequence
+  arrives behind later ones and is refused. De-duplication stays where ADR-065
+  put it: the consumer's ledger, in the same transaction as the effect it
+  guards. No accepted ADR asserted the withdrawn scheme.
+
 ## [0.4.0] — 2026-07-29 — S04 Persistence Foundation
 
 > **Approved with the benchmark budgets deferred to ADR-060.** Five performance

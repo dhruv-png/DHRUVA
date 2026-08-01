@@ -58,5 +58,14 @@
   "ADR-057-explicit-change-tracking.md": "b2f19177dcdfec94eb493619f84c8c94b91f477edd763ac6a1b187897a6865f1",
   "ADR-058-integration-tests-use-a-real-database.md": "a1c38765743c223251d1015c5848f1409b5bafd99f2a38da6ec2325506db901b",
   "ADR-059-boundary-rules-r7-and-r8.md": "ef02d724231d612a759a29ea6640cfdbe7c8f468da790df6ed0b729cffa9eac0",
-  "ADR-060-benchmark-budgets-are-enforced-on-the-deployment-target.md": "9c2c0486f954222caeca23d962c513b9327af9a8b13b77003c3c0ba9921a0ea4"
+  "ADR-060-benchmark-budgets-are-enforced-on-the-deployment-target.md": "9c2c0486f954222caeca23d962c513b9327af9a8b13b77003c3c0ba9921a0ea4",
+  "ADR-061-event-envelope-is-versioned-and-transport-agnostic.md": "334f62b5434c3d1632366f1402596be65edd5c07cd9eab9aaee72e9e7e43c86c",
+  "ADR-062-at-least-once-delivery-and-ordering-guarantees.md": "a197e17f4631e95f14f29b7f93bb47cc5813ea96918249e7cdba6189bc58bb9d",
+  "ADR-063-outbox-relay-is-a-dedicated-process.md": "aaa14463f809eaf0ff87dff201d73d3f019c3b63bbeab3dac8996b13eb4d26e2",
+  "ADR-064-dead-letter-policy.md": "4520f2d5bbf3c5ae06dd18d3e845a724a32cdec826f96f5a1c54002054c190fa",
+  "ADR-065-run-scoped-idempotency-ledger.md": "b8a9abd3b97afe4fc35b13c8043ba18bda1754e132278f95e95edc051c263f28",
+  "ADR-066-scheduling-is-defined-in-trading-day-terms.md": "16b9be9aa28a8c8c98381725cd5660016335322c6f9987f0d70def3a53ff1871",
+  "ADR-067-eventstream-is-a-port-live-and-replay-are-peers.md": "eafdcea5cb095bdccf3b2eb919549b7d546ea1c253ba93b80fb969e165be52a7",
+  "ADR-068-boundary-rule-r9-no-transport-in-domain-or-strategy.md": "725ff355d1de0243613830ba0361ea6c352e6e8d38d15144e5db725893f5a44a",
+  "ADR-069-replay-is-bitemporally-correct-by-construction.md": "187df3c9a282b6c878ce027aca91b8942a98a0f270839f5016eb8901c5059477"
 }

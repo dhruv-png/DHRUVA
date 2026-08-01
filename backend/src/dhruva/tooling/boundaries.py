@@ -25,6 +25,12 @@ R6  **No ``float`` in the monetary modules.** Nothing under
 R7  **The domain imports no persistence framework.** No module under a
     ``domain`` package may import ``sqlalchemy``, ``alembic``, ``asyncpg`` or
     ``psycopg`` (ADR-052, ADR-059).
+R9  **No strategy or domain module imports a transport.** No module under a
+    ``domain`` or ``strategy`` package may import ``redis``, ``celery``, ``kombu``
+    or a Kafka client. Consumers receive an ``EventStream`` port by injection, so
+    the same code runs against live delivery and against replay (ADR-067,
+    ADR-068).
+
 R8  **The timeseries path imports no domain.** No module under a ``timeseries``
     infrastructure package may import from any ``domain`` package, so a business
     entity cannot be named on the ORM-bypass path (ADR-054, ADR-059).
@@ -62,7 +68,9 @@ __all__ = [
     "MONEY_PACKAGE",
     "PERSISTENCE_PACKAGES",
     "ROOT_MARKER",
+    "STRATEGY_SEGMENT",
     "TIMESERIES_SEGMENT",
+    "TRANSPORT_PACKAGES",
     "Violation",
     "check_tree",
     "find_repo_root",
@@ -121,6 +129,18 @@ PERSISTENCE_PACKAGES: frozenset[str] = frozenset(
 #: Path segment identifying the ORM-bypass timeseries path (ADR-054, rule R8).
 TIMESERIES_SEGMENT = "timeseries"
 
+#: Transport clients no strategy or domain module may import (ADR-068, rule R9).
+#: A strategy that imports one of these cannot run inside a backtest process, and
+#: the failure is not a crash at import -- it is a strategy nobody can test
+#: against history, discovered months later in the subsystem that most needs the
+#: evidence.
+TRANSPORT_PACKAGES: frozenset[str] = frozenset({"redis", "celery", "kombu", "aiokafka", "kafka"})
+
+#: Path segment identifying strategy code (ADR-068, rule R9). The package does not
+#: exist yet; the rule is written now so it is already enforced on the first
+#: module placed there rather than retrofitted against existing violations.
+STRATEGY_SEGMENT = "strategy"
+
 #: Names that constitute reading the environment directly.
 _ENVIRONMENT_ACCESSORS: frozenset[str] = frozenset({"environ", "getenv", "putenv", "environb"})
 
@@ -146,7 +166,7 @@ class Violation:
     lineno
         Line number of the offending import.
     rule
-        Short rule identifier, one of ``R1``..``R8``.
+        Short rule identifier, one of ``R1``..``R9``.
     message
         Human-readable explanation, written to be actionable without needing to
         consult the plan.
@@ -300,6 +320,11 @@ def _in_domain_layer(module: str) -> bool:
 def _in_timeseries_package(module: str) -> bool:
     """Return whether ``module`` sits inside a timeseries infrastructure package."""
     return f".{TIMESERIES_SEGMENT}." in f"{module}." or module.endswith(f".{TIMESERIES_SEGMENT}")
+
+
+def _in_strategy_package(module: str) -> bool:
+    """Report whether a module sits under a strategy package (rule R9)."""
+    return f".{STRATEGY_SEGMENT}." in f"{module}." or module.endswith(f".{STRATEGY_SEGMENT}")
 
 
 def _module_name(source_root: Path, file: Path) -> str:
@@ -533,6 +558,27 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
         else []
     )
 
+    violations_r9 = (
+        [
+            Violation(
+                path=path,
+                lineno=lineno,
+                rule="R9",
+                message=(
+                    f"'{module_name}' imports the transport '{package}'. Strategy and "
+                    f"domain code must reach a bus only through the EventStream port "
+                    f"(ADR-067), so that the same code runs against live delivery and "
+                    f"against replay. A module that can name a transport is a module "
+                    f"nobody can backtest (ADR-068)."
+                ),
+            )
+            for package, lineno in _third_party_roots(tree)
+            if package in TRANSPORT_PACKAGES
+        ]
+        if _in_domain_layer(module_name) or _in_strategy_package(module_name)
+        else []
+    )
+
     violations_r6 = (
         [
             Violation(
@@ -578,6 +624,7 @@ def _check_module(source_root: Path, file: Path, repo_root: Path) -> list[Violat
         *violations_r6,
         *violations_r7,
         *violations_r8,
+        *violations_r9,
     ]
     for lineno, targets in sorted(grouped.items()):
         if not in_composition_root:

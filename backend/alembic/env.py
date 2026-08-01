@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
 from dhruva.contexts.platform.infrastructure.database.engine import database_url
-from dhruva.contexts.platform.infrastructure.persistence import models, outbox  # noqa: F401
+from dhruva.contexts.platform.infrastructure.persistence import (  # noqa: F401
+    ledger,
+    models,
+    outbox,
+)
 from dhruva.contexts.platform.infrastructure.persistence.models import Base
 from dhruva.shared.config.settings import load_settings
 

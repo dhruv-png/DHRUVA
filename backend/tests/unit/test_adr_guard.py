@@ -8,6 +8,7 @@ against corpora that deliberately break each rule.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -82,15 +83,48 @@ def test_real_decision_log_is_intact(adr_dir: Path) -> None:
     assert not problems, "\n" + "\n".join(p.render() for p in problems)
 
 
+#: Matches one row of the decision index in ``docs/decisions.md``.
+_INDEX_ROW = re.compile(r"^\|\s*\[ADR-(\d{3})\]\((?P<file>ADR-\d{3}[^)]*\.md)\)\s*\|", re.MULTILINE)
+
+
 @pytest.mark.unit
-def test_real_decision_log_holds_all_approved_decisions(adr_dir: Path) -> None:
-    """Master Project Plan section 4 declares ADR-001 through ADR-059."""
+def test_the_corpus_and_the_decision_index_agree(adr_dir: Path) -> None:
+    """Every record is indexed, every index row has a record, and the numbers are contiguous.
+
+    Cross-checked against ``docs/decisions.md`` rather than against a literal
+    range. The previous version asserted ``range(1, 60)``, which was true when it
+    was written and became false the moment S05 recorded ADR-060 -- and the
+    failure sat unnoticed on the branch, because the assertion described a fact
+    about the past rather than an invariant.
+
+    An invariant is what belongs here: a record nobody indexed is a decision
+    nobody will find, and an index row with no record is a promise with nothing
+    behind it. Both stay true as the corpus grows, and neither needs editing when
+    it does.
+    """
     records, problems = load_adrs(adr_dir)
     assert not problems
-    assert [r.number for r in records] == list(range(1, 60))
-    # ADR-005 is superseded by ADR-042 and retained as history (ADR-027).
-    superseded = [r for r in records if not r.is_accepted]
-    assert [r.number for r in superseded] == [5]
+
+    index = (adr_dir.parent / "decisions.md").read_text(encoding="utf-8")
+    indexed = {int(number): filename for number, filename in _INDEX_ROW.findall(index)}
+    on_disk = {record.number: record.filename for record in records}
+
+    assert on_disk == indexed, "the corpus and docs/decisions.md have drifted apart"
+    numbers = sorted(on_disk)
+    assert numbers == list(range(1, len(numbers) + 1)), "ADR numbers must have no gaps"
+
+
+@pytest.mark.unit
+def test_exactly_one_record_has_been_superseded(adr_dir: Path) -> None:
+    """ADR-005 is superseded by ADR-042 and retained as history (ADR-027).
+
+    Pinned deliberately. Superseding a record is a heavier act than adding one,
+    and a second one appearing without this test being updated would mean it
+    happened without anybody deciding to.
+    """
+    records, _ = load_adrs(adr_dir)
+
+    assert [record.number for record in records if not record.is_accepted] == [5]
 
 
 @pytest.mark.unit

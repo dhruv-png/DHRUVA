@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any, Self
 
-__all__ = ["FakeSession", "FakeSessionFactory", "RecordingPublisher"]
+__all__ = ["FakeSession", "FakeSessionFactory"]
 
 
 @dataclass
@@ -27,6 +27,17 @@ class FakeSession:
     commit_error: Exception | None = None
     rollback_error: Exception | None = None
     closed: bool = False
+    #: Objects staged into the session but not yet committed. A real session
+    #: discards these on rollback, so this fake does too -- the Unit of Work's
+    #: rollback semantics are now a property of the transaction rather than of a
+    #: list it clears itself (AR-001b), and a fake that kept them would let a
+    #: broken rollback pass.
+    added: list[Any] = field(default_factory=list)
+
+    def add(self, instance: Any) -> None:
+        """Stage an object, as ``AsyncSession.add`` does."""
+        self.calls.append("add")
+        self.added.append(instance)
 
     async def commit(self) -> None:
         """Record a commit, or raise if the test asked for a failing one."""
@@ -35,8 +46,9 @@ class FakeSession:
             raise self.commit_error
 
     async def rollback(self) -> None:
-        """Record a rollback."""
+        """Record a rollback and discard anything staged, as a real one would."""
         self.calls.append("rollback")
+        self.added.clear()
         if self.rollback_error is not None:
             raise self.rollback_error
 
@@ -67,19 +79,6 @@ class FakeSessionFactory:
     def latest(self) -> FakeSession:
         """Return the most recently issued session."""
         return self.sessions[-1]
-
-
-@dataclass
-class RecordingPublisher:
-    """Captures the events a Unit of Work publishes, and when."""
-
-    published: list[Any] = field(default_factory=list)
-    calls: int = 0
-
-    async def __call__(self, events: Any) -> None:
-        """Record one publication."""
-        self.calls += 1
-        self.published.extend(events)
 
 
 @dataclass
