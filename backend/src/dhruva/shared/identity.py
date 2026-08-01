@@ -25,7 +25,7 @@ from typing import ClassVar, Final, Self
 from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.invariants import invariant
 
-__all__ = ["AccountId", "InstrumentId", "SurrogateId"]
+__all__ = ["AccountId", "CredentialId", "InstrumentId", "SurrogateId"]
 
 #: Namespace for deterministic identifiers. Fixed forever: changing it would
 #: change every derived identifier, which is the same as losing them.
@@ -229,6 +229,26 @@ class AccountId(SurrogateId):
     """
 
     PREFIX: ClassVar[str] = "acct"
+
+
+class CredentialId(SurrogateId):
+    """Identifies one stored broker credential (ADR-070, S06).
+
+    Unlike the worked example's surrogate row key, this identifier is **domain
+    identity, not a persistence detail**, and the distinction is load-bearing:
+    ADR-070's associated data binds a credential's ciphertext to the record it
+    belongs to, and a binding to a value the domain refuses to know would be a
+    binding nothing could verify on read.
+
+    Minted, never derived. :meth:`SurrogateId.deterministic` is deliberately not
+    used here even though ``(account_id, broker)`` is a genuine natural key:
+    deriving the identifier from the natural key would make the associated data
+    a function of the same two facts it is supposed to bind independently, and
+    re-adding a deleted credential would silently reuse the identifier of the
+    one it replaced.
+    """
+
+    PREFIX: ClassVar[str] = "cred"
 
 
 def _invalid(message: str, text: str) -> InvariantViolation:

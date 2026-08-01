@@ -375,7 +375,10 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # gets reintroduced: the row survives into the next test, which then
             # fails for a reason unrelated to its subject.
             await cleanup.execute(
-                text("TRUNCATE daily_snapshot, outbox, example_tick, processed_event CASCADE")
+                text(
+                    "TRUNCATE daily_snapshot, outbox, example_tick, processed_event, "
+                    "credential CASCADE"
+                )
             )
 
 

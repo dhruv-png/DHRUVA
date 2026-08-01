@@ -72,6 +72,32 @@ item is simply not satisfiable before the subsystem that owns encryption at
 rest, and S06 is that subsystem. **S06's definition of done should close it
 explicitly**, and §13 step 4 is where.
 
+> **Closed at step 4.** Both halves now hold. The encryption half is the
+> credential store: `credential` rows carry AES-256-GCM ciphertext and a wrapped
+> data key and nothing else, the master key lives in process configuration and
+> never in the table, and a read returns ciphertext — obtaining a plaintext is
+> one named function that takes a `KeyProvider`. The redaction half was already
+> met and is extended here: an opened credential comes back as a `SecretValue`,
+> registered for value-based redaction, so a later accidental interpolation into
+> a log line is masked rather than printed.
+
+### A defect found while building step 4
+
+The step-3 `credential` migration carried no `version` column. ADR-057 is
+unambiguous — *every aggregate carries a `version` column*, and updates match on
+it so that a lost update raises rather than being overwritten — and a credential
+is an aggregate: it is loaded, re-sealed on rotation, and stored again.
+
+Without the column the repository could not make the promise the `Repository`
+protocol publishes, and two concurrent rotations would have left a row wrapped
+under a data key whose plaintext nobody recorded. Corrected in the migration
+itself rather than in a follow-up revision, because it had not been committed,
+let alone released; ADR-051 fixes release tags, not unmerged migrations.
+
+Recorded here rather than passed over because the omission was against an
+accepted decision, and a decision that can be missed silently once can be missed
+again.
+
 ---
 
 ## 3. Where S06 lives: the existing Platform context
@@ -365,7 +391,7 @@ ADR-037's independent strategies, beside the existing redaction suite.
 | TD-S06-3 | Master key from the environment, not a KMS | ADR-020 permits either; an adapter swap |
 | TD-S06-4 | No key-rotation job | The hierarchy makes rotation cheap; the job belongs to S42, which owns secret rotation |
 | TD-S06-5 | **No performance budget for token verification** | It sits on every authenticated request and needs one. ADR-060 A1's Linux figures were unavailable when this was written; set the budget from the first E4 run |
-| TD-S06-6 | **Envelope ciphertexts carry no associated data** | GCM can bind a ciphertext to its record so that moving one row's ciphertext onto another still fails to decrypt. Binding needs a stable record identity, and the credential table is step 3; adding a made-up binding first would be schema invented ahead of its migration. Close it with the credential store |
+| ~~TD-S06-6~~ | ~~**Envelope ciphertexts carry no associated data**~~ | **Closed at step 4**, as this row said it would be. `encrypt_secret`/`decrypt_secret` take `associated_data` as a required keyword argument, and `credential_associated_data` derives it from the credential's identity, account and broker. An integration test copies one row's ciphertext and wrapped key onto another with SQL and asserts the result no longer opens, while the victim row still does |
 
 Retention is *not* on this list: plan §12 already fixes it at indefinite and
 immutable, so there is nothing deferred.

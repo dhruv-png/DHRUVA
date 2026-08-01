@@ -53,14 +53,28 @@ does not exist. It is deliberately not
 does produce this failure, but so does a tampered row, and GCM cannot tell the
 two apart. Naming the cause would be a guess recorded as fact.
 
-Known gap: no associated data
------------------------------
-GCM can bind a ciphertext to context through associated data, which would stop
-a ciphertext being moved from one credential row to another and still
-decrypting. Doing that requires a stable record identity to bind to, and the
-credential table does not exist yet -- it is design §13 step 3. Adding a
-made-up binding now would be schema invented ahead of its migration, so it is
-recorded here and in the S06 design instead.
+Associated data: TD-S06-6, now closed
+-------------------------------------
+The first version of this module recorded a known gap -- a ciphertext carried no
+binding to the record it belonged to, so lifting one row's sealed values onto
+another row still decrypted. Closing it needed a stable record identity, and the
+credential table did not exist yet.
+
+It does now. :func:`encrypt_secret` and :func:`decrypt_secret` take
+``associated_data`` as a **required keyword argument**, and
+``credentials.credential_associated_data`` derives it from the credential's
+identity, account and broker.
+
+Required rather than defaulted, and keyword-only rather than positional. A
+default of ``b""`` would make an unbound ciphertext the thing a caller gets by
+*forgetting* -- the original defect, reintroduced as an ergonomic convenience --
+and ADR-022's fail-closed posture says the safe path is the one that cannot be
+omitted. Keyword-only because ``encrypt_secret(plaintext, provider, aad)`` and
+``encrypt_secret(plaintext, aad, provider)`` are both plausible at a glance, and
+only one of them is right.
+
+Only the credential ciphertext is bound; the data-key wrap is not. That choice
+is argued where the binding is built, in the domain's ``credentials`` module.
 """
 
 from __future__ import annotations
@@ -68,12 +82,12 @@ from __future__ import annotations
 import base64
 import binascii
 import os
-from dataclasses import dataclass
 from typing import Final
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from dhruva.contexts.platform.domain.identity.credentials import EncryptedSecret
 from dhruva.contexts.platform.domain.identity.keys import KeyProvider
 from dhruva.shared.config.secret import SecretValue
 from dhruva.shared.errors import ConfigurationError, SafetyError
@@ -95,23 +109,6 @@ NONCE_BYTES: Final = 12
 #: AES-256 means a 256-bit key, for both levels of the hierarchy.
 MASTER_KEY_BYTES: Final = 32
 DATA_KEY_BYTES: Final = 32
-
-
-@dataclass(frozen=True, slots=True)
-class EncryptedSecret:
-    """A sealed credential and the wrapped key that opens it (ADR-070).
-
-    Exactly the two values ADR-070 says a row stores. Neither field is
-    meaningful without a :class:`KeyProvider`, and neither reveals anything
-    about the plaintext beyond its approximate length.
-
-    Frozen because these two values are only correct together: a ciphertext
-    paired with a re-wrapped key from another record decrypts to nothing, and
-    making that unrepresentable is cheaper than testing for it.
-    """
-
-    ciphertext: bytes
-    wrapped_data_key: bytes
 
 
 def _decode_master_key(master_key: SecretValue) -> bytes:
@@ -148,21 +145,29 @@ def _decode_master_key(master_key: SecretValue) -> bytes:
     return decoded
 
 
-def _seal(cipher: AESGCM, plaintext: bytes) -> bytes:
-    """Return ``nonce || ciphertext || tag`` under a fresh random nonce."""
+def _seal(cipher: AESGCM, plaintext: bytes, associated_data: bytes | None) -> bytes:
+    """Return ``nonce || ciphertext || tag`` under a fresh random nonce.
+
+    ``associated_data`` is authenticated but not encrypted, and is deliberately
+    not stored: the reader has to already know it, which is the whole point.
+    ``None`` means no binding, and is used only for the data-key wrap.
+    """
     nonce = os.urandom(NONCE_BYTES)
-    return nonce + cipher.encrypt(nonce, plaintext, None)
+    return nonce + cipher.encrypt(nonce, plaintext, associated_data)
 
 
-def _open(cipher: AESGCM, blob: bytes, *, what: str) -> bytes:
+def _open(cipher: AESGCM, blob: bytes, *, what: str, associated_data: bytes | None) -> bytes:
     """Reverse :func:`_seal`, refusing anything that does not authenticate.
 
     Raises
     ------
     SafetyError
-        If ``blob`` is too short to contain a nonce, or fails authentication.
-        Both are the same refusal from the caller's point of view, and both are
-        deliberately indistinguishable in what they report.
+        If ``blob`` is too short to contain a nonce, fails authentication, or
+        was sealed under different associated data. All three are the same
+        refusal from the caller's point of view, and all three are deliberately
+        indistinguishable in what they report: a message that said "wrong
+        associated data" would confirm to whoever moved the row that the
+        ciphertext itself is intact.
     """
     if len(blob) <= NONCE_BYTES:
         msg = "encrypted value is truncated"
@@ -170,7 +175,7 @@ def _open(cipher: AESGCM, blob: bytes, *, what: str) -> bytes:
 
     nonce, sealed = blob[:NONCE_BYTES], blob[NONCE_BYTES:]
     try:
-        return cipher.decrypt(nonce, sealed, None)
+        return cipher.decrypt(nonce, sealed, associated_data)
     except InvalidTag as exc:
         msg = "encrypted value failed authentication"
         raise SafetyError(msg, what=what) from exc
@@ -207,8 +212,15 @@ class MasterKeyProvider:
         self._cipher = AESGCM(_decode_master_key(master_key))
 
     def wrap_key(self, data_key: bytes) -> bytes:
-        """Encrypt ``data_key`` under the master key."""
-        return _seal(self._cipher, data_key)
+        """Encrypt ``data_key`` under the master key.
+
+        Unbound by associated data, unlike the credential ciphertext. Widening
+        the port to carry a binding would undo ADR-070's argument for having a
+        port -- a KMS adapter expresses encryption context as a string map, not
+        as bytes -- and would buy nothing, because a wrapped data key on its own
+        opens no credential.
+        """
+        return _seal(self._cipher, data_key, None)
 
     def unwrap_key(self, wrapped_key: bytes) -> bytes:
         """Recover a data key wrapped by :meth:`wrap_key`.
@@ -219,10 +231,12 @@ class MasterKeyProvider:
             If the wrapped key is truncated, tampered with, or was wrapped under
             a different master key.
         """
-        return _open(self._cipher, wrapped_key, what="wrapped_data_key")
+        return _open(self._cipher, wrapped_key, what="wrapped_data_key", associated_data=None)
 
 
-def encrypt_secret(plaintext: bytes, key_provider: KeyProvider) -> EncryptedSecret:
+def encrypt_secret(
+    plaintext: bytes, key_provider: KeyProvider, *, associated_data: bytes
+) -> EncryptedSecret:
     """Seal ``plaintext`` under a fresh data key, wrapped by ``key_provider``.
 
     Parameters
@@ -236,11 +250,16 @@ def encrypt_secret(plaintext: bytes, key_provider: KeyProvider) -> EncryptedSecr
         Wraps the generated data key. Taken as an argument rather than held,
         so that swapping in a KMS provider is a call-site change and not a
         change here.
+    associated_data
+        Binds the ciphertext to the record it belongs to (TD-S06-6). Required;
+        see the module docstring for why there is no default.
 
     Returns
     -------
     EncryptedSecret
-        The two values a row stores.
+        The two values a row stores. The associated data is deliberately not
+        among them -- it is recomputed from the row on read, which is what makes
+        the binding worth having.
 
     Notes
     -----
@@ -250,12 +269,14 @@ def encrypt_secret(plaintext: bytes, key_provider: KeyProvider) -> EncryptedSecr
     """
     data_key = AESGCM.generate_key(bit_length=DATA_KEY_BYTES * 8)
     return EncryptedSecret(
-        ciphertext=_seal(AESGCM(data_key), plaintext),
+        ciphertext=_seal(AESGCM(data_key), plaintext, associated_data),
         wrapped_data_key=key_provider.wrap_key(data_key),
     )
 
 
-def decrypt_secret(secret: EncryptedSecret, key_provider: KeyProvider) -> bytes:
+def decrypt_secret(
+    secret: EncryptedSecret, key_provider: KeyProvider, *, associated_data: bytes
+) -> bytes:
     """Recover the plaintext of ``secret``.
 
     Separate from any repository read, and requiring ``key_provider``
@@ -265,10 +286,23 @@ def decrypt_secret(secret: EncryptedSecret, key_provider: KeyProvider) -> bytes:
     explicit makes it greppable, which is the reasoning ADR-033 applied to
     :meth:`SecretValue.reveal`.
 
+    Parameters
+    ----------
+    secret
+        The sealed material read from a row.
+    key_provider
+        Unwraps the data key.
+    associated_data
+        Must equal the value the secret was sealed under. Anything else is a
+        refusal, which is how a ciphertext moved between rows is caught.
+
     Raises
     ------
     SafetyError
-        If the wrapped key or the ciphertext fails authentication.
+        If the wrapped key or the ciphertext fails authentication, including
+        the case where the ciphertext is intact but belongs to another record.
     """
     data_key = key_provider.unwrap_key(secret.wrapped_data_key)
-    return _open(AESGCM(data_key), secret.ciphertext, what="ciphertext")
+    return _open(
+        AESGCM(data_key), secret.ciphertext, what="ciphertext", associated_data=associated_data
+    )

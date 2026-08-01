@@ -15,7 +15,56 @@ capital (ADR-026, ADR-029).
 
 ## [Unreleased]
 
-Nothing yet.
+S06 in progress. The credential store landed, and with it the encryption half of
+the G0 checklist item that has been open since Phase 0.
+
+### Added
+
+- **The credential store** (ADR-070, ADR-052, ADR-053). A `Credential` aggregate,
+  a persistence record, an ORM model, a pure mapper, a reconstruction factory and
+  a repository — S04's four layers, followed exactly, for the first table that
+  holds something worth stealing. The repository is persistence and nothing else:
+  it imports no cipher, takes no `KeyProvider`, and a read returns ciphertext.
+- **`CredentialId`**, a minted domain identifier (ADR-009). Unlike the worked
+  example's surrogate row key, this one is domain identity on purpose — the
+  ciphertext is bound to it, and a binding to a value the domain refuses to know
+  could not be recomputed on read.
+- **`seal_credential` and `open_credential`.** The entire plaintext surface of
+  the vault, in one small named module so that "where can a secret appear?" is a
+  question with a greppable answer. `open_credential` returns a `SecretValue`,
+  registered for redaction (ADR-037), so a credential that later reaches a log
+  line is masked rather than printed.
+- **Migration `0007_credential`** now carries `version`, and check constraints on
+  both `version` and `key_version`.
+
+### Changed
+
+- **Envelope ciphertexts are bound to their record — TD-S06-6, closed.**
+  `encrypt_secret` and `decrypt_secret` take `associated_data` as a **required
+  keyword argument**. It is required rather than defaulted because a default of
+  `b""` would make an unbound ciphertext the thing a caller gets by forgetting,
+  which is the defect reintroduced as a convenience. The binding is the
+  credential's identity, account and broker, in a versioned unambiguous
+  encoding. An integration test moves one row's sealed values onto another with
+  SQL and asserts the result no longer opens, while the untouched row still
+  does. The data-key wrap is deliberately left unbound: binding it would widen
+  the `KeyProvider` port and cost ADR-070's KMS-substitution argument, and buys
+  nothing, since a wrapped key alone opens no credential.
+- **`EncryptedSecret` moved from `infrastructure.crypto` to
+  `domain.identity.credentials`**, and is re-exported from its old home. The
+  credential aggregate has to hold it, and a domain class holding an
+  infrastructure class is the import the layer contract exists to fail. The
+  definition moved down a layer rather than the dependency being inverted around
+  it.
+
+### Fixed
+
+- **`credential` had no `version` column**, contradicting ADR-057's "every
+  aggregate carries a `version` column". Found while writing the repository's
+  `update`, which could not otherwise detect a lost update — two concurrent
+  rotations would have silently left the row wrapped under a data key whose
+  plaintext nobody recorded. Corrected in migration `0007` in place, which had
+  not been committed or released.
 
 ## [0.5.0] — 2026-08-01 — S05 Event Bus & Job Runtime
 
