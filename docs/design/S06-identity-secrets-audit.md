@@ -365,6 +365,7 @@ ADR-037's independent strategies, beside the existing redaction suite.
 | TD-S06-3 | Master key from the environment, not a KMS | ADR-020 permits either; an adapter swap |
 | TD-S06-4 | No key-rotation job | The hierarchy makes rotation cheap; the job belongs to S42, which owns secret rotation |
 | TD-S06-5 | **No performance budget for token verification** | It sits on every authenticated request and needs one. ADR-060 A1's Linux figures were unavailable when this was written; set the budget from the first E4 run |
+| TD-S06-6 | **Envelope ciphertexts carry no associated data** | GCM can bind a ciphertext to its record so that moving one row's ciphertext onto another still fails to decrypt. Binding needs a stable record identity, and the credential table is step 3; adding a made-up binding first would be schema invented ahead of its migration. Close it with the credential store |
 
 Retention is *not* on this list: plan §12 already fixes it at indefinite and
 immutable, so there is nothing deferred.

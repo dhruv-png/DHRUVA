@@ -42,6 +42,7 @@ from dhruva.shared.errors import ConfigurationError, UnsafeConfigurationError
 
 __all__ = [
     "AppSettings",
+    "CryptoSettings",
     "DatabaseSettings",
     "LogSettings",
     "RedisSettings",
@@ -150,6 +151,34 @@ class RedisSettings(_Group):
     password: Secret | None = None
 
 
+class CryptoSettings(_Group):
+    """Master key for the credential vault, used from S06 (ADR-070, ADR-020).
+
+    ADR-070 puts the master key in *process* configuration rather than in the
+    Platform context's persisted configuration, for the obvious reason: the key
+    that decrypts the vault must not be stored in the vault.
+
+    ``master_key`` is **base64-encoded 32-byte key material**, not a passphrase.
+    ADR-020 writes "master key from environment/KMS", and a key is what both
+    sides of that alternative supply; deriving one from a passphrase here would
+    invent a KDF that no decision records, and would make the environment
+    variable's meaning differ from the KMS adapter's. Length and encoding are
+    checked where the key is used rather than here, so that this module keeps
+    importing no cryptographic library (boundary rule R5).
+
+    The default is a placeholder that is *deliberately not* valid key material.
+    A working default would mean every local database is encrypted under a key
+    published in this repository, and the first deployment that forgot to set the
+    variable would inherit it silently. Instead the placeholder is refused twice:
+    by :meth:`Settings._reject_unsafe_deployed_configuration` in any deployed
+    environment, and by the adapter itself the moment something tries to encrypt.
+    """
+
+    master_key: Secret = Field(
+        default_factory=lambda: SecretValue("change-me-local-only", register=False)
+    )
+
+
 class TracingSettings(_Group):
     """OpenTelemetry configuration.
 
@@ -193,6 +222,7 @@ class Settings(BaseSettings):
     log: LogSettings = Field(default_factory=LogSettings)
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
+    crypto: CryptoSettings = Field(default_factory=CryptoSettings)
     otel: TracingSettings = Field(default_factory=TracingSettings)
 
     @property
@@ -243,6 +273,10 @@ class Settings(BaseSettings):
         if _looks_like_a_placeholder(self.db.password.reveal()):
             msg = "database password is still a development placeholder"
             raise UnsafeConfigurationError(msg, environment=environment, field="db.password")
+
+        if _looks_like_a_placeholder(self.crypto.master_key.reveal()):
+            msg = "credential vault master key is still a development placeholder"
+            raise UnsafeConfigurationError(msg, environment=environment, field="crypto.master_key")
 
         if self.log.format == "console":
             msg = "deployed environments must emit machine-readable logs"

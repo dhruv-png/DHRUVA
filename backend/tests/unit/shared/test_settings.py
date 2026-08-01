@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from dhruva.shared.config import Environment, SecretValue
 from dhruva.shared.config.settings import DatabaseSettings, Settings, load_settings
 from dhruva.shared.errors import ConfigurationError, UnsafeConfigurationError
+
+#: Correctly shaped master key material for tests that need a deployed
+#: environment to *load* rather than to be refused (ADR-070). All-zero bytes:
+#: valid base64 of the right length, and obviously not a key anyone chose.
+DEPLOYABLE_MASTER_KEY: Final = base64.b64encode(bytes(32)).decode()
 
 
 @pytest.fixture(autouse=True)
@@ -110,6 +117,7 @@ def test_deployed_environments_reject_human_readable_logs(
     """Console logs in production are logs no aggregator can parse."""
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "production")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
+    monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
     monkeypatch.setenv("DHRUVA_LOG__FORMAT", "console")
 
     with pytest.raises(UnsafeConfigurationError) as caught:
@@ -119,10 +127,31 @@ def test_deployed_environments_reject_human_readable_logs(
 
 
 @pytest.mark.unit
+def test_deployed_environments_reject_a_placeholder_master_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The vault key is the one credential whose default ships in this repository.
+
+    ADR-070: the master key decrypts every stored credential, so a deployment
+    that inherited the shipped placeholder would be a vault anyone with the
+    source can open. Checked after the database password, because a deployment
+    missing both should hear about the one it is most likely to have set.
+    """
+    monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "staging")
+    monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
+
+    with pytest.raises(UnsafeConfigurationError) as caught:
+        load_settings()
+
+    assert caught.value.context["field"] == "crypto.master_key"
+
+
+@pytest.mark.unit
 def test_a_valid_production_configuration_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     """The safety checks must not block a correct deployment."""
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "production")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
+    monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
 
     settings = load_settings()
 
@@ -143,6 +172,7 @@ def test_log_format_is_derived_rather_than_defaulted(monkeypatch: pytest.MonkeyP
     """Derivation stops a deployed environment being misconfigured independently."""
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "staging")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
+    monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
 
     assert load_settings().resolved_log_format() == "json"
 
