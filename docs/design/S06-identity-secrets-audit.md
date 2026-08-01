@@ -304,6 +304,21 @@ ADR-004 already decided it:
 > module-level caches keyed without account. **PostgreSQL RLS policies authored
 > from the start, permissive in v1.**
 
+**Finding: no RLS policy exists anywhere in the repository.** ADR-004 says
+policies are authored *from the start*. As of this writing there is no
+`CREATE POLICY` and no `ENABLE ROW LEVEL SECURITY` in any of the six migrations,
+nor anywhere in `src` or `tests` — verified by search, not by memory. The
+`account_id` half of ADR-004 was implemented in S04 and is enforced (
+`daily_snapshot.account_id` is `NOT NULL`); the RLS half was not, and the gap has
+been carried silently through v0.4.0 and v0.5.0.
+
+This is an accepted ADR that is partly unimplemented, so closing it is not
+optional and is not S44's job. It is not fixed here either, because the policy
+expression and the name of the session variable the policies read are exactly
+what ADR-074 must decide, and a migration cannot be verified in the sandbox
+this design was written in. **S06 closes it at §13 step 8**, and that step should
+be understood as repaying a debt rather than adding a feature.
+
 "Permissive in v1" is the part needing care. A permissive policy that is never
 exercised is a policy nobody knows works, and its first real test would be the
 day it is switched on — which plan §6 schedules for S44, roughly forty
