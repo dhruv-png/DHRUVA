@@ -61,6 +61,84 @@ jobs:
           path: backend/coverage.xml
           if-no-files-found: ignore
 
+  benchmarks:
+    # ADR-060 acceptance criterion A1: the budgets in PERFORMANCE_BASELINE.md are
+    # enforced on the deployment target, not on a development machine. E1 is a
+    # contended sandbox on CPython 3.10 and E2 is Windows; neither is what this
+    # platform runs on, so neither figure closes a budget.
+    #
+    # `continue-on-error` is A2, not timidity: "The job runs green on three
+    # consecutive commits before its result is allowed to gate a merge. Until
+    # then it reports and does not block." Benchmarks on shared runners are noisy
+    # (R-060-4), and a gate that cries wolf is a gate people learn to ignore --
+    # which is how a budget dies. Removing this line is the deliberate act that
+    # turns the report into a gate, and it should be its own commit.
+    name: Performance budgets (ADR-060, report-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    services:
+      postgres:
+        # The image the integration harness already pins
+        # (backend/tests/integration/conftest.py: POSTGRES_IMAGE). A benchmark
+        # measured against a different engine than the suite tests against would
+        # be a figure about something nobody deploys.
+        image: timescale/timescaledb:2.17.2-pg16
+        # These are `DatabaseSettings`' own defaults, not invented credentials,
+        # and they have to be. `_seeded_database` reads
+        # DHRUVA_TEST_DATABASE_URL for its engine but runs `alembic upgrade
+        # head` through the settings object -- so the two paths reach the same
+        # server only if the container matches what settings would dial. A
+        # mismatch here fails at migration with an authentication error that
+        # says nothing about why.
+        env:
+          POSTGRES_USER: dhruva
+          POSTGRES_PASSWORD: dhruva_local_only
+          POSTGRES_DB: dhruva
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dhruva -d dhruva"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --project backend --all-groups
+
+      # Character-for-character the Makefile's `bench` target. A CI command that
+      # drifts from the local one measures something a developer cannot
+      # reproduce, and `-p no:randomly` is what makes successive runs comparable
+      # rather than merely green.
+      #
+      # No `--benchmark-json`. The `benchmark` marker is this project's own
+      # (pyproject `markers`), and none of the 29 tests it selects uses
+      # pytest-benchmark's `benchmark` fixture -- they time themselves and assert
+      # against the budgets in PERFORMANCE_BASELINE.md. Asking the plugin to
+      # serialise results it never collected raises "no benchmarks have been
+      # run", and `filterwarnings = ["error"]` turns that into a failure on every
+      # single run. Verified locally against the pinned pytest-benchmark 5.1.0
+      # before it could fail here.
+      #
+      # A3's figures are therefore read from this step's log and transcribed into
+      # PERFORMANCE_BASELINE.md under a new environment identifier, which is a
+      # human act either way.
+      - name: Benchmarks against PostgreSQL
+        env:
+          DHRUVA_TEST_DATABASE_URL: postgresql+asyncpg://dhruva:dhruva_local_only@localhost:5432/dhruva
+        run: uv run --project backend pytest -m benchmark -p no:randomly
+
   build:
     name: Container build
     runs-on: ubuntu-24.04
