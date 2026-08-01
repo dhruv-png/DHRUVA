@@ -67,5 +67,10 @@
   "ADR-066-scheduling-is-defined-in-trading-day-terms.md": "16b9be9aa28a8c8c98381725cd5660016335322c6f9987f0d70def3a53ff1871",
   "ADR-067-eventstream-is-a-port-live-and-replay-are-peers.md": "eafdcea5cb095bdccf3b2eb919549b7d546ea1c253ba93b80fb969e165be52a7",
   "ADR-068-boundary-rule-r9-no-transport-in-domain-or-strategy.md": "725ff355d1de0243613830ba0361ea6c352e6e8d38d15144e5db725893f5a44a",
-  "ADR-069-replay-is-bitemporally-correct-by-construction.md": "187df3c9a282b6c878ce027aca91b8942a98a0f270839f5016eb8901c5059477"
+  "ADR-069-replay-is-bitemporally-correct-by-construction.md": "187df3c9a282b6c878ce027aca91b8942a98a0f270839f5016eb8901c5059477",
+  "ADR-070-envelope-encryption-behind-a-key-provider-port.md": "77ec52149602a7e529bb72dbbfd2a5d4d4b674cab4132f15b442b215c9391ad6",
+  "ADR-071-the-audit-log-is-append-only-enforced-by-the-database.md": "2049dee6c0badee28e8e315f0f62fb7eceb2427831dca4e66f24ef7464a6fa70",
+  "ADR-072-access-tokens-are-stateless-refresh-tokens-are-stored-and-rotated.md": "4640fc9c4c13ea18c807e57098d6969dca7d905b9d9f55e6cbea7cd9985db3fd",
+  "ADR-073-authorisation-defaults-to-deny.md": "a9587de97fb6466851df4c370deed96d10b224f16a806ca6bf9b0db74802c07a",
+  "ADR-074-rls-policies-are-authored-and-exercised-from-the-start.md": "2a6466556c0c6c2d470be8f064e7b4a0dc0f06a4ade46e0dc218ba9dacc8e1b4"
 }
