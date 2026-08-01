@@ -58,6 +58,13 @@ dependencies = [
   "tzdata==2025.2",
   "redis==6.4.0",
   "celery==5.5.3",
+  # S06 -- Identity, Secrets Vault & Audit:
+  #   cryptography   AES-256-GCM envelope encryption (ADR-020, ADR-070)
+  #   pyjwt          access-token signing and verification (ADR-072)
+  #   argon2-cffi    password hashing; never reversible (ADR-033)
+  "cryptography==50.0.0",
+  "pyjwt==2.13.0",
+  "argon2-cffi==25.1.0",
 ]
 
 [project.optional-dependencies]
