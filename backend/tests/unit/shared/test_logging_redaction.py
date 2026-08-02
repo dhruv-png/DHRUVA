@@ -303,3 +303,52 @@ def test_a_secret_inside_a_traceback_is_redacted(capsys: pytest.CaptureFixture[s
         get_logger("t").exception("publish failed")
 
     assert LEAKED not in capsys.readouterr().err
+
+
+@pytest.mark.unit
+def test_s06_identity_material_is_redacted_by_sensitive_field_name(
+    captured: pytest.CaptureFixture[str],
+) -> None:
+    """Passwords, tokens, TOTP and credentials are covered without value scanning."""
+    get_logger("t").info(
+        "identity material probe",
+        password_hash="argon2-fixture-hash",  # noqa: S106 - deliberate leak probe
+        refresh_token="refresh-fixture-token",  # noqa: S106 - deliberate leak probe
+        access_token="access-fixture-token",  # noqa: S106 - deliberate leak probe
+        token_hash=b"sha256-fixture-hash",
+        totp_secret=b"sealed-totp-fixture",
+        credential={"ciphertext": b"sealed-broker-fixture"},
+    )
+
+    record = _records(captured)[-1]
+    for field in (
+        "password_hash",
+        "refresh_token",
+        "access_token",
+        "token_hash",
+        "totp_secret",
+        "credential",
+    ):
+        assert record[field] == REDACTED_PLACEHOLDER
+
+
+@pytest.mark.unit
+def test_s06_opened_secrets_are_redacted_after_interpolation(
+    captured: pytest.CaptureFixture[str],
+) -> None:
+    """Value scanning catches opened broker, access, refresh and TOTP material."""
+    values = (
+        "broker-secret-DEADBEEF-1001",
+        "access-token-DEADBEEF-1002",
+        "refresh-token-DEADBEEF-1003",
+        "totp-secret-DEADBEEF-1004",
+    )
+    secrets = tuple(SecretValue(value) for value in values)
+    get_logger("t").warning(
+        "opened values: " + ",".join(secret.reveal() for secret in secrets),
+        detail={"material": [secret.reveal() for secret in secrets]},
+    )
+
+    rendered = json.dumps(_records(captured)[-1], ensure_ascii=False)
+    assert all(value not in rendered for value in values)
+    assert REDACTED_PLACEHOLDER in rendered

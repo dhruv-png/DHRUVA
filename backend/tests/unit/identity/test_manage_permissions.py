@@ -14,17 +14,19 @@ from dhruva.contexts.platform.application.identity import (
 )
 from dhruva.contexts.platform.domain.audit import AuditAction, AuditOutcome
 from dhruva.contexts.platform.domain.identity import (
+    AuthorisationOperation,
     EncryptedSecret,
     PasswordHash,
     Permission,
     PermissionGrant,
     Principal,
     Role,
+    SecurityOutcome,
 )
 from dhruva.shared.errors import ConflictError, NotFoundError, PermissionDeniedError
 from dhruva.shared.identity import AccountId, PrincipalId
 from dhruva.shared.time import FrozenClock
-from tests.unit.identity.fakes import FakeUnitOfWork
+from tests.unit.identity.fakes import FakeIdentityMetrics, FakeUnitOfWork
 
 pytestmark = pytest.mark.unit
 
@@ -85,8 +87,13 @@ async def _grant(
     *,
     permission: Permission = Permission.PLACE_ORDER,
     role_name: str = "operator",
+    metrics: FakeIdentityMetrics | None = None,
 ) -> Role:
-    return await GrantPermissionUseCase(lambda _account_id: uow, clock=FrozenClock(NOW)).execute(
+    return await GrantPermissionUseCase(
+        lambda _account_id: uow,
+        clock=FrozenClock(NOW),
+        metrics=metrics or FakeIdentityMetrics(),
+    ).execute(
         actor_id=ACTOR_ID,
         account_id=ACCOUNT,
         role_name=role_name,
@@ -100,8 +107,13 @@ async def _revoke(
     *,
     permission: Permission = Permission.PLACE_ORDER,
     role_name: str = "operator",
+    metrics: FakeIdentityMetrics | None = None,
 ) -> Role:
-    return await RevokePermissionUseCase(lambda _account_id: uow, clock=FrozenClock(NOW)).execute(
+    return await RevokePermissionUseCase(
+        lambda _account_id: uow,
+        clock=FrozenClock(NOW),
+        metrics=metrics or FakeIdentityMetrics(),
+    ).execute(
         actor_id=ACTOR_ID,
         account_id=ACCOUNT,
         role_name=role_name,
@@ -140,6 +152,33 @@ async def test_grant_updates_role_version_and_commits_an_attributed_audit() -> N
     assert record.outcome is AuditOutcome.SUCCEEDED
     assert record.actor == "manager@dhruva.local"
     assert "operation=grant" in record.subject
+
+
+@pytest.mark.asyncio
+async def test_authorisation_metrics_cover_success_refusal_and_error_without_actor_data() -> None:
+    """The metric vocabulary excludes actor, tenant, role, permission and refusal reason."""
+    success = _authorised_uow()
+    success_metrics = FakeIdentityMetrics()
+    await _grant(success, metrics=success_metrics)
+
+    refusal = _authorised_uow(target=_role("operator", Permission.PLACE_ORDER))
+    refusal_metrics = FakeIdentityMetrics()
+    with pytest.raises(ConflictError):
+        await _grant(refusal, metrics=refusal_metrics)
+
+    error = _authorised_uow()
+    error.enter_error = RuntimeError("database unavailable")
+    error_metrics = FakeIdentityMetrics()
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await _revoke(error, metrics=error_metrics)
+
+    assert success_metrics.authorisations == [
+        (AuthorisationOperation.GRANT, SecurityOutcome.SUCCEEDED)
+    ]
+    assert refusal_metrics.authorisations == [
+        (AuthorisationOperation.GRANT, SecurityOutcome.REFUSED)
+    ]
+    assert error_metrics.authorisations == [(AuthorisationOperation.REVOKE, SecurityOutcome.ERROR)]
 
 
 @pytest.mark.asyncio

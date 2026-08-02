@@ -9,6 +9,11 @@ minted.
 
 from __future__ import annotations
 
+from dhruva.contexts.platform.infrastructure.identity.metrics import (
+    AUTHENTICATION_METRIC,
+    AUTHORISATION_METRIC,
+    PrometheusIdentityMetrics,
+)
 from dhruva.contexts.platform.infrastructure.identity.passwords import Argon2PasswordHasher
 from dhruva.contexts.platform.infrastructure.identity.refresh_tokens import (
     TOKEN_ENTROPY_BYTES,
@@ -23,10 +28,13 @@ from dhruva.contexts.platform.infrastructure.identity.tokens import (
 
 __all__ = [
     "ALGORITHM",
+    "AUTHENTICATION_METRIC",
+    "AUTHORISATION_METRIC",
     "ISSUER",
     "MINIMUM_KEY_BYTES",
     "TOKEN_ENTROPY_BYTES",
     "Argon2PasswordHasher",
     "JwtTokenIssuer",
+    "PrometheusIdentityMetrics",
     "Sha256RefreshTokenMinter",
 ]

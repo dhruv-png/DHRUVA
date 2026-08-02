@@ -17,13 +17,19 @@ import pytest
 from dhruva.contexts.platform.application.identity import RefreshSessionUseCase
 from dhruva.contexts.platform.application.identity.sessions import IssuedSession, SessionPolicy
 from dhruva.contexts.platform.domain.audit import UNATTRIBUTED_ACCOUNT, AuditOutcome
-from dhruva.contexts.platform.domain.identity import Principal, RefreshToken
+from dhruva.contexts.platform.domain.identity import (
+    AuthenticationOperation,
+    Principal,
+    RefreshToken,
+    SecurityOutcome,
+)
 from dhruva.contexts.platform.infrastructure.identity import MINIMUM_KEY_BYTES, JwtTokenIssuer
 from dhruva.shared.config.secret import SecretValue
 from dhruva.shared.errors import AuthenticationError, TokenExpiredError, TokenRevokedError
 from dhruva.shared.identity import AccountId, PrincipalId, RefreshTokenId
 from dhruva.shared.time import FrozenClock
 from tests.unit.identity.fakes import (
+    FakeIdentityMetrics,
     FakePasswordHasher,
     FakeRefreshTokenMinter,
     FakeUnitOfWork,
@@ -62,8 +68,17 @@ def minter() -> FakeRefreshTokenMinter:
 
 
 @pytest.fixture
+def metrics() -> FakeIdentityMetrics:
+    """Return a recorder constrained to the closed security label enums."""
+    return FakeIdentityMetrics()
+
+
+@pytest.fixture
 def use_case(
-    uow: FakeUnitOfWork, minter: FakeRefreshTokenMinter, request: pytest.FixtureRequest
+    uow: FakeUnitOfWork,
+    minter: FakeRefreshTokenMinter,
+    metrics: FakeIdentityMetrics,
+    request: pytest.FixtureRequest,
 ) -> RefreshSessionUseCase:
     """Wire the use case, at ``NOW`` unless a test asks for another instant."""
     at = getattr(request, "param", NOW)
@@ -71,6 +86,7 @@ def use_case(
         lambda: uow,
         tokens=JwtTokenIssuer(SecretValue("k" * MINIMUM_KEY_BYTES, register=False)),
         minter=minter,
+        metrics=metrics,
         policy=POLICY,
         clock=FrozenClock(at),
     )
@@ -117,6 +133,29 @@ async def test_a_usable_token_rotates_into_a_new_session(
     assert session.access_token
     assert uow.refresh_tokens.by_id[original.token_id.value].is_spent
     assert len(uow.refresh_tokens.by_id) == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_metrics_cover_success_refusal_and_error_without_token_data(
+    use_case: RefreshSessionUseCase,
+    uow: FakeUnitOfWork,
+    minter: FakeRefreshTokenMinter,
+    metrics: FakeIdentityMetrics,
+) -> None:
+    """The presented secret and its digest cannot enter the metric port."""
+    _, secret = seed_token(uow, minter)
+    await refresh(use_case, secret)
+    with pytest.raises(TokenRevokedError):
+        await refresh(use_case, secret)
+    uow.enter_error = RuntimeError("database unavailable")
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await refresh(use_case, secret)
+
+    assert metrics.authentications == [
+        (AuthenticationOperation.REFRESH, SecurityOutcome.SUCCEEDED),
+        (AuthenticationOperation.REFRESH, SecurityOutcome.REFUSED),
+        (AuthenticationOperation.REFRESH, SecurityOutcome.ERROR),
+    ]
 
 
 @pytest.mark.asyncio

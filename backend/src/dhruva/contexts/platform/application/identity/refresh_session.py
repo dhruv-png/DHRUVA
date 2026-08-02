@@ -42,6 +42,10 @@ from dhruva.contexts.platform.domain.audit import (
     AuditOutcome,
     AuditRecord,
 )
+from dhruva.contexts.platform.domain.identity.metrics import (
+    AuthenticationOperation,
+    SecurityOutcome,
+)
 from dhruva.contexts.platform.domain.identity.refresh import RefreshVerdict
 from dhruva.shared.errors import (
     AuthenticationError,
@@ -57,6 +61,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from dhruva.contexts.platform.application.identity.sessions import SessionPolicy
+    from dhruva.contexts.platform.domain.identity.metrics import IdentityMetrics
     from dhruva.contexts.platform.domain.identity.ports import (
         IdentityUnitOfWork,
         RefreshTokenMinter,
@@ -79,7 +84,14 @@ _EXPIRED = "refresh token has expired"
 class RefreshSessionUseCase:
     """Exchanges a refresh token for a new session, or detects that it was stolen."""
 
-    __slots__ = ("_clock", "_minter", "_policy", "_tokens", "_unit_of_work_factory")
+    __slots__ = (
+        "_clock",
+        "_metrics",
+        "_minter",
+        "_policy",
+        "_tokens",
+        "_unit_of_work_factory",
+    )
 
     def __init__(
         self,
@@ -87,6 +99,7 @@ class RefreshSessionUseCase:
         *,
         tokens: TokenIssuer,
         minter: RefreshTokenMinter,
+        metrics: IdentityMetrics,
         policy: SessionPolicy,
         clock: Clock,
     ) -> None:
@@ -94,10 +107,33 @@ class RefreshSessionUseCase:
         self._unit_of_work_factory = unit_of_work_factory
         self._tokens = tokens
         self._minter = minter
+        self._metrics = metrics
         self._policy = policy
         self._clock = clock
 
     async def execute(self, *, presented: SecretValue, correlation_id: UUID) -> IssuedSession:
+        """Refresh and count a bounded success, refusal or error outcome."""
+        try:
+            session = await self._refresh(presented=presented, correlation_id=correlation_id)
+        except (AuthenticationError, TokenExpiredError, TokenRevokedError):
+            self._metrics.authentication(
+                AuthenticationOperation.REFRESH,
+                SecurityOutcome.REFUSED,
+            )
+            raise
+        except Exception:
+            self._metrics.authentication(
+                AuthenticationOperation.REFRESH,
+                SecurityOutcome.ERROR,
+            )
+            raise
+        self._metrics.authentication(
+            AuthenticationOperation.REFRESH,
+            SecurityOutcome.SUCCEEDED,
+        )
+        return session
+
+    async def _refresh(self, *, presented: SecretValue, correlation_id: UUID) -> IssuedSession:
         """Rotate the presented refresh token and issue a new session.
 
         Raises

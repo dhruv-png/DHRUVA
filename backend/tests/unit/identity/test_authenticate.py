@@ -22,13 +22,18 @@ from dhruva.contexts.platform.domain.audit import (
     AuditAction,
     AuditOutcome,
 )
-from dhruva.contexts.platform.domain.identity import Principal
+from dhruva.contexts.platform.domain.identity import (
+    AuthenticationOperation,
+    Principal,
+    SecurityOutcome,
+)
 from dhruva.contexts.platform.infrastructure.identity import MINIMUM_KEY_BYTES, JwtTokenIssuer
 from dhruva.shared.config.secret import SecretValue
 from dhruva.shared.errors import AuthenticationError
 from dhruva.shared.identity import AccountId, PrincipalId
 from dhruva.shared.time import FrozenClock
 from tests.unit.identity.fakes import (
+    FakeIdentityMetrics,
     FakePasswordHasher,
     FakeRefreshTokenMinter,
     FakeUnitOfWork,
@@ -60,7 +65,17 @@ def uow() -> FakeUnitOfWork:
 
 
 @pytest.fixture
-def use_case(hasher: FakePasswordHasher, uow: FakeUnitOfWork) -> AuthenticateUseCase:
+def metrics() -> FakeIdentityMetrics:
+    """Return a recorder whose values are constrained by the metrics port."""
+    return FakeIdentityMetrics()
+
+
+@pytest.fixture
+def use_case(
+    hasher: FakePasswordHasher,
+    metrics: FakeIdentityMetrics,
+    uow: FakeUnitOfWork,
+) -> AuthenticateUseCase:
     """Wire the use case over fakes and a real JWT issuer.
 
     The issuer is real because it is cheap and because a fake one would let a
@@ -72,6 +87,7 @@ def use_case(hasher: FakePasswordHasher, uow: FakeUnitOfWork) -> AuthenticateUse
         hasher=hasher,
         tokens=JwtTokenIssuer(SecretValue("k" * MINIMUM_KEY_BYTES, register=False)),
         minter=FakeRefreshTokenMinter(),
+        metrics=metrics,
         policy=POLICY,
         clock=FrozenClock(NOW),
     )
@@ -122,6 +138,29 @@ async def test_a_correct_password_issues_a_session(
     assert session.access_expires_at == NOW + timedelta(seconds=900)
     assert session.principal_id == PRINCIPAL
     assert session.account_id == ACCOUNT
+
+
+@pytest.mark.asyncio
+async def test_authentication_metrics_cover_success_refusal_and_error_without_subjects(
+    use_case: AuthenticateUseCase,
+    uow: FakeUnitOfWork,
+    hasher: FakePasswordHasher,
+    metrics: FakeIdentityMetrics,
+) -> None:
+    """Only closed outcomes reach metrics, never caller-controlled identity data."""
+    seed_principal(uow, hasher)
+    await authenticate(use_case)
+    with pytest.raises(AuthenticationError):
+        await authenticate(use_case, password="wrong-password-value")
+    uow.enter_error = RuntimeError("database unavailable")
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await authenticate(use_case)
+
+    assert metrics.authentications == [
+        (AuthenticationOperation.LOGIN, SecurityOutcome.SUCCEEDED),
+        (AuthenticationOperation.LOGIN, SecurityOutcome.REFUSED),
+        (AuthenticationOperation.LOGIN, SecurityOutcome.ERROR),
+    ]
 
 
 @pytest.mark.asyncio

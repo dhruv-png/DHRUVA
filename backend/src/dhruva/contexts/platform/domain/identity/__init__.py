@@ -29,6 +29,12 @@ from dhruva.contexts.platform.domain.identity.credentials import (
     credential_associated_data,
 )
 from dhruva.contexts.platform.domain.identity.keys import KeyProvider
+from dhruva.contexts.platform.domain.identity.metrics import (
+    AuthenticationOperation,
+    AuthorisationOperation,
+    IdentityMetrics,
+    SecurityOutcome,
+)
 from dhruva.contexts.platform.domain.identity.passwords import (
     REDACTED_HASH,
     PasswordHash,
@@ -51,11 +57,14 @@ __all__ = [
     "REDACTED_HASH",
     "TWO_FACTOR_REQUIRED",
     "AuditSink",
+    "AuthenticationOperation",
     "AuthorisationDirectory",
+    "AuthorisationOperation",
     "Credential",
     "EncryptedSecret",
     "GrantRefusal",
     "GrantVerdict",
+    "IdentityMetrics",
     "IdentityUnitOfWork",
     "KeyProvider",
     "PasswordHash",
@@ -69,6 +78,7 @@ __all__ = [
     "RefreshVerdict",
     "Role",
     "RoleStore",
+    "SecurityOutcome",
     "TokenClaims",
     "TokenIssuer",
     "credential_associated_data",

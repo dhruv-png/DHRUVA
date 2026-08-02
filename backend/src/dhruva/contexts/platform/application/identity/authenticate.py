@@ -43,6 +43,10 @@ from dhruva.contexts.platform.domain.audit import (
     AuditOutcome,
     AuditRecord,
 )
+from dhruva.contexts.platform.domain.identity.metrics import (
+    AuthenticationOperation,
+    SecurityOutcome,
+)
 from dhruva.shared.errors import AuthenticationError
 from dhruva.shared.logging import get_logger
 
@@ -52,6 +56,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from dhruva.contexts.platform.application.identity.sessions import SessionPolicy
+    from dhruva.contexts.platform.domain.identity.metrics import IdentityMetrics
     from dhruva.contexts.platform.domain.identity.passwords import PasswordHasher
     from dhruva.contexts.platform.domain.identity.ports import (
         IdentityUnitOfWork,
@@ -88,7 +93,15 @@ class AuthenticateUseCase:
     the identical code runs against PostgreSQL in the integration suite.
     """
 
-    __slots__ = ("_clock", "_hasher", "_minter", "_policy", "_tokens", "_unit_of_work_factory")
+    __slots__ = (
+        "_clock",
+        "_hasher",
+        "_metrics",
+        "_minter",
+        "_policy",
+        "_tokens",
+        "_unit_of_work_factory",
+    )
 
     def __init__(
         self,
@@ -97,6 +110,7 @@ class AuthenticateUseCase:
         hasher: PasswordHasher,
         tokens: TokenIssuer,
         minter: RefreshTokenMinter,
+        metrics: IdentityMetrics,
         policy: SessionPolicy,
         clock: Clock,
     ) -> None:
@@ -110,10 +124,39 @@ class AuthenticateUseCase:
         self._hasher = hasher
         self._tokens = tokens
         self._minter = minter
+        self._metrics = metrics
         self._policy = policy
         self._clock = clock
 
     async def execute(
+        self, *, subject: str, password: SecretValue, correlation_id: UUID
+    ) -> IssuedSession:
+        """Authenticate and count a bounded success, refusal or error outcome."""
+        try:
+            session = await self._authenticate(
+                subject=subject,
+                password=password,
+                correlation_id=correlation_id,
+            )
+        except AuthenticationError:
+            self._metrics.authentication(
+                AuthenticationOperation.LOGIN,
+                SecurityOutcome.REFUSED,
+            )
+            raise
+        except Exception:
+            self._metrics.authentication(
+                AuthenticationOperation.LOGIN,
+                SecurityOutcome.ERROR,
+            )
+            raise
+        self._metrics.authentication(
+            AuthenticationOperation.LOGIN,
+            SecurityOutcome.SUCCEEDED,
+        )
+        return session
+
+    async def _authenticate(
         self, *, subject: str, password: SecretValue, correlation_id: UUID
     ) -> IssuedSession:
         """Authenticate ``subject`` and issue a session.

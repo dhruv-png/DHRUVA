@@ -22,9 +22,11 @@ from dhruva.contexts.platform.domain.identity import (
 from dhruva.contexts.platform.infrastructure.database.identity_unit_of_work import (
     SqlAlchemyIdentityUnitOfWork,
 )
+from dhruva.contexts.platform.infrastructure.identity import PrometheusIdentityMetrics
 from dhruva.contexts.platform.infrastructure.persistence.models import PrincipalRoleModel
 from dhruva.shared.errors import ConflictError
 from dhruva.shared.identity import AccountId, PrincipalId
+from dhruva.shared.observability import MetricsRegistry
 from dhruva.shared.time import FrozenClock
 
 if TYPE_CHECKING:
@@ -126,6 +128,7 @@ async def test_grant_is_durable_with_version_and_audit_in_one_transaction(
     changed = await GrantPermissionUseCase(
         lambda scoped_account: _uow(migrated, scoped_account),
         clock=FrozenClock(NOW),
+        metrics=PrometheusIdentityMetrics(MetricsRegistry()),
     ).execute(
         actor_id=actor.principal_id,
         account_id=account_id,
@@ -179,6 +182,7 @@ async def test_refused_protected_grant_commits_audit_without_mutating_role(
         await GrantPermissionUseCase(
             lambda scoped_account: _uow(migrated, scoped_account),
             clock=FrozenClock(NOW),
+            metrics=PrometheusIdentityMetrics(MetricsRegistry()),
         ).execute(
             actor_id=actor.principal_id,
             account_id=account_id,

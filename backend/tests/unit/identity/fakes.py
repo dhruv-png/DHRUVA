@@ -25,6 +25,11 @@ from typing import TYPE_CHECKING, Self
 from uuid import UUID, uuid4
 
 from dhruva.contexts.platform.domain.identity.authorisation import Permission, is_permitted
+from dhruva.contexts.platform.domain.identity.metrics import (
+    AuthenticationOperation,
+    AuthorisationOperation,
+    SecurityOutcome,
+)
 from dhruva.contexts.platform.domain.identity.passwords import PasswordHash
 from dhruva.contexts.platform.domain.identity.ports import MintedRefreshToken
 from dhruva.shared.config.secret import SecretValue
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
 __all__ = [
     "FakeAuditSink",
     "FakeAuthorisationDirectory",
+    "FakeIdentityMetrics",
     "FakePasswordHasher",
     "FakePrincipalStore",
     "FakeRefreshTokenMinter",
@@ -50,6 +56,30 @@ __all__ = [
     "FakeRoleStore",
     "FakeUnitOfWork",
 ]
+
+
+class FakeIdentityMetrics:
+    """Collects only the closed operation/outcome pairs accepted by the port."""
+
+    def __init__(self) -> None:
+        self.authentications: list[tuple[AuthenticationOperation, SecurityOutcome]] = []
+        self.authorisations: list[tuple[AuthorisationOperation, SecurityOutcome]] = []
+
+    def authentication(
+        self,
+        operation: AuthenticationOperation,
+        outcome: SecurityOutcome,
+    ) -> None:
+        """Collect one bounded authentication outcome."""
+        self.authentications.append((operation, outcome))
+
+    def authorisation(
+        self,
+        operation: AuthorisationOperation,
+        outcome: SecurityOutcome,
+    ) -> None:
+        """Collect one bounded authorisation outcome."""
+        self.authorisations.append((operation, outcome))
 
 
 class FakePasswordHasher:
@@ -292,6 +322,7 @@ class FakeUnitOfWork:
     commits: int = 0
     rollbacks: int = 0
     entered: int = 0
+    enter_error: Exception | None = None
 
     def __post_init__(self) -> None:
         """Bind authority queries to this unit of work's stores."""
@@ -300,6 +331,8 @@ class FakeUnitOfWork:
     async def __aenter__(self) -> Self:
         """Begin the transaction."""
         self.entered += 1
+        if self.enter_error is not None:
+            raise self.enter_error
         return self
 
     async def __aexit__(

@@ -1,9 +1,10 @@
 # S06 — Identity, Secrets Vault & Audit
 
 > **Status:** Approved and in progress. ADRs 070–074 are accepted; delivery
-> steps 1–8 are complete. Step 8 preserves permissive v1 RLS while exercising
-> real isolation under a non-owner PostgreSQL role. Redaction and authentication
-> metrics are next.
+> steps 1–9 are complete. RLS remains permissive but exercised; S06 secret
+> material is covered by both redaction strategies; authentication and
+> authorisation metrics use closed, bounded-cardinality labels. Release
+> validation and documentation reconciliation are next.
 >
 > Everything below is justified from the Master Project Plan (§5 C9, §6 the S06
 > catalogue row, §8 G0, §12 retention, §15.1 security controls) and from
@@ -385,6 +386,16 @@ signal that matters and reconstructing it from logs afterwards is too late; and
 the redaction processor gets tested against S06's own types under both of
 ADR-037's independent strategies, beside the existing redaction suite.
 
+**Delivered at step 9.** `dhruva_platform_authentication_attempts_total` counts
+login and refresh outcomes, and
+`dhruva_platform_authorisation_mutations_total` counts grant and revoke
+outcomes. Both expose only a closed operation enum and the closed outcomes
+`succeeded`, `refused` and `error`. Subjects, account IDs, roles, permissions,
+free-form reasons and every secret-bearing value are structurally absent from
+the metric port. The deliberate leak tests cover password hashes, access and
+refresh tokens, broker secrets and TOTP material through sensitive field names
+and through registered-value interpolation.
+
 ---
 
 ## 11. Deliberately deferred debt
@@ -444,7 +455,10 @@ establishes that neither changes.
    Migration `0012` completes permissive policy enrollment; the Unit of Work
    sets transaction-local tenant context; completeness, isolation, rollback and
    pooled-reuse behavior are exercised against real PostgreSQL.
-9. Redaction coverage for S06 types; authentication metrics
+9. ~~Redaction coverage for S06 types; authentication metrics~~ — **done.**
+   Both ADR-037 strategies are exercised with S06 material; login, refresh,
+   grant and revoke outcomes use bounded labels and distinguish expected refusal
+   from infrastructure error without accepting identity or secret data.
 10. Validation, documentation, v0.6.0
 
 Steps 2–5 are the substance. If they are right, 6–9 are adapters and wiring.

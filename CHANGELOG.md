@@ -23,6 +23,14 @@ first table that says who a human is.
 
 ### Added
 
+- **Bounded identity security metrics and S06 leak probes** (ADR-035,
+  ADR-037). Authentication counts login and refresh outcomes; authorisation
+  counts grant and revoke outcomes. Their only labels are closed operation and
+  `succeeded`/`refused`/`error` enums, so subjects, tenants, roles, permissions,
+  refusal reasons, credentials, hashes, tokens and TOTP material have no metric
+  path. The deliberate leak suite now attacks S06 password, broker, access,
+  refresh and TOTP material through both sensitive field names and interpolated
+  registered values.
 - **Exercised RLS scaffolding** (ADR-074). Migration `0012` enrolls the one
   tenant-owned table that predated the S06 policies, while the deployed v1
   predicates remain permissive. Account-scoped Units of Work set

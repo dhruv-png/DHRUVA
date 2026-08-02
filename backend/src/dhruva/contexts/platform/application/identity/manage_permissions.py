@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from enum import StrEnum
 from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import quote
 
@@ -13,6 +12,10 @@ from dhruva.contexts.platform.domain.identity.authorisation import (
     PermissionGrant,
     is_permitted,
     may_grant,
+)
+from dhruva.contexts.platform.domain.identity.metrics import (
+    AuthorisationOperation,
+    SecurityOutcome,
 )
 from dhruva.shared.errors import (
     ConflictError,
@@ -27,6 +30,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from dhruva.contexts.platform.domain.identity.authorisation import Role
+    from dhruva.contexts.platform.domain.identity.metrics import IdentityMetrics
     from dhruva.contexts.platform.domain.identity.ports import IdentityUnitOfWork
     from dhruva.contexts.platform.domain.identity.principals import Principal
     from dhruva.shared.identity import AccountId, PrincipalId
@@ -35,29 +39,54 @@ if TYPE_CHECKING:
 __all__ = ["GrantPermissionUseCase", "RevokePermissionUseCase"]
 
 
-class _Operation(StrEnum):
-    GRANT = "grant"
-    REVOKE = "revoke"
-
-
 class _PermissionMutation:
     """Shared fail-closed workflow for the two permission mutations."""
 
-    __slots__ = ("_clock", "_unit_of_work_factory")
+    __slots__ = ("_clock", "_metrics", "_unit_of_work_factory")
 
     def __init__(
         self,
         unit_of_work_factory: Callable[[AccountId], IdentityUnitOfWork],
         *,
         clock: Clock,
+        metrics: IdentityMetrics,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._clock = clock
+        self._metrics = metrics
 
     async def _execute(
         self,
         *,
-        operation: _Operation,
+        operation: AuthorisationOperation,
+        actor_id: PrincipalId,
+        account_id: AccountId,
+        role_name: str,
+        permission: Permission,
+        correlation_id: UUID,
+    ) -> Role:
+        try:
+            role = await self._mutate(
+                operation=operation,
+                actor_id=actor_id,
+                account_id=account_id,
+                role_name=role_name,
+                permission=permission,
+                correlation_id=correlation_id,
+            )
+        except (ConflictError, NotFoundError, PermissionDeniedError):
+            self._metrics.authorisation(operation, SecurityOutcome.REFUSED)
+            raise
+        except Exception:
+            self._metrics.authorisation(operation, SecurityOutcome.ERROR)
+            raise
+        self._metrics.authorisation(operation, SecurityOutcome.SUCCEEDED)
+        return role
+
+    async def _mutate(
+        self,
+        *,
+        operation: AuthorisationOperation,
         actor_id: PrincipalId,
         account_id: AccountId,
         role_name: str,
@@ -156,7 +185,7 @@ class _PermissionMutation:
                 )
 
             if (
-                operation is _Operation.GRANT
+                operation is AuthorisationOperation.GRANT
                 and permission is Permission.MANAGE_AUTHORISATION
                 and actor_role.name == target.name
             ):
@@ -173,7 +202,7 @@ class _PermissionMutation:
                     now=now,
                 )
 
-            if operation is _Operation.GRANT:
+            if operation is AuthorisationOperation.GRANT:
                 changed = await self._grant(
                     uow,
                     actor=actor,
@@ -234,7 +263,7 @@ class _PermissionMutation:
         actor: Principal,
         target: Role,
         permission: Permission,
-        operation: _Operation,
+        operation: AuthorisationOperation,
         account_id: AccountId,
         correlation_id: UUID,
         now: datetime,
@@ -284,7 +313,7 @@ class _PermissionMutation:
         actor: Principal,
         target: Role,
         permission: Permission,
-        operation: _Operation,
+        operation: AuthorisationOperation,
         account_id: AccountId,
         correlation_id: UUID,
         now: datetime,
@@ -334,7 +363,7 @@ class _PermissionMutation:
         uow: IdentityUnitOfWork,
         *,
         error: DhruvaError,
-        operation: _Operation,
+        operation: AuthorisationOperation,
         reason: str,
         actor: str,
         account_id: AccountId,
@@ -370,7 +399,7 @@ class _PermissionMutation:
     async def _record(
         uow: IdentityUnitOfWork,
         *,
-        operation: _Operation,
+        operation: AuthorisationOperation,
         reason: str,
         actor: str,
         outcome: AuditOutcome,
@@ -412,7 +441,7 @@ class GrantPermissionUseCase(_PermissionMutation):
     ) -> Role:
         """Grant after authority, TOTP and concurrency checks."""
         return await self._execute(
-            operation=_Operation.GRANT,
+            operation=AuthorisationOperation.GRANT,
             actor_id=actor_id,
             account_id=account_id,
             role_name=role_name,
@@ -435,7 +464,7 @@ class RevokePermissionUseCase(_PermissionMutation):
     ) -> Role:
         """Revoke without removing the tenant's last eligible manager."""
         return await self._execute(
-            operation=_Operation.REVOKE,
+            operation=AuthorisationOperation.REVOKE,
             actor_id=actor_id,
             account_id=account_id,
             role_name=role_name,

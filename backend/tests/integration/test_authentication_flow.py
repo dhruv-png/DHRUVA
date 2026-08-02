@@ -56,11 +56,13 @@ from dhruva.contexts.platform.infrastructure.identity import (
     MINIMUM_KEY_BYTES,
     Argon2PasswordHasher,
     JwtTokenIssuer,
+    PrometheusIdentityMetrics,
     Sha256RefreshTokenMinter,
 )
 from dhruva.shared.config.secret import SecretValue
 from dhruva.shared.errors import AuthenticationError, TokenRevokedError
 from dhruva.shared.identity import AccountId, PrincipalId
+from dhruva.shared.observability import MetricsRegistry
 from dhruva.shared.time import FrozenClock
 
 if TYPE_CHECKING:
@@ -99,6 +101,7 @@ def _authenticate(engine: AsyncEngine, at: datetime = NOW) -> AuthenticateUseCas
         hasher=HASHER,
         tokens=_issuer(),
         minter=MINTER,
+        metrics=PrometheusIdentityMetrics(MetricsRegistry()),
         policy=POLICY,
         clock=FrozenClock(at),
     )
@@ -109,6 +112,7 @@ def _refresher(engine: AsyncEngine, at: datetime = NOW) -> RefreshSessionUseCase
         lambda: _unit_of_work(engine, at),
         tokens=_issuer(),
         minter=MINTER,
+        metrics=PrometheusIdentityMetrics(MetricsRegistry()),
         policy=POLICY,
         clock=FrozenClock(at),
     )
