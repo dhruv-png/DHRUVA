@@ -15,6 +15,18 @@ capital (ADR-026, ADR-029).
 
 ## [Unreleased]
 
+### Changed
+
+- **AR-002 activates the private personal swing-assistant roadmap.** The
+  institutional S07–S46 sequence is retained as history but indefinitely deferred
+  as active work. Four product milestones now cover unified equity/futures/news
+  data; scanning, backtesting and separate paper portfolios; news intelligence and
+  optional validated ML ranking; and the private dashboard, alerts and operations.
+- **Provider spending is bounded.** Read-only Zerodha market data is approved up to
+  ₹500/month; news and sentiment/inference must have zero recurring cost. Current
+  news uses official NSE sources, resilient public discovery/RSS and prospective
+  point-in-time archiving. Sentiment runs locally with a deterministic fallback.
+
 ## [0.6.0] — 2026-08-02 — S06 Identity, Secrets Vault & Audit
 
 S06 is complete. The credential store landed, and with it the encryption half of

@@ -1,5 +1,12 @@
 # D.H.R.U.V.A — MASTER PROJECT PLAN
 
+> **HISTORICAL REFERENCE — AR-002 (2 August 2026).** This institutional plan is
+> retained as permanent engineering history, but its S07–S46 sequence is
+> **indefinitely deferred as an active roadmap**. The owner-approved, reissued
+> active plan is [`DHRUVA_PERSONAL_MVP_PLAN.md`](DHRUVA_PERSONAL_MVP_PLAN.md).
+> Accepted ADRs and architecture controls remain binding unless explicitly
+> superseded.
+
 **Dynamic Heuristic Regime Understanding & Volatility Analytics**
 Institutional AI Quant Trading Platform — Governing Engineering Document
 
@@ -9,9 +16,10 @@ Institutional AI Quant Trading Platform — Governing Engineering Document
 | Version | **1.4 — APPROVED** |
 | Date | 26 July 2026 |
 | Author | CTO / Principal Architect (AI Engineering Lead) |
-| Status | **APPROVED WITH AMENDMENTS** — S01 released `v0.1.0`; S02 complete, awaiting approval |
+| Status | **HISTORICAL REFERENCE** — superseded as the active roadmap by AR-002 |
 | Supersedes | v1.3, v1.2, v1.1, v1.0 (all 26 July 2026) |
-| Governs | All subsequent architecture, code, schema, and documentation |
+| Active successor | `DHRUVA_PERSONAL_MVP_PLAN.md` v1.0 |
+| Governs | Historical architecture and accepted constraints, except where AR-002 narrows active product scope |
 
 > **This document is the project's permanent engineering memory.**
 > Every future response builds on Sections 4 (Decision Log), 6 (Subsystem Catalogue), and 10 (Definition of Done).

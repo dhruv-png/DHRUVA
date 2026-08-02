@@ -1,12 +1,13 @@
 # D.H.R.U.V.A
 
 **Dynamic Heuristic Regime Understanding & Volatility Analytics**
-An institutional-grade quantitative analytics platform for the Indian equity and derivatives markets.
+Private end-of-day swing-trading research and paper-trading for Indian equities
+and eligible NSE equity futures.
 
-> **Stage 1 — Minimum Credible Product.** This repository contains analytics only.
-> There is no execution capability, no broker order permission, and no code that can
-> construct an order. That is a deliberate, enforced constraint (ADR-028), not an
-> unfinished feature.
+> **Active product programme — AR-002.** DHRUVA is being completed as a private,
+> two-user research and paper-trading system. The institutional S07–S46 roadmap is
+> indefinitely deferred. There is no live broker-order capability; Zerodha access
+> is read-only market data.
 
 ---
 
@@ -26,7 +27,8 @@ tooling usually omits:
 
 | Document | What it governs |
 |---|---|
-| [`docs/DHRUVA_MASTER_PROJECT_PLAN.md`](docs/DHRUVA_MASTER_PROJECT_PLAN.md) | Everything. Roadmap, gates, Definition of Done, risk register. **v1.4, approved 2026-07-26.** |
+| [`docs/DHRUVA_PERSONAL_MVP_PLAN.md`](docs/DHRUVA_PERSONAL_MVP_PLAN.md) | **Active roadmap.** Four approved personal-product milestones, safety boundary, provider budget and completion criteria. |
+| [`docs/DHRUVA_MASTER_PROJECT_PLAN.md`](docs/DHRUVA_MASTER_PROJECT_PLAN.md) | Historical institutional roadmap and permanent architecture reference. S07–S46 are indefinitely deferred as active work (AR-002). |
 | [`docs/adr/`](docs/adr/) | Architecture decisions. Immutable once accepted (ADR-027). |
 | [`docs/subsystems/`](docs/subsystems/) | Per-subsystem design documents. |
 | [`docs/runbooks/`](docs/runbooks/) | How things fail and how to recover them. |
@@ -46,9 +48,9 @@ make check      # run every gate CI runs
 
 `make help` lists every target.
 
-**Current checkpoint.** The S06 `v0.6.0` release candidate is prepared at
-migration head `0012_rls_scaffolding`. Creating the tag, publishing the release,
-merging the branch, and beginning S07 remain separate owner-controlled actions.
+**Current checkpoint.** The immutable S06 tag is `v0.6.0`, migration head
+`0012_rls_scaffolding`. Accepted S06 and the Linux/PostgreSQL benchmark workflow
+are on `main`; active work continues on `mvp-personal-swing-assistant`.
 
 ## Architecture in one paragraph
 
@@ -90,9 +92,10 @@ architecture.
 
 ## Where this is going
 
-Stage 1 ends at **Gate G-MCP** (~Week 28): a go/no-go review on whether the regime
-thesis holds. Stage 2 — intelligence, decision, execution, full dual-mode UI — is
-not authorised until it passes. See plan §8.
+The active roadmap has four product milestones: unified market/futures/news data;
+quant scanning, honest backtesting and isolated paper portfolios; news intelligence
+and optional validated ML ranking; then the private dashboard, alerts and complete
+operations. See the [Personal MVP Plan](docs/DHRUVA_PERSONAL_MVP_PLAN.md).
 
 ## Licence
 

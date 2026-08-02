@@ -103,7 +103,7 @@ it does, read these six in order:
 
 ## Architecture Revisions
 
-One approved revision is recorded below. A revision is the heavier instrument,
+Two approved revisions are recorded below. A revision is the heavier instrument,
 reserved for changes that invalidate a gate or a scope parameter (plan section
 1.2); it requires written Product Owner approval and, when the plan itself
 changes, a reissued Master Project Plan.
@@ -111,6 +111,7 @@ changes, a reissued Master Project Plan.
 | AR | Date | Change | Plan version |
 |---|---|---|---|
 | **AR-001b** | 2026-07-29 | **The Unit of Work stages events into the outbox; it does not publish them.** Amends the scope of ADR-053, which said events publish after commit. `add_event()` now writes an `OutboxRow` inside the caller's transaction; `_publish`, `_discard_events` and the publisher constructor argument are removed. Approved in writing by the Product Owner after an evidence review. | v1.6 (no plan change) |
+| **AR-002** | 2026-08-02 | **DHRUVA becomes a private, two-user, end-of-day swing-research and paper-trading product.** The institutional S07–S46 delivery sequence and Gate G-MCP staging are indefinitely deferred as the active roadmap. Four product milestones now deliver unified equity/futures/news data; scanning, backtesting and isolated paper portfolios; news intelligence and optional validated ML ranking; then the private dashboard, alerts and operations. Options, live orders and public SaaS remain out of scope. The owner approved Zerodha market data up to ₹500/month, zero recurring news/inference spend, prospective point-in-time news archiving and local sentiment with a deterministic fallback. | Personal MVP v1.0 (reissued active plan) |
 
 **Why AR-001b was necessary.** ADR-053's post-commit publication left a window in
 which the transaction was durable and the event existed only in process memory: a
@@ -122,3 +123,11 @@ retrying caller would apply a non-idempotent use case twice.
 ADR-053 itself is unmodified, as ADR-027 requires of an accepted record. Its
 transaction-ownership decision stands unchanged; only the event-publication
 clause is superseded, and this row is where that is recorded.
+
+**Why AR-002 was necessary.** The original plan optimised for a broad institutional
+platform and sequenced forty remaining subsystems behind an analytics-thesis gate.
+The approved product is narrower in users, instruments and execution risk, but it
+needs a usable end-to-end research workflow sooner. The immutable `v0.6.0`
+foundation and its controls remain; only the active scope, milestone sequence and
+provider budget change. The historical plan is retained with a prominent deferral
+notice, and `DHRUVA_PERSONAL_MVP_PLAN.md` is the required reissued plan.

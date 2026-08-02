@@ -84,3 +84,31 @@ than silently applied.
 **Next.** S03 — Domain Primitives & Shared Kernel, after S02 approval.
 
 **Open.** TD-01 and TD-02 both need a Python 3.12 host.
+
+---
+
+## 2026-08-02 — AR-002 personal-product transition
+
+**Done.** Preserved local benchmark commit `5179a31` and the accepted S06 history,
+merged both into `main` without rewriting the immutable `v0.6.0` tag, validated
+the merged tree, and pushed merge commit `4202d73`. Created and published
+`mvp-personal-swing-assistant` from that checkpoint. Reissued the active roadmap
+as `DHRUVA_PERSONAL_MVP_PLAN.md` and marked the institutional S07–S46 sequence as
+historical and indefinitely deferred.
+
+**Validated.** 1,919 tests passed, 5 intentional skips, 29 benchmark deselections,
+one documented non-strict XPASS and 96.37% coverage. Ruff lint/format, strict
+mypy, import-linter, custom boundaries, ADR guard and diff checks passed.
+
+**Decided.** AR-002 narrows delivery to a private end-of-day research and
+paper-trading product for two users across four milestones. Zerodha read-only
+market data may cost up to ₹500/month. News and local sentiment must have zero
+recurring provider cost; paid news and hosted inference cannot block completion.
+Official NSE sources, resilient public discovery/RSS, prospective point-in-time
+archiving and a deterministic local sentiment fallback are binding.
+
+**Next.** MVP 1 — shared watchlist plus the first vertical market-data slice.
+
+**Open.** The exact real watchlist and Zerodha credentials are intentionally not
+needed until fixture-backed behaviour is complete and an explicit provider smoke
+test is ready.
