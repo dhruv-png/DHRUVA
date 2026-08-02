@@ -25,7 +25,7 @@ jobs:
       - name: pip-audit
         run: >-
           uv run --project backend pip-audit --strict --desc --require-hashes
-          --requirement backend/requirements.lock
+          --disable-pip --requirement backend/requirements.lock
 
   secrets:
     name: Secret scan

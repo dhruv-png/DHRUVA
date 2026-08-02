@@ -77,6 +77,9 @@ def test_dependency_audit_checks_the_hash_pinned_deployment_lock(repo_root: Path
     deployment_lock = (repo_root / "backend" / "requirements.lock").read_text(encoding="utf-8")
 
     assert "pip-audit --strict --desc --require-hashes" in workflow
+    assert "--disable-pip" in workflow, (
+        "the complete hash-pinned export must be audited as pre-resolved input"
+    )
     assert "--requirement backend/requirements.lock" in workflow
     assert "--hash=sha256:" in deployment_lock
     assert "\ndhruva==" not in deployment_lock, (
