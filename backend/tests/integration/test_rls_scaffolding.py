@@ -30,6 +30,7 @@ TENANT_TABLES: Final = frozenset(
         "refresh_token",
         "role",
         "role_permission",
+        "watchlist_membership_revision",
     }
 )
 

@@ -6,3 +6,19 @@ HTTP clients. Implements the ports declared in ``domain``.
 May import this context's ``domain`` and ``application``. Nothing outside a
 composition root may import this package (ADR-003).
 """
+
+from dhruva.contexts.reference.infrastructure.owner_universe import (
+    OWNER_UNIVERSE_REVISION,
+    load_owner_universe,
+)
+from dhruva.contexts.reference.infrastructure.persistence import (
+    ReferenceRepository,
+    SqlAlchemyReferenceUnitOfWork,
+)
+
+__all__ = [
+    "OWNER_UNIVERSE_REVISION",
+    "ReferenceRepository",
+    "SqlAlchemyReferenceUnitOfWork",
+    "load_owner_universe",
+]

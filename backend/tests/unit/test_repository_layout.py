@@ -109,6 +109,7 @@ def test_root_marker_is_present(repo_root: Path) -> None:
         "docs/adr/README.md",
         "docs/adr/TEMPLATE.md",
         "docs/DHRUVA_MASTER_PROJECT_PLAN.md",
+        "docs/DHRUVA_PERSONAL_MVP_PLAN.md",
         "docs/DOMAIN.md",
         "docs/LESSONS.md",
         "docs/decisions.md",

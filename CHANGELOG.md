@@ -29,6 +29,19 @@ capital (ADR-026, ADR-029).
   news uses official NSE sources, resilient public discovery/RSS and prospective
   point-in-time archiving. Sentiment runs locally with a deterministic fallback.
 
+### Added
+
+- **Effective-dated shared reference universe (ADR-075).** The exact twenty
+  owner-approved NSE equities and their names, aliases, sectors and concentration
+  metadata are committed as reviewable configuration, with `NAM-INDIA` and `M&M`
+  punctuation preserved. Nifty 50 is a separate benchmark identity. Append-only
+  identity and membership revisions keep both effective and recorded-at time;
+  source-revision retries are idempotent and conflicting reuse fails closed.
+- **Dynamic futures intent.** Every approved equity requests futures research,
+  but the static list does not claim eligibility. Current `NFO-FUT` contracts,
+  tokens, expiries and lots will be resolved on each provider-master refresh;
+  unavailable futures never remove the underlying cash instrument.
+
 ## [0.6.0] — 2026-08-02 — S06 Identity, Secrets Vault & Audit
 
 S06 is complete. The credential store landed, and with it the encryption half of

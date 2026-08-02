@@ -112,3 +112,26 @@ archiving and a deterministic local sentiment fallback are binding.
 **Open.** The exact real watchlist and Zerodha credentials are intentionally not
 needed until fixture-backed behaviour is complete and an explicit provider smoke
 test is ready.
+
+---
+
+## 2026-08-02 — Owner universe supplied; MVP 1 reference slice
+
+**Done.** The owner supplied the exact twenty-symbol shared watchlist, resolving
+the watchlist stop condition. Recorded ADR-075 and implemented stable instrument
+identity plus append-only effective/recorded identity and membership revisions.
+The committed configuration preserves exact names and punctuation, owner-approved
+aliases and historical names, sector classifications and the Adani Group warning
+dimension. Nifty 50 is persisted separately as the market benchmark.
+
+**Decided.** Static configuration records futures research intent, never permanent
+eligibility. Each Zerodha instrument-master refresh must prove current active
+contracts, positive lots and unambiguous underlying mapping. Missing contracts
+degrade that instrument to cash-only analysis instead of fabricating one or
+failing the daily scan.
+
+**Next.** Validate migration `0013_reference_watchlist`, commit this reference
+slice, then implement the read-only Zerodha instrument-master adapter.
+
+**Open.** Zerodha app credentials remain unnecessary until the fixture-backed
+adapter is ready for its first explicit provider smoke test.

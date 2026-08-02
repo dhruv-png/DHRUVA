@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**74 decisions — 73 accepted, 1 superseded.** Records are immutable once accepted
+**75 decisions — 74 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -83,6 +83,7 @@ should not have been made gets caught.
 | [ADR-072](ADR-072-access-tokens-are-stateless-refresh-tokens-are-stored-and-rotated.md) | Access tokens are short-lived and stateless; refresh tokens are stored, rotated on use, and revocable | Accepted |
 | [ADR-073](ADR-073-authorisation-defaults-to-deny.md) | Authorisation defaults to deny; order placement is a separate permission gated on enrolled 2FA | Accepted |
 | [ADR-074](ADR-074-rls-policies-are-authored-and-exercised-from-the-start.md) | Row-level security policies are authored *and exercised* from the start, permissive in v1 | Accepted |
+| [ADR-075](ADR-075-reference-identity-and-watchlist-are-bitemporal-revisions.md) | Reference identity and watchlist membership are bitemporal revisions | Accepted |
 
 ## Reading order for someone new
 

@@ -23,6 +23,10 @@ from dhruva.contexts.platform.infrastructure.persistence import (  # noqa: F401
     outbox,
 )
 from dhruva.contexts.platform.infrastructure.persistence.models import Base
+from dhruva.contexts.reference.infrastructure.persistence import (
+    models as reference_models,  # noqa: F401
+)
+from dhruva.contexts.reference.infrastructure.persistence.models import ReferenceBase
 from dhruva.shared.config.settings import load_settings
 
 if TYPE_CHECKING:
@@ -32,7 +36,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, ReferenceBase.metadata]
 
 # The URL comes from validated settings rather than alembic.ini, so a credential
 # never lands in a committed file (ADR-031, ADR-033).

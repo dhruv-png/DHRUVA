@@ -133,11 +133,19 @@ must roll up to one of these outcomes.
 
 ### MVP 1 — Unified market, futures and news data
 
-Deliver one effective-dated shared watchlist, initially about 20 fixture symbols
-and configurable to at least 50. Each member carries a canonical NSE symbol,
-company name, aliases and former names, ISIN where available, sector, cash mapping,
-futures eligibility and active dates. DHRUVA does not select the owner's real
-securities; fixtures remain until the exact list is supplied.
+Deliver one effective-dated shared watchlist containing the exact owner-approved
+twenty symbols and configurable to at least 50. Each member carries a canonical
+NSE symbol, company name, aliases and former names, ISIN where available, sector,
+cash mapping, futures-research intent, current eligibility status and active dates.
+DHRUVA did not select the owner's securities.
+
+The owner supplied the exact twenty-symbol list on 2 August 2026: `ADANIENT`,
+`ADANIPORTS`, `ADANIGREEN`, `ADANIENSOL`, `ADANIPOWER`, `HDFCAMC`, `NAM-INDIA`,
+`INDIGO`, `ETERNAL`, `CANBK`, `SBIN`, `PNB`, `ICICIBANK`, `BAJFINANCE`,
+`ABCAPITAL`, `TMPV`, `M&M`, `MAZDOCK`, `HAL` and `COCHINSHIP`. It is owner
+configuration, not a generated recommendation. Static configuration records
+futures research intent; each instrument-master refresh determines current
+eligibility and retains cash analysis when futures are unavailable (ADR-075).
 
 Add a read-only Zerodha adapter for instrument masters, historical daily candles,
 freshness quotes, open interest, expiry, lot size and authentication state. Domain
@@ -293,7 +301,7 @@ preferred when they meet the contract.
 ## 7. Genuine owner stop conditions
 
 Work pauses only for remote divergence or protected-branch approval; the first
-credential-gated Zerodha smoke test; the exact real watchlist; an unavoidable
+credential-gated Zerodha smoke test; an unavoidable
 external account/redirect/notification setup; unclear provider storage terms; no
 legally usable zero-cost source for even current news; inadequate agreed-scope
 Zerodha futures history; an irreplaceably unclear model/dataset licence; an
@@ -310,7 +318,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 | **In progress** |
+| MVP 1 | **In progress** — exact owner watchlist supplied; reference persistence underway |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
