@@ -33,26 +33,49 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
+from dhruva.shared.identity import AccountId
 from dhruva.shared.invariants import invariant
 
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from dhruva.shared.identity import AccountId
+__all__ = ["UNATTRIBUTED_ACCOUNT", "AuditAction", "AuditOutcome", "AuditRecord"]
 
-__all__ = ["AuditAction", "AuditOutcome", "AuditRecord"]
+#: The account an audit record belongs to when it genuinely belongs to none.
+#:
+#: ADR-004 requires ``account_id NOT NULL`` on every domain table and ADR-071
+#: repeats it for this one. Plan §15.1 separately requires that **every**
+#: authentication be audited -- including one presenting a subject no principal
+#: has, which by definition has no tenant. The two requirements meet here.
+#:
+#: A nullable column was the obvious escape and is the wrong one: it would make
+#: "unattributed" and "nobody filled this in" the same representable state on the
+#: one table that exists to be evidence, and it would leave a column RLS cannot
+#: scope when S44 activates it.
+#:
+#: A reserved account keeps the column non-null, makes unattributed records a
+#: thing a query can ask for by name, and costs one identifier. It is derived
+#: rather than random so that it is the same value in every process and every
+#: deployment -- an operator comparing two environments' audit exports is
+#: comparing the same account.
+#:
+#: **Nothing may own this account.** No principal, credential or order may be
+#: scoped to it: it is a label for records that belong to no tenant, and a real
+#: row carrying it would make the label ambiguous.
+UNATTRIBUTED_ACCOUNT: Final = AccountId.deterministic("audit", "unattributed")
 
 
 class AuditAction(StrEnum):
     """The classes of action that must be audited.
 
-    These four are enumerated by plan §15.1 and are not a judgement call. A fifth
-    -- reads of the credential store -- is proposed by the S06 design and is
-    deliberately absent until that ADR is accepted, because auditing a read is a
-    different decision from auditing a write and costs differently.
+    Four are enumerated by plan §15.1 and are not a judgement call. The fifth,
+    :attr:`CREDENTIAL_READ`, was proposed by the S06 design and deferred here
+    until the ADR deciding it was accepted -- because auditing a read is a
+    different decision from auditing a write and costs differently. ADR-071 is
+    now accepted and makes that call, so it is present.
     """
 
     AUTHENTICATION = "authentication"
@@ -74,6 +97,20 @@ class AuditAction(StrEnum):
     """An order was placed, modified or cancelled. Plan §15.2 requires an
     immutable order audit trail before G5, and this is the record that satisfies
     it."""
+
+    CREDENTIAL_READ = "credential_read"
+    """The credential store was read (ADR-071).
+
+    The only audited *read* in the platform, and the exception is argued rather
+    than assumed. Recording every read of every table would multiply write
+    volume by read volume for a benefit nobody has asked for. This one is
+    different in kind: "was this secret ever accessed, and by whom" is the
+    question asked after a suspected compromise, and it is the one question that
+    cannot be answered retrospectively -- an unrecorded read leaves nothing
+    behind to find.
+
+    The record names the credential; it never carries what the credential is.
+    """
 
 
 class AuditOutcome(StrEnum):

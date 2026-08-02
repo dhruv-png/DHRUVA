@@ -25,7 +25,14 @@ from typing import ClassVar, Final, Self
 from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.invariants import invariant
 
-__all__ = ["AccountId", "CredentialId", "InstrumentId", "SurrogateId"]
+__all__ = [
+    "AccountId",
+    "CredentialId",
+    "InstrumentId",
+    "PrincipalId",
+    "RefreshTokenId",
+    "SurrogateId",
+]
 
 #: Namespace for deterministic identifiers. Fixed forever: changing it would
 #: change every derived identifier, which is the same as losing them.
@@ -249,6 +256,39 @@ class CredentialId(SurrogateId):
     """
 
     PREFIX: ClassVar[str] = "cred"
+
+
+class PrincipalId(SurrogateId):
+    """Identifies one authenticating principal -- today, a human operator (ADR-072).
+
+    Distinct from :class:`AccountId`, and the distinction is the one most easily
+    lost in a single-operator system where the two happen to be one-to-one. An
+    account is a **tenant**: the thing ADR-004 scopes every row to. A principal
+    is **who acted**: the thing an audit record names and an access token asserts
+    as its subject. Collapsing them would make "which human did this?"
+    unanswerable the moment a second operator exists, and would have to be
+    unpicked across every table that had meanwhile stored one meaning under the
+    other's name.
+
+    Minted, never derived. A principal's natural key is its login subject, which
+    is exactly the value most likely to change -- an operator's email address is
+    not a stable identity, and deriving from it would rename the principal every
+    time the address did.
+    """
+
+    PREFIX: ClassVar[str] = "prin"
+
+
+class RefreshTokenId(SurrogateId):
+    """Identifies one issued refresh token (ADR-072).
+
+    A refresh token is a row rather than a signature precisely so that it can be
+    revoked and so that its lineage can be walked, and both require it to have an
+    identity independent of the secret it represents. The identifier is safe to
+    log; the token itself never is, and only its hash is stored.
+    """
+
+    PREFIX: ClassVar[str] = "rtok"
 
 
 def _invalid(message: str, text: str) -> InvariantViolation:

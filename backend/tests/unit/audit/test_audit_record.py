@@ -54,19 +54,42 @@ def make_record(**overrides: object) -> AuditRecord:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_audited_actions_are_exactly_the_four_the_plan_names() -> None:
-    """Pinned against plan §15.1, so a fifth cannot arrive unnoticed.
+def test_the_audited_actions_are_the_plan_s_four_plus_the_one_adr_071_added() -> None:
+    """Pinned, so a sixth cannot arrive unnoticed.
 
-    The S06 design proposes a fifth -- reads of the credential store -- and this
-    test is what makes accepting that ADR a visible act rather than an
-    incidental commit.
+    Four come from plan §15.1 and are not a judgement call. The fifth,
+    ``credential_read``, was proposed by the S06 design and deferred until
+    ADR-071 decided it -- which is exactly what this test was written to force:
+    accepting the ADR had to be a visible act, in a diff that also edits this
+    line, rather than an incidental commit.
+
+    That has now happened, and the pin is re-set rather than removed. The reason
+    it existed does not expire: auditing a read is a different decision from
+    auditing a write, and the next one should be argued too.
     """
     assert sorted(action.value for action in AuditAction) == [
         "authentication",
         "configuration_change",
+        "credential_read",
         "order_action",
         "risk_override",
     ]
+
+
+def test_a_credential_read_is_the_only_audited_read() -> None:
+    """ADR-071 audits one read and gives a reason specific to it.
+
+    Recording every read of every table would multiply write volume by read
+    volume for a benefit nobody has asked for. "Was this secret ever accessed,
+    and by whom" is different: it is the question asked after a suspected
+    compromise, and it cannot be answered retrospectively.
+
+    This asserts the *shape* of that decision -- one read, argued -- so that a
+    later ``instrument_read`` or ``position_read`` has to displace it here.
+    """
+    reads = {action for action in AuditAction if action.value.endswith("_read")}
+
+    assert reads == {AuditAction.CREDENTIAL_READ}
 
 
 def test_an_outcome_is_binary() -> None:

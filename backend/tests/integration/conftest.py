@@ -374,10 +374,16 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # table to the schema and forgetting it here is how order-dependence
             # gets reintroduced: the row survives into the next test, which then
             # fails for a reason unrelated to its subject.
+            #
+            # `audit_log` is deliberately absent and must stay absent. It is
+            # guarded against TRUNCATE as well as UPDATE and DELETE (ADR-071),
+            # so adding it here would not clean up -- it would raise, and take
+            # every committing test in the suite down with it. Tests touching
+            # that table therefore never commit; see `test_audit_log.py`.
             await cleanup.execute(
                 text(
                     "TRUNCATE daily_snapshot, outbox, example_tick, processed_event, "
-                    "credential CASCADE"
+                    "credential, principal, refresh_token, role CASCADE"
                 )
             )
 

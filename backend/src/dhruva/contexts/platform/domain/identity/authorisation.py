@@ -13,20 +13,29 @@ without naming them. Neither exists here, so :func:`is_permitted` can only answe
 yes to a permission that was written down -- and the guarantee is structural
 rather than a rule somebody has to remember when adding the next role.
 
-That is also why :data:`Permission` has exactly one member. Plan §15.1 names
-order placement and nothing else; inventing a permission set would be inventing
-architecture. Members are added by the subsystem that needs them.
+That is also why :data:`Permission` stays deliberately small. Plan §15.1 names
+order placement, and S06.7 adds only the capability needed to administer
+explicit grants. Members are added by the subsystem that needs them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+from dhruva.shared.invariants import invariant
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from dhruva.shared.identity import AccountId
 
 __all__ = [
     "GrantRefusal",
     "GrantVerdict",
     "Permission",
+    "PermissionGrant",
     "Role",
     "is_permitted",
     "may_grant",
@@ -36,33 +45,109 @@ __all__ = [
 class Permission(StrEnum):
     """A capability that must be granted by name.
 
-    One member, deliberately. Plan §15.1 names order placement as "a separately
-    granted permission" and names no others.
+    Deliberately small: every member has an accepted subsystem need.
     """
 
     PLACE_ORDER = "place_order"
     """Submit, modify or cancel an order. ADR-073's central case: the risk gate
     (ADR-012) makes order placement unbypassable, and this makes it unimplied."""
 
+    MANAGE_AUTHORISATION = "manage_authorisation"
+    """Grant or revoke an explicitly named permission on a tenant role."""
 
-#: Permissions whose grant requires enrolled TOTP (plan §15.1: "TOTP 2FA
-#: mandatory for any account with order permissions"). A frozenset rather than a
-#: check against a single member, so a second order-bearing permission inherits
-#: the requirement by being added here rather than by someone remembering.
-TWO_FACTOR_REQUIRED: frozenset[Permission] = frozenset({Permission.PLACE_ORDER})
+
+#: Permissions whose grant requires enrolled TOTP. This includes order authority
+#: under plan §15.1 and permission-management authority under S06.7. A frozenset
+#: keeps the policy explicit and exhaustively testable.
+TWO_FACTOR_REQUIRED: frozenset[Permission] = frozenset(
+    {Permission.PLACE_ORDER, Permission.MANAGE_AUTHORISATION}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionGrant:
+    """One explicitly accountable permission held by a role.
+
+    The audit log answers how authorisation changed over time. These fields
+    answer the live-state question: who is responsible for the permission this
+    role holds now, and when was it granted? Keeping them in the aggregate makes
+    persistence round-trippable instead of discarding evidence at the domain
+    boundary.
+    """
+
+    permission: Permission
+    granted_at: datetime
+    granted_by: str
+
+    def __post_init__(self) -> None:
+        """Reject an unattributed or temporally ambiguous grant."""
+        invariant(bool(self.granted_by.strip()), "a permission grant must name its actor")
+        invariant(
+            self.granted_at.tzinfo is not None and self.granted_at.utcoffset() is not None,
+            "granted_at must be timezone-aware",
+            value=self.granted_at.isoformat(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class Role:
-    """A named set of explicitly granted permissions.
+    """A tenant-scoped, named set of explicitly granted permissions.
 
-    Frozen, because a role a caller can edit at runtime is a role two processes
-    disagree about -- the same reasoning ``JobDefinition`` carries in the worker
-    registry.
+    Frozen, so a later grant or revoke returns a new version rather than mutating
+    shared state. The repository can therefore apply ADR-057's
+    ``UPDATE ... WHERE version = :loaded`` rule without guessing which version
+    its caller originally observed.
     """
 
+    account_id: AccountId
     name: str
-    granted: frozenset[Permission] = field(default_factory=frozenset)
+    created_at: datetime
+    updated_at: datetime
+    grants: frozenset[PermissionGrant] = field(default_factory=frozenset)
+    version: int = 1
+
+    def __post_init__(self) -> None:
+        """Reject a role that cannot be tenant-scoped or safely written back."""
+        invariant(bool(self.name.strip()), "a role must have a name")
+        invariant(self.version >= 1, "version starts at 1", role=self.name, version=self.version)
+        for name in ("created_at", "updated_at"):
+            value: datetime = getattr(self, name)
+            invariant(
+                value.tzinfo is not None and value.utcoffset() is not None,
+                f"{name} must be timezone-aware",
+                field=name,
+                value=value.isoformat(),
+            )
+        invariant(
+            self.updated_at >= self.created_at,
+            "updated_at cannot precede created_at",
+            created_at=self.created_at.isoformat(),
+            updated_at=self.updated_at.isoformat(),
+        )
+        permissions = [grant.permission for grant in self.grants]
+        invariant(
+            len(permissions) == len(set(permissions)),
+            "a role may carry only one live grant per permission",
+            role=self.name,
+        )
+        for grant in self.grants:
+            invariant(
+                grant.granted_at >= self.created_at,
+                "a permission cannot predate its role",
+                role=self.name,
+                permission=grant.permission.value,
+            )
+            invariant(
+                self.updated_at >= grant.granted_at,
+                "updated_at cannot precede a live permission grant",
+                role=self.name,
+                permission=grant.permission.value,
+            )
+
+    @property
+    def granted(self) -> frozenset[Permission]:
+        """Return the permissions granted by name, without their evidence fields."""
+        return frozenset(grant.permission for grant in self.grants)
 
 
 def is_permitted(role: Role, required: Permission) -> bool:
