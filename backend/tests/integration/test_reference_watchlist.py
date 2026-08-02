@@ -272,11 +272,11 @@ async def test_reference_migration_downgrades_and_reapplies_cleanly(
             )
         assert remaining == 0
     finally:
-        await asyncio.to_thread(_run_alembic, "upgrade", "0013_reference_watchlist")
+        await asyncio.to_thread(_run_alembic, "upgrade", "head")
 
     async with migrated.connect() as connection:
         current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
-    assert current == "0013_reference_watchlist"
+    assert current == "0014_instrument_archive"
 
 
 async def test_reference_metadata_has_no_autogenerate_drift(

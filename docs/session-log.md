@@ -169,3 +169,42 @@ components, `httpx2==2.9.1`, no vulnerability and no machine-local path.
 **Open.** Real credentials and the redirect URL remain unnecessary until the
 fixture-backed archive and historical-data paths are ready for one explicit
 provider smoke test.
+
+---
+
+## 2026-08-02 — Daily instrument-master archive
+
+**Done.** Added reversible migration `0014_instrument_archive` and a vertical
+fetch-resolve-archive use case. Each provider trading date retains the exact CSV
+bytes as bounded deterministic gzip plus SHA-256, row count and retrieval time.
+Versioned resolution rows retain explicit cash and futures availability reasons;
+cash tokens and actual futures contract metadata are append-only daily revisions.
+An application query reconstructs and revalidates the archived snapshot and
+resolved owner universe without exposing SQLAlchemy or Kite response types.
+
+**Decided.** The provider dump is global reference evidence rather than tenant
+state, while the transaction still carries the requesting account context.
+Provider/date is an immutable daily key: identical retries preserve the original
+retrieval instant and add nothing, but different bytes fail closed. Actual
+contract identity remains underlying plus exchange plus expiry. Unambiguous
+expired contracts are persisted with `EXPIRED` status for historical research,
+but only active, selected observations can establish current availability.
+Resolver revision `instrument-discovery-v1` is part of every mapped-fact key so a
+future algorithm change cannot silently reinterpret an old snapshot.
+
+**Validated.** Focused reference coverage passes 43 unit tests and 12 real
+TimescaleDB integration tests. Migration downgrade to `0013`, upgrade to the sole
+`0014` head and Alembic autogenerate drift checks pass. Tests prove exact raw-byte
+round-trip, idempotency, conflicting-source refusal, token turnover with stable
+contract identity, explicit expired observations and transaction rollback. The
+complete suite passes 1,994 tests with 5 intentional skips, 29 benchmark
+deselections, one documented non-strict XFAIL and 95.27% coverage. Ruff lint and
+format over 323 files, strict mypy over 307 files, all four import-linter
+contracts, custom boundaries, ADR guard and diff checks pass.
+
+**Next.** Extend the same read-only adapter with daily historical candles and
+persist validated cash/index OHLCV with adjustment and completeness state.
+
+**Open.** No credentials are required yet. The first real-provider smoke test
+remains the next credential-gated stop condition after the fixture-backed
+historical-data path is complete.

@@ -15,6 +15,7 @@ from dhruva.contexts.reference.application.instrument_discovery import (
 )
 from dhruva.contexts.reference.domain.instrument_master import (
     FuturesAvailabilityStatus,
+    FuturesContractStatus,
     InstrumentMasterSnapshot,
 )
 from dhruva.contexts.reference.infrastructure.owner_universe import load_owner_universe
@@ -104,6 +105,14 @@ async def test_options_expired_contracts_and_invalid_lots_never_create_futures()
     )
     assert by_symbol["ETERNAL"].futures.contracts == ()
     assert by_symbol["HAL"].futures.contracts == ()
+    expired = tuple(
+        observation
+        for observation in by_symbol["ADANIENT"].futures_observations
+        if observation.status is FuturesContractStatus.EXPIRED
+    )
+    assert len(expired) == 1
+    assert expired[0].contract.expiry == date(2026, 7, 30)
+    assert not expired[0].selected_for_availability
 
 
 async def test_ambiguous_contract_month_degrades_only_that_underlying() -> None:

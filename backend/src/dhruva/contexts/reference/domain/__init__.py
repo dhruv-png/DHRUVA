@@ -8,9 +8,14 @@ and the import-linter contract ``Clean Architecture layers``.
 """
 
 from dhruva.contexts.reference.domain.instrument_master import (
+    ArchivedInstrumentDiscovery,
+    ArchivedInstrumentMaster,
     FuturesAvailability,
     FuturesAvailabilityStatus,
     FuturesContract,
+    FuturesContractObservation,
+    FuturesContractStatus,
+    InstrumentArchiveWrite,
     InstrumentDiscovery,
     InstrumentMasterEntry,
     InstrumentMasterSnapshot,
@@ -26,10 +31,15 @@ from dhruva.contexts.reference.domain.watchlist import (
 )
 
 __all__ = [
+    "ArchivedInstrumentDiscovery",
+    "ArchivedInstrumentMaster",
     "CashInstrumentMapping",
     "FuturesAvailability",
     "FuturesAvailabilityStatus",
     "FuturesContract",
+    "FuturesContractObservation",
+    "FuturesContractStatus",
+    "InstrumentArchiveWrite",
     "InstrumentDiscovery",
     "InstrumentIdentityRevision",
     "InstrumentKind",

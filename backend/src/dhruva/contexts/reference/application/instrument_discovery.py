@@ -9,6 +9,8 @@ from dhruva.contexts.reference.domain.instrument_master import (
     FuturesAvailability,
     FuturesAvailabilityStatus,
     FuturesContract,
+    FuturesContractObservation,
+    FuturesContractStatus,
     InstrumentDiscovery,
     InstrumentResolution,
     ResolvedCashInstrument,
@@ -100,7 +102,7 @@ def _resolve_definition(
     else:
         cash_reason = "Multiple exact NSE cash mappings were present; resolution is ambiguous."
 
-    futures = _resolve_futures(
+    futures, observations = _resolve_futures(
         definition,
         instrument_id=instrument_id,
         snapshot=snapshot,
@@ -112,6 +114,7 @@ def _resolve_definition(
         cash=cash,
         cash_unavailable_reason=cash_reason,
         futures=futures,
+        futures_observations=observations,
     )
 
 
@@ -128,13 +131,16 @@ def _resolve_futures(
     instrument_id: InstrumentId,
     snapshot: InstrumentMasterSnapshot,
     market_date: date,
-) -> FuturesAvailability:
-    """Find all active, well-formed NFO futures for one approved underlying."""
+) -> tuple[FuturesAvailability, tuple[FuturesContractObservation, ...]]:
+    """Resolve current availability and retain unambiguous expired contracts."""
     if not definition.futures_research_requested:
-        return FuturesAvailability(
-            status=FuturesAvailabilityStatus.CURRENTLY_UNAVAILABLE,
-            reason="Futures research is not enabled for this underlying.",
-            contracts=(),
+        return (
+            FuturesAvailability(
+                status=FuturesAvailabilityStatus.CURRENTLY_UNAVAILABLE,
+                reason="Futures research is not enabled for this underlying.",
+                contracts=(),
+            ),
+            (),
         )
 
     provider_names = {definition.canonical_symbol}
@@ -148,7 +154,6 @@ def _resolve_futures(
         and entry.instrument_type == "FUT"
         and entry.name in provider_names
         and entry.expiry is not None
-        and entry.expiry >= market_date
         and entry.lot_size > 0
         and entry.tick_size > 0
     )
@@ -162,28 +167,45 @@ def _resolve_futures(
             ambiguous_expiries.add(expiry)
         else:
             by_expiry[expiry] = entry
-    if ambiguous_expiries:
-        return FuturesAvailability(
+    unambiguous = tuple(
+        _contract(instrument_id, snapshot.provider, expiry, entry)
+        for expiry, entry in sorted(by_expiry.items())
+        if expiry not in ambiguous_expiries
+    )
+    active_contracts = tuple(contract for contract in unambiguous if contract.expiry >= market_date)
+    active_ambiguity = any(expiry >= market_date for expiry in ambiguous_expiries)
+    if active_ambiguity:
+        availability = FuturesAvailability(
             status=FuturesAvailabilityStatus.CURRENTLY_UNAVAILABLE,
             reason="Current NFO futures mapping is ambiguous for one or more expiries.",
             contracts=(),
         )
-
-    contracts = tuple(
-        _contract(instrument_id, snapshot.provider, expiry, entry)
-        for expiry, entry in sorted(by_expiry.items())
-    )
-    if not contracts:
-        return FuturesAvailability(
+    elif not active_contracts:
+        availability = FuturesAvailability(
             status=FuturesAvailabilityStatus.CURRENTLY_UNAVAILABLE,
             reason="No active NFO-FUT contract with positive lot and tick size was found.",
             contracts=(),
         )
-    return FuturesAvailability(
-        status=FuturesAvailabilityStatus.AVAILABLE,
-        reason="One or more active NFO-FUT contracts were resolved unambiguously.",
-        contracts=contracts,
+    else:
+        availability = FuturesAvailability(
+            status=FuturesAvailabilityStatus.AVAILABLE,
+            reason="One or more active NFO-FUT contracts were resolved unambiguously.",
+            contracts=active_contracts,
+        )
+    selected_ids = {contract.contract_id for contract in availability.contracts}
+    observations = tuple(
+        FuturesContractObservation(
+            contract=contract,
+            status=(
+                FuturesContractStatus.ACTIVE
+                if contract.expiry >= market_date
+                else FuturesContractStatus.EXPIRED
+            ),
+            selected_for_availability=contract.contract_id in selected_ids,
+        )
+        for contract in unambiguous
     )
+    return availability, observations
 
 
 def _contract(

@@ -47,6 +47,12 @@ capital (ADR-026, ADR-029).
   sanitized master resolves exact cash mappings and all evidenced active futures
   months while missing, malformed or ambiguous contracts become visible
   `CURRENTLY_UNAVAILABLE` results for only the affected underlying.
+- **Replayable daily instrument-master archive.** Migration `0014` stores one
+  bounded gzip snapshot per provider trading date plus resolver-versioned cash
+  mappings, current availability decisions and actual futures-contract revisions.
+  Stable contract identity survives provider-token turnover; unambiguous expired
+  contracts remain queryable but cannot evidence current eligibility. Identical
+  retries are no-ops, while changed bytes under an existing daily key fail closed.
 
 ## [0.6.0] — 2026-08-02 — S06 Identity, Secrets Vault & Audit
 

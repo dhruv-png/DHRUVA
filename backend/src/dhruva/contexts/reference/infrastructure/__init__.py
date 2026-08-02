@@ -12,6 +12,7 @@ from dhruva.contexts.reference.infrastructure.owner_universe import (
     load_owner_universe,
 )
 from dhruva.contexts.reference.infrastructure.persistence import (
+    InstrumentArchiveRepository,
     ReferenceRepository,
     SqlAlchemyReferenceUnitOfWork,
 )
@@ -22,6 +23,7 @@ from dhruva.contexts.reference.infrastructure.zerodha_instruments import (
 
 __all__ = [
     "OWNER_UNIVERSE_REVISION",
+    "InstrumentArchiveRepository",
     "KiteInstrumentMasterAdapter",
     "ReferenceRepository",
     "SqlAlchemyReferenceUnitOfWork",

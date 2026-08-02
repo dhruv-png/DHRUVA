@@ -24,9 +24,14 @@ if TYPE_CHECKING:
     from dhruva.shared.identity import InstrumentId
 
 __all__ = [
+    "ArchivedInstrumentDiscovery",
+    "ArchivedInstrumentMaster",
     "FuturesAvailability",
     "FuturesAvailabilityStatus",
     "FuturesContract",
+    "FuturesContractObservation",
+    "FuturesContractStatus",
+    "InstrumentArchiveWrite",
     "InstrumentDiscovery",
     "InstrumentMasterEntry",
     "InstrumentMasterSnapshot",
@@ -39,6 +44,7 @@ _PROVIDER_TEXT = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
 _MAX_SYMBOL = 64
 _MAX_NAME = 200
 _MAX_REASON = 240
+_MAX_RESOLVER_REVISION = 64
 
 
 def _bounded_text(value: str, *, field: str, maximum: int) -> None:
@@ -53,6 +59,54 @@ def _utc(value: datetime, *, field: str) -> None:
         f"{field} must be timezone-aware",
     )
     invariant(value.utcoffset() == timedelta(0), f"{field} must be UTC")
+
+
+def _validate_resolution_provenance(
+    *,
+    provider: str,
+    market_date: date,
+    resolutions: tuple[InstrumentResolution, ...],
+) -> None:
+    """Require every resolved mapping to belong to the enclosing snapshot."""
+    for resolution in resolutions:
+        if resolution.cash is not None:
+            invariant(
+                resolution.cash.provider == provider,
+                "cash mapping provider differs from snapshot provider",
+            )
+            invariant(
+                resolution.cash.instrument_id == resolution.instrument_id,
+                "cash mapping instrument differs from resolution instrument",
+            )
+        for contract in resolution.futures.contracts:
+            invariant(
+                contract.provider == provider,
+                "futures contract provider differs from snapshot provider",
+            )
+            invariant(
+                contract.underlying_id == resolution.instrument_id,
+                "futures contract underlying differs from resolution instrument",
+            )
+            invariant(contract.expiry >= market_date, "active futures contract is expired")
+        for observation in resolution.futures_observations:
+            contract = observation.contract
+            invariant(
+                contract.provider == provider,
+                "futures observation provider differs from snapshot provider",
+            )
+            invariant(
+                contract.underlying_id == resolution.instrument_id,
+                "futures observation underlying differs from resolution instrument",
+            )
+            expected_status = (
+                FuturesContractStatus.ACTIVE
+                if contract.expiry >= market_date
+                else FuturesContractStatus.EXPIRED
+            )
+            invariant(
+                observation.status is expected_status,
+                "futures observation status differs from its expiry",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +167,30 @@ class InstrumentMasterSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ArchivedInstrumentMaster:
+    """Replayable persisted master without duplicating every parsed provider row."""
+
+    provider: str
+    market_date: date
+    fetched_at: datetime
+    content_sha256: str
+    raw_csv: bytes
+    row_count: int
+
+    def __post_init__(self) -> None:
+        """Apply the same provenance checks used before the source was archived."""
+        invariant(bool(_PROVIDER_TEXT.fullmatch(self.provider)), "invalid provider name")
+        _utc(self.fetched_at, field="fetched_at")
+        invariant(bool(_HEX_SHA256.fullmatch(self.content_sha256)), "invalid SHA-256 digest")
+        invariant(bool(self.raw_csv), "instrument master must not be empty")
+        invariant(
+            hashlib.sha256(self.raw_csv).hexdigest() == self.content_sha256,
+            "instrument master digest does not match its bytes",
+        )
+        invariant(self.row_count > 0, "instrument master row count must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedCashInstrument:
     """Current provider mapping for one stable cash or index identity."""
 
@@ -165,6 +243,30 @@ class FuturesContract:
         invariant(self.exchange == "NFO", "futures exchange must be NFO")
 
 
+class FuturesContractStatus(StrEnum):
+    """Lifecycle state of an actual contract on the snapshot market date."""
+
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+
+
+@dataclass(frozen=True, slots=True)
+class FuturesContractObservation:
+    """One unambiguous actual contract row and its dated lifecycle state."""
+
+    contract: FuturesContract
+    status: FuturesContractStatus
+    selected_for_availability: bool
+
+    def __post_init__(self) -> None:
+        """Prevent an expired contract from evidencing current availability."""
+        if self.selected_for_availability:
+            invariant(
+                self.status is FuturesContractStatus.ACTIVE,
+                "only active contracts can evidence current availability",
+            )
+
+
 class FuturesAvailabilityStatus(StrEnum):
     """The dated result of current-contract discovery."""
 
@@ -201,6 +303,7 @@ class InstrumentResolution:
     cash: ResolvedCashInstrument | None
     cash_unavailable_reason: str | None
     futures: FuturesAvailability
+    futures_observations: tuple[FuturesContractObservation, ...]
 
     def __post_init__(self) -> None:
         """Expose absence explicitly; never manufacture a mapping."""
@@ -215,6 +318,26 @@ class InstrumentResolution:
                 field="cash_unavailable_reason",
                 maximum=_MAX_REASON,
             )
+        observed_expiries = tuple(
+            observation.contract.expiry for observation in self.futures_observations
+        )
+        invariant(
+            observed_expiries == tuple(sorted(observed_expiries)),
+            "futures observations must be sorted by expiry",
+        )
+        invariant(
+            len(observed_expiries) == len(set(observed_expiries)),
+            "one unambiguous observation is allowed per expiry",
+        )
+        selected = tuple(
+            observation.contract
+            for observation in self.futures_observations
+            if observation.selected_for_availability
+        )
+        invariant(
+            selected == self.futures.contracts,
+            "selected observations must equal current availability contracts",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,9 +346,64 @@ class InstrumentDiscovery:
 
     snapshot: InstrumentMasterSnapshot
     resolutions: tuple[InstrumentResolution, ...]
+    resolver_revision: str = "instrument-discovery-v1"
 
     def __post_init__(self) -> None:
         """Require exactly one deterministic result per underlying."""
         symbols = tuple(item.canonical_symbol for item in self.resolutions)
         invariant(symbols == tuple(sorted(symbols)), "resolutions must be sorted by symbol")
         invariant(len(symbols) == len(set(symbols)), "resolution symbols must be unique")
+        _validate_resolution_provenance(
+            provider=self.snapshot.provider,
+            market_date=self.snapshot.market_date,
+            resolutions=self.resolutions,
+        )
+        _bounded_text(
+            self.resolver_revision,
+            field="resolver_revision",
+            maximum=_MAX_RESOLVER_REVISION,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ArchivedInstrumentDiscovery:
+    """One replayable snapshot and its versioned owner-universe resolution."""
+
+    snapshot: ArchivedInstrumentMaster
+    resolutions: tuple[InstrumentResolution, ...]
+    resolver_revision: str
+
+    def __post_init__(self) -> None:
+        """Keep reconstructed archive results deterministic and self-identifying."""
+        symbols = tuple(item.canonical_symbol for item in self.resolutions)
+        invariant(symbols == tuple(sorted(symbols)), "resolutions must be sorted by symbol")
+        invariant(len(symbols) == len(set(symbols)), "resolution symbols must be unique")
+        _validate_resolution_provenance(
+            provider=self.snapshot.provider,
+            market_date=self.snapshot.market_date,
+            resolutions=self.resolutions,
+        )
+        _bounded_text(
+            self.resolver_revision,
+            field="resolver_revision",
+            maximum=_MAX_RESOLVER_REVISION,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentArchiveWrite:
+    """Counts from one atomic append, distinguishing facts from retries."""
+
+    snapshot_added: int
+    resolutions_added: int
+    cash_mappings_added: int
+    contracts_added: int
+    contract_revisions_added: int
+
+    def __post_init__(self) -> None:
+        """Repository counts cannot be negative or claim multiple daily snapshots."""
+        invariant(self.snapshot_added in {0, 1}, "snapshot count must be zero or one")
+        invariant(self.resolutions_added >= 0, "resolution count cannot be negative")
+        invariant(self.cash_mappings_added >= 0, "cash mapping count cannot be negative")
+        invariant(self.contracts_added >= 0, "contract count cannot be negative")
+        invariant(self.contract_revisions_added >= 0, "contract revision count cannot be negative")

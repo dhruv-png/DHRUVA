@@ -103,10 +103,15 @@ def test_model_kwargs_cover_every_record_field() -> None:
     assert set(membership_model_kwargs(membership)) == set(membership.__dataclass_fields__)
 
 
-def test_reference_metadata_contains_all_three_tables() -> None:
+def test_reference_metadata_contains_all_archive_and_watchlist_tables() -> None:
     """Alembic sees every reference table and cannot propose dropping one."""
     assert set(ReferenceBase.metadata.tables) == {
+        "cash_instrument_mapping_revision",
+        "futures_contract",
+        "futures_contract_revision",
         "instrument_identity_revision",
+        "instrument_master_snapshot",
+        "instrument_resolution_revision",
         "reference_instrument",
         "watchlist_membership_revision",
     }

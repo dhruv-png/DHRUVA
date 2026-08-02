@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Self
 
 from sqlalchemy import text
 
+from dhruva.contexts.reference.infrastructure.persistence.instrument_archive import (
+    InstrumentArchiveRepository,
+)
 from dhruva.contexts.reference.infrastructure.persistence.repository import ReferenceRepository
 from dhruva.shared.errors import InvariantViolation
 
@@ -48,6 +51,11 @@ class SqlAlchemyReferenceUnitOfWork:
     def reference(self) -> ReferenceRepository:
         """Return the reference store bound to this transaction."""
         return ReferenceRepository(self.session)
+
+    @property
+    def instrument_archive(self) -> InstrumentArchiveRepository:
+        """Return the provider archive store bound to this transaction."""
+        return InstrumentArchiveRepository(self.session)
 
     async def __aenter__(self) -> Self:
         """Open a session and set transaction-local tenant context."""
