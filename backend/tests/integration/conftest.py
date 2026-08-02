@@ -384,7 +384,7 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
                 text(
                     "TRUNCATE daily_snapshot, outbox, example_tick, processed_event, "
                     "credential, principal, refresh_token, role, reference_instrument, "
-                    "instrument_master_snapshot CASCADE"
+                    "instrument_master_snapshot, daily_market_bar_revision CASCADE"
                 )
             )
 

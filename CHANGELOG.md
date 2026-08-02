@@ -53,6 +53,13 @@ capital (ADR-026, ADR-029).
   Stable contract identity survives provider-token turnover; unambiguous expired
   contracts remain queryable but cannot evidence current eligibility. Identical
   retries are no-ops, while changed bytes under an existing daily key fail closed.
+- **Point-in-time daily cash and benchmark history.** The read-only Kite adapter
+  now fetches exact-decimal daily OHLCV at a conservative two requests per second.
+  Migration `0015` stores append-only revisions with retrieval, provider-token,
+  adjustment, completeness and quality-version provenance. Nifty defines the
+  explicit session set; stale, incomplete, impossible, calendar-mismatched or
+  likely corporate-action-discontinuous series fail closed. Later corrections
+  remain invisible to earlier `known_at` queries.
 
 ## [0.6.0] — 2026-08-02 — S06 Identity, Secrets Vault & Audit
 

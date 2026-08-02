@@ -288,4 +288,4 @@ async def test_archive_migration_downgrades_and_reapplies_cleanly(
 
     async with migrated.connect() as connection:
         current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
-    assert current == "0014_instrument_archive"
+    assert current == "0015_daily_market_bars"

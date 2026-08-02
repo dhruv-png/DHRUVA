@@ -318,7 +318,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 | **In progress** — watchlist/reference, read-only Kite discovery and daily instrument-master archive implemented |
+| MVP 1 | **In progress** — watchlist/reference, Kite discovery/archive and point-in-time cash/index daily history implemented |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |

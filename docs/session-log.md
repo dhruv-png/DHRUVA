@@ -208,3 +208,42 @@ persist validated cash/index OHLCV with adjustment and completeness state.
 **Open.** No credentials are required yet. The first real-provider smoke test
 remains the next credential-gated stop condition after the fixture-backed
 historical-data path is complete.
+
+---
+
+## 2026-08-02 — Cash and Nifty daily market history
+
+**Done.** Activated the Market Data context with a provider-neutral daily-candle
+domain, inward source/store ports, a narrow Kite historical adapter, synchronized
+cash/index ingestion, point-in-time application queries and reversible migration
+`0015_daily_market_bars`. The adapter implements only documented GET history,
+uses exact decimal JSON parsing, preserves optional OI, bounds range/bytes/rows,
+and serializes at two requests per second below Kite's documented three.
+
+**Decided.** Kite history enters as adjustment `UNKNOWN`; neither raw nor adjusted
+is assumed without corporate-action evidence. `daily-history-quality-v1` uses
+Nifty as the explicit session calendar, labels bars after an injected completion
+cutoff `INCOMPLETE`, and blocks unexplained close moves above 35% for reconciliation.
+Bar-content revisions are independent of retrieval range and rotating provider
+tokens, while later corrections append and remain invisible to earlier
+knowledge-time queries. At no more than 50 daily symbols, plain PostgreSQL is
+smaller and safer than adding hypertable compression or retention policy.
+
+**Validated.** Twenty focused unit tests and sixteen real TimescaleDB integration
+tests pass. They cover exact parsing, retry and host security, impossible OHLCV,
+stale and missing benchmark sessions, incompleteness, mixed adjustment refusal,
+possible corporate actions, idempotency, corrections, point-in-time reads,
+rollback, migration downgrade/re-upgrade and autogenerate drift. The complete
+non-Redis suite passes with 2,026 tests, five intentional skips, 29 benchmark
+deselections, one documented non-strict XFAIL and 94.34% coverage. Ruff lint and
+format check pass (339 files already formatted), strict mypy passes across 322
+source files, all four import-linter contracts remain intact, and the custom
+boundary checker, ADR guard, whitespace check and sole Alembic head
+`0015_daily_market_bars` are green.
+
+**Next.** Add actual futures daily OHLCV/OI from archived contract revisions,
+then define and test the deterministic continuous research-series roll policy.
+
+**Open.** Corporate-action verification and the explicit credential-gated Kite
+smoke test remain future steps; no credential is needed for the next fixture-backed
+futures history slice.
