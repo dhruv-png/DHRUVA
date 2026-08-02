@@ -1,6 +1,7 @@
 # D.H.R.U.V.A — PERSONAL SWING-ASSISTANT MVP PLAN
 
-**Dynamic Heuristic Regime Understanding & Volatility Analytics**  
+**Dynamic Heuristic Regime Understanding & Volatility Analytics**
+
 Private end-of-day research and paper-trading system for two family users
 
 | Field | Value |
@@ -313,4 +314,3 @@ conditions.
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
-
