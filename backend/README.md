@@ -29,9 +29,12 @@ the dependency appears in `ALLOWED_CONTEXT_DEPENDENCIES` (a transcription of pla
 
 ## Dependencies
 
-Runtime dependencies are currently empty, and a test asserts it. Each arrives with
-the subsystem that justifies it in a design document: FastAPI and structlog with
-S02, SQLAlchemy and Alembic with S04, Celery with S05.
+Runtime dependencies are pinned in `pyproject.toml`, `uv.lock` and the exported
+requirements lockfiles. Each arrives with the subsystem that justifies it and a
+provenance comment: FastAPI and structlog with S02, SQLAlchemy and Alembic with
+S04, Celery and Redis with S05, and cryptography, PyJWT and argon2 with S06.
+Install from the lock with `uv sync --all-groups --frozen`; do not add an
+unreviewed package directly to the environment.
 
 ## Commands
 

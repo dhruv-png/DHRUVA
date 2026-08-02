@@ -43,10 +43,14 @@ path is expected to verify.
 Granting, revoking and 2FA enrolment are **audited configuration changes**
 (ADR-071).
 
-Authorisation is evaluated in the interfaces layer against claims carried by the
-access token (ADR-072). No domain or application module makes an authorisation
-decision, and no authorisation decision consults a position, a balance, or any
-trading state.
+Ordinary request authorisation is evaluated in the interfaces layer against
+claims carried by the access token (ADR-072). Permission administration is the
+narrow exception: grant and revoke use cases establish the actor's live tenant,
+activity, TOTP enrolment and explicit `manage_authorisation` permission inside
+the same application transaction that changes the role. This prevents a route,
+worker or future command from bypassing the administrative policy. No domain
+module authorises a caller, and no authorisation decision consults a position, a
+balance, or any trading state.
 
 ## Rationale
 
@@ -69,11 +73,14 @@ until the first hurried afternoon, and it fails open. Making the grant itself
 impossible without enrolment means the invariant cannot be violated by omission,
 only by a deliberate change to this rule.
 
-**Authorisation in interfaces, never in domain.** A domain module that
-authorises is a domain module that cannot be exercised in a backtest, which is
-the property the whole architecture exists to preserve. It would also make
-authorisation depend on trading state, which is how "the position is small, allow
-it" becomes an authorisation rule.
+**Ordinary authorisation at interfaces; administrative invariants in their use
+case.** Route permission checks remain at the interface boundary. A permission
+mutation must also establish live management authority inside its application
+transaction, because every adapter capable of invoking it must receive the same
+policy and because manager eligibility can change after a token is issued. The
+domain remains caller-agnostic and therefore replayable. Authorisation still
+cannot depend on trading state, which is how "the position is small, allow it"
+would otherwise become an authorisation rule.
 
 Rejected: **attribute-based access control** (more expressive than a
 single-operator v1 needs, and expressiveness here means more ways to write a

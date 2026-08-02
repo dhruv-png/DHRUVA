@@ -16,10 +16,124 @@ capital (ADR-026, ADR-029).
 ## [Unreleased]
 
 S06 in progress. The credential store landed, and with it the encryption half of
-the G0 checklist item that has been open since Phase 0.
+the G0 checklist item that has been open since Phase 0. The audit log followed,
+and it is the first table in the platform the application cannot edit. Then
+tokens — which brought with them the platform's first application layer, and the
+first table that says who a human is.
 
 ### Added
 
+- **Tenant-safe authorisation persistence** (ADR-073). A principal holds at most
+  one role, and the assignment binds both principal identity and account so a
+  real principal cannot borrow another tenant's authority. Roles retain the
+  actor and instant behind each live permission, use optimistic versioning for
+  concurrent changes, and round-trip through primitive records, pure mappers, a
+  reconstruction factory and a Unit-of-Work-owned repository. Grant/revoke and
+  assignment workflows remain part of S06 step 7.
+- **Authentication and session refresh** (ADR-072), as the repository's **first
+  two application-layer use cases**. Every context's `application` package had
+  been empty until now, so this also settles what a use case may depend on: ports
+  in `domain.identity.ports`, never an adapter. Both run over fakes in the unit
+  suite and over real PostgreSQL in the integration suite, unchanged.
+- **A failed authentication commits.** The transaction writes its audit record
+  and its outbox event, commits, and *then* the error is raised. That inverts the
+  usual reading of ADR-053 and is the point: plan §15.1 requires a record for
+  every authentication, and its own reasoning says why the failures matter — a
+  run of them is the signal, and it exists only if it was written down. A
+  rollback would leave the audit log showing successes only, which is the log
+  that cannot show a brute-force attempt.
+- **Refresh tokens rotate, and reuse revokes the lineage.** Presenting a spent
+  token is treated as theft rather than as a retry (ADR-022's fail-closed posture
+  applied to sessions), and the whole chain is revoked in one statement. The rule
+  itself is `RefreshToken.verdict` in the domain, where its four cases can be
+  enumerated without a database; the use case owns only the consequences.
+- **Reuse and ordinary revocation are indistinguishable to the caller.** Both
+  raise `TokenRevokedError` with the same message. Telling a thief they had been
+  detected is the one thing worth withholding at that moment; the audit log
+  records which it was. Expiry *does* get its own error, because the client's
+  recovery genuinely differs.
+- **`lineage_id` on `refresh_token`.** Every token in a rotation chain carries
+  the same value, so revoking a compromised family is one predicate against one
+  index. Derived from `parent_token_id` it would have been a recursive walk —
+  slowest for the longest chain, which is both the most valuable to a thief and
+  the one most likely to be under active abuse at the moment it runs.
+- **The `principal` table** (migration `0010`), and with it the distinction
+  between a **tenant** and **who acted**. `account_id` is what ADR-004 scopes
+  rows to; `PrincipalId` is what an audit record names and a token asserts. They
+  are one-to-one today, which is exactly why the separation had to be made in the
+  schema now rather than discovered later.
+- **`JwtTokenIssuer`** (HS256) and **`Argon2PasswordHasher`**, the only modules in
+  the platform importing PyJWT and argon2-cffi. The issuer pins its algorithm
+  list, so a token claiming `alg: none` is refused before its signature is
+  considered — a test asserts it. Expiry is evaluated against the injected
+  `Clock`, not PyJWT's wall-clock default (ADR-011), which is what makes it
+  testable without sleeping and correct under replay.
+- **`verify_nothing`**, a wasted argon2 verification on the unknown-subject path.
+  ADR-072 requires "no such user" and "wrong password" to be indistinguishable;
+  the same error is half of it, and the stopwatch is the other half. A lookup
+  that misses returns in microseconds while a real verification spends deliberate
+  milliseconds, which is a user-enumeration oracle no error message mentions.
+- **`Sha256RefreshTokenMinter`.** SHA-256 here and argon2 for passwords, and the
+  difference is what each algorithm is for: argon2's cost defeats a dictionary
+  attack on a low-entropy secret, and a 256-bit CSPRNG token has no dictionary.
+  Argon2 would have added ~100 ms to every refresh for nothing.
+- **`PasswordHash` as a type rather than a `str`**, to make one specific
+  catastrophe unrepresentable: a plaintext password in the field meant for its
+  hash. As a bare string that is a silent, type-checking, test-passing mistake
+  whose consequence is a database of plaintext passwords.
+- **`UNATTRIBUTED_ACCOUNT`**, a reserved account for audit records that belong to
+  no tenant. ADR-004 requires `account_id NOT NULL`; plan §15.1 requires auditing
+  every authentication, including one presenting a subject no principal has. A
+  nullable column was the obvious escape and the wrong one — it would make
+  "unattributed" and "nobody filled this in" the same state on the one table that
+  exists to be evidence.
+- **Three error codes** — `AuthenticationError` `DHR-PRM-002`, `TokenExpiredError`
+  `DHR-PRM-003`, `TokenRevokedError` `DHR-PRM-004` — and **`AuthSettings`**, whose
+  placeholder signing key is refused in any deployed environment. A placeholder
+  signing key is worse than a placeholder password: it needs no interaction with
+  the platform at all, only the ability to read this repository.
+
+- **The append-only audit log** (ADR-071, plan §15.1). `audit_log` refuses
+  `UPDATE`, `DELETE` **and** `TRUNCATE` at the database, through a `BEFORE`
+  trigger that raises rather than returning `NULL` — so an attempted deletion
+  fails loudly instead of looking like a successful one. The trigger binds every
+  role including the table owner, which is the only form of the guarantee that
+  survives someone connecting with psql to "just fix one row". Three integration
+  tests execute each of the three statements as raw SQL against real PostgreSQL,
+  deliberately bypassing every application-level control, because a repository
+  that offers no `update` method proves only that this repository offers no
+  `update` method.
+- **`TRUNCATE` is guarded, which ADR-071 does not require.** Row-level triggers
+  do not fire on `TRUNCATE`, so a table guarded against only `UPDATE` and
+  `DELETE` can still be emptied in one statement — the same erasure by a
+  different verb, and the fast one. Plan §12 fixes retention at indefinite and
+  immutable, which does not survive that. A statement-level trigger closes it.
+  The consequence is accepted rather than worked around: no test may commit an
+  audit row, and `audit_log` is deliberately absent from the integration
+  harness's truncation list with a comment saying why.
+- **`AuditRecorder`** — the one supported way to write an audit record. It writes
+  the row *and* stages `AuditRecorded` into the outbox, in the caller's
+  transaction, so neither can happen without the other. Both halves were already
+  available separately, which was the problem: ADR-071 gives every audited
+  subsystem an obligation, and an obligation discharged by remembering two calls
+  is one that will eventually be discharged by remembering one.
+- **`AuditRecorded`**, the Platform context's single published event (plan §5).
+  It carries the record's fields rather than a pointer to them, so a consumer
+  need not be given read access to the audit log to learn what happened. The
+  identifiers are bare `UUID`s because a `SurrogateId` has no ADR-061 codec and
+  could not have one that decoded back to the right subclass — carrying an
+  identity that merely *looks* typed would be worse than carrying the value.
+- **`AuditAction.CREDENTIAL_READ`** (ADR-071). The only audited read in the
+  platform, and the exception is argued rather than assumed: "was this secret
+  ever accessed, and by whom" cannot be answered retrospectively. The unit test
+  pinning the action set is re-set rather than deleted, so a sixth still has to
+  be argued.
+- **The audit persistence layer** — `AuditLogModel`, `AuditLogRecord`, mappers,
+  `AuditFactory` and an `AuditRepository` with no `update` and no `delete`. Their
+  absence is not the guarantee and the module says so; the database is. The
+  factory raises `DataQualityError` naming the row when a stored `action` or
+  `outcome` is outside the domain enums, because on a table with no update path
+  an unrecognised value would otherwise flow into a compliance export unmarked.
 - **The credential store** (ADR-070, ADR-052, ADR-053). A `Credential` aggregate,
   a persistence record, an ORM model, a pure mapper, a reconstruction factory and
   a repository — S04's four layers, followed exactly, for the first table that
@@ -59,6 +173,26 @@ the G0 checklist item that has been open since Phase 0.
 
 ### Fixed
 
+- **`audit_log` disagreed with ADR-071 and with its own domain object**, in four
+  ways at once. The table had `actor_id UUID` where the record has a string
+  actor, a `resource_type`/`resource_id` pair where it has a single `subject`, a
+  **nullable** `account_id` where ADR-004 and ADR-071 both require `NOT NULL`,
+  and **no `correlation_id` at all** — the column ADR-071 names as what joins an
+  audit entry to the log lines and events of the same request. It also carried a
+  `metadata JSONB` catch-all: a free-form field on the one table that must never
+  hold a secret, which is precisely what the domain module argues against at
+  length and what ADR-037's redaction cannot help with once a value is stored
+  deliberately. Corrected in migration `0008` in place, which had not been
+  pushed or released. Correcting it rather than shipping an expand migration was
+  the choice with less debt: expand would have left four columns nothing writes
+  to, on the one table ADR-071 forbids dropping columns from.
+- **`audit_log` and `refresh_token` had no SQLAlchemy models**, so
+  `alembic --autogenerate` proposed dropping both tables — meaning the next
+  migration generated for any unrelated change would have carried those `DROP`s
+  into production. `AuditLogModel` and `RefreshTokenModel` now mirror their
+  migrations column for column and index for index. `RefreshTokenModel` carries
+  no behaviour and has no repository: it is schema metadata, and token issuance,
+  rotation and reuse detection remain S06's next step.
 - **`credential` had no `version` column**, contradicting ADR-057's "every
   aggregate carries a `version` column". Found while writing the repository's
   `update`, which could not otherwise detect a lost update — two concurrent

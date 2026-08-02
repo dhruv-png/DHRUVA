@@ -1,7 +1,9 @@
 # S06 — Identity, Secrets Vault & Audit
 
-> **Status:** Design, for review. No implementation until the ADRs in §12 are
-> accepted, following the order S03, S04 and S05 each used.
+> **Status:** Approved and in progress. ADRs 070–074 are accepted; delivery
+> steps 1–6 are complete, and step 7 has implemented and validated its schema,
+> persistence, grant and revoke slices against real PostgreSQL. Assignment and
+> principal-administration workflows remain before step 7 is complete.
 >
 > Everything below is justified from the Master Project Plan (§5 C9, §6 the S06
 > catalogue row, §8 G0, §12 retention, §15.1 security controls) and from
@@ -320,6 +322,15 @@ Three commitments fall out, and each is testable now:
    way round — a checkbox someone remembers to tick — it is a control that is
    correct until the first hurried afternoon.
 
+S06.7 adds exactly one administrative capability,
+`manage_authorisation`. Grant and revoke use cases enforce that capability,
+same-tenant activity and enrolled TOTP inside the mutation transaction. A
+tenant-scoped PostgreSQL advisory lock serialises these changes; revocation may
+not remove the last active, TOTP-enrolled manager. Granting a TOTP-protected
+permission to a shared role requires every current holder, including a disabled
+holder, to have enrolled TOTP. The first manager is deliberately not bootstrapped
+through this path; a later explicit one-time command owns that ceremony.
+
 ---
 
 ## 9. RLS scaffolding (proposed **ADR-074**)
@@ -392,6 +403,9 @@ ADR-037's independent strategies, beside the existing redaction suite.
 | TD-S06-4 | No key-rotation job | The hierarchy makes rotation cheap; the job belongs to S42, which owns secret rotation |
 | TD-S06-5 | **No performance budget for token verification** | It sits on every authenticated request and needs one. ADR-060 A1's Linux figures were unavailable when this was written; set the budget from the first E4 run |
 | ~~TD-S06-6~~ | ~~**Envelope ciphertexts carry no associated data**~~ | **Closed at step 4**, as this row said it would be. `encrypt_secret`/`decrypt_secret` take `associated_data` as a required keyword argument, and `credential_associated_data` derives it from the credential's identity, account and broker. An integration test copies one row's ciphertext and wrapped key onto another with SQL and asserts the result no longer opens, while the victim row still does |
+| TD-S06-7 | **Service principals are not modelled** | §14 question 2, answered at step 6: humans only for now. `TokenClaims.subject` and `AuditRecord.actor` stay `str` rather than becoming a sum of human and service identity, and the refresh lifetimes are human-shaped. Nothing in S01–S07 needs a service identity, and inventing the type ahead of a caller would be architecture nobody can validate. Revisit when the first non-human caller exists — the change is a domain type and a token lifetime, not a schema migration |
+| TD-S06-8 | **A mistyped password can land in `audit_log.actor`** | A failed login records the subject as presented, which is what lets the log distinguish a brute force against one account from a scan across many. If an operator types their password into the username field, that password becomes a permanent audit row on a table nothing may edit. The mitigation is not obvious: hashing the actor destroys the grouping the field exists for, and the platform cannot tell a mistyped password from an unusual username. Recorded rather than solved, and it belongs with S42's threat-model work |
+| TD-S06-9 | **`principal` has no administrative path** | Step 6 stores principals and authenticates them; nothing creates one except a test. Registration, password reset and disablement are operations with their own authorisation questions (ADR-073), so they belong with step 7 rather than being added here without one |
 
 Retention is *not* on this list: plan §12 already fixes it at indefinite and
 immutable, so there is nothing deferred.
@@ -415,13 +429,23 @@ establishes that neither changes.
 
 ## 13. Delivery order once approved
 
-1. ADRs 070–074 recorded in `docs/adr/` and `docs/decisions.md`; checksums regenerated
-2. Domain: value objects, `KeyProvider` and `TokenIssuer` ports, authorisation policy — no I/O, no framework
-3. Migrations for the credential, audit and refresh-token tables, plus RLS policies (ADR-055: reversibility, rollback and operational impact declared)
-4. Envelope encryption adapter + credential store, against real PostgreSQL — **and the G0 item from §2 closed**
-5. Append-only audit log, with tests proving `UPDATE` and `DELETE` fail, and `AuditRecorded` staged in the outbox
-6. Token issuance, refresh rotation and reuse detection
-7. Authorisation: deny-by-default, order permission, 2FA enrolment gate
+1. ~~ADRs 070–074 recorded in `docs/adr/` and `docs/decisions.md`; checksums regenerated~~ — **done**
+2. ~~Domain: value objects, `KeyProvider` and `TokenIssuer` ports, authorisation policy — no I/O, no framework~~ — **done**
+3. ~~Migrations for the credential, audit and refresh-token tables, plus RLS policies~~ — **done**
+4. ~~Envelope encryption adapter + credential store, against real PostgreSQL — and the G0 item from §2 closed~~ — **done**
+5. ~~Append-only audit log, with tests proving `UPDATE` and `DELETE` fail, and `AuditRecorded` staged in the outbox~~ — **done**
+6. ~~Token issuance, refresh rotation and reuse detection~~ — **done.** Also
+   carries the `principal` table, which step 3 did not create: refresh tokens
+   referenced an `account_id` and nothing named the human whose session it was,
+   and ADR-072's "no such user versus wrong password are indistinguishable"
+   presupposes a user store to be meaningful at all
+7. **Authorisation — in progress.** The owner approved exactly one tenant-scoped
+   role per principal. Migration `0011`, the versioned `Role` aggregate,
+   persistence, `RoleStore`, and the audited grant/revoke use cases are
+   implemented and validated against real PostgreSQL. Tenant advisory locking,
+   shared-role TOTP checks, optimistic concurrency and last-manager protection
+   are enforced. Assignment writes (including the protected-role TOTP guard)
+   and principal administration remain.
 8. RLS scaffolding, with a test that a restrictive policy bites
 9. Redaction coverage for S06 types; authentication metrics
 10. Validation, documentation, v0.6.0
@@ -430,28 +454,27 @@ Steps 2–5 are the substance. If they are right, 6–9 are adapters and wiring.
 
 ---
 
-## 14. Open questions — I would rather you answer these than guess
+## 14. Resolved questions and remaining decisions
 
 Most of what I expected to ask is already decided: the plan fixes token
 lifetimes (15 min), rotation, deny-by-default authorisation, 2FA, audit scope
-and audit retention. Three things remain.
+and audit retention. The original three questions are now resolved.
 
-1. **New runtime dependencies, and they need your machine.** Neither
-   `cryptography` nor a JWT library nor a password-hashing library is currently
-   a dependency — I verified `pyproject.toml` and `requirements.lock`. S06 needs
-   all three (conventionally: `cryptography` for AES-GCM, `pyjwt`, and
-   `argon2-cffi`). Each needs a provenance entry that `test_toolchain_config.py`
-   enforces, and all three lockfiles must be regenerated — which S05 established
-   is work on the canonical Windows environment, not here. The exact commands,
-   provenance entries and integration points are prepared in
-   `docs/design/S06-dependency-plan.md`. **Please confirm the three libraries
-   before ADR-070 and ADR-072 assume them.**
-2. **Who are the actors?** The catalogue says JWT+refresh but not whether S06
-   authenticates humans only, or services too. Service-to-service authentication
-   has different lifetimes and different revocation needs, and 15 minutes with a
-   rotating refresh token is a human-shaped answer.
-3. **Does the audit log record credential *reads*?** Plan §15.1 enumerates four
-   audited action classes and all are writes. Recording every read is defensible
-   specifically for the credential store and unjustifiable everywhere else. I
-   propose auditing credential reads only, and would rather have that confirmed
-   than assumed.
+1. ~~**New runtime dependencies.**~~ **Resolved:** `cryptography`, `pyjwt` and
+   `argon2-cffi` are approved, pinned and present in every lockfile.
+2. ~~**Who are the actors?**~~ **Answered at step 6: humans only for now.** The
+   catalogue says JWT+refresh but not whether S06 authenticates humans only, or
+   services too. Service-to-service authentication has different lifetimes and
+   different revocation needs, and 15 minutes with a rotating refresh token is a
+   human-shaped answer — which is the right answer for a single-operator tool
+   before G-MCP. `TokenClaims.subject` and `AuditRecord.actor` stay `str`, and
+   the deferral is recorded as TD-S06-7 so that adopting service identity later
+   is a visible decision rather than a retrofit.
+3. ~~**Does the audit log record credential reads?**~~ **Resolved:** credential
+   reads are audited as `AuditAction.CREDENTIAL_READ`; this does not generalise
+   into auditing every read in the platform.
+4. ~~**May a principal hold more than one role?**~~ **Resolved 2026-08-02:** no.
+   A principal holds at most one role, scoped to the same account. The composite
+   principal/account foreign key makes orphaned and cross-tenant assignments
+   unrepresentable; widening to multiple roles would require an explicit future
+   migration and a policy for combining permissions.

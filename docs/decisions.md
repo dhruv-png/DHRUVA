@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**69 decisions — 68 accepted, 1 superseded.** Records are immutable once accepted
+**74 decisions — 73 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -103,9 +103,10 @@ it does, read these six in order:
 
 ## Architecture Revisions
 
-None. A revision is the heavier instrument, reserved for changes that invalidate a
-gate or a scope parameter (plan section 1.2). It requires written Product Owner
-approval and a reissued Master Project Plan.
+One approved revision is recorded below. A revision is the heavier instrument,
+reserved for changes that invalidate a gate or a scope parameter (plan section
+1.2); it requires written Product Owner approval and, when the plan itself
+changes, a reissued Master Project Plan.
 
 | AR | Date | Change | Plan version |
 |---|---|---|---|

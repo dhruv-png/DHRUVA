@@ -26,7 +26,7 @@ tooling usually omits:
 
 | Document | What it governs |
 |---|---|
-| [`docs/DHRUVA_MASTER_PROJECT_PLAN.md`](docs/DHRUVA_MASTER_PROJECT_PLAN.md) | Everything. Roadmap, gates, Definition of Done, risk register. **v1.1, approved 2026-07-26.** |
+| [`docs/DHRUVA_MASTER_PROJECT_PLAN.md`](docs/DHRUVA_MASTER_PROJECT_PLAN.md) | Everything. Roadmap, gates, Definition of Done, risk register. **v1.4, approved 2026-07-26.** |
 | [`docs/adr/`](docs/adr/) | Architecture decisions. Immutable once accepted (ADR-027). |
 | [`docs/subsystems/`](docs/subsystems/) | Per-subsystem design documents. |
 | [`docs/runbooks/`](docs/runbooks/) | How things fail and how to recover them. |
