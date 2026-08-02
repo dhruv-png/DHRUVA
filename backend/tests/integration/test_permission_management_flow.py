@@ -36,10 +36,14 @@ NOW: Final = datetime(2026, 8, 2, 9, 15, tzinfo=UTC)
 SEALED: Final = EncryptedSecret(ciphertext=b"sealed", wrapped_data_key=b"wrapped")
 
 
-def _uow(engine: AsyncEngine) -> SqlAlchemyIdentityUnitOfWork:
+def _uow(
+    engine: AsyncEngine,
+    account_id: AccountId | None = None,
+) -> SqlAlchemyIdentityUnitOfWork:
     return SqlAlchemyIdentityUnitOfWork(
         async_sessionmaker(bind=engine, expire_on_commit=False),
         clock=FrozenClock(NOW),
+        account_id=account_id,
     )
 
 
@@ -82,7 +86,7 @@ async def _seed(
     )
     manager = _role(account_id, "manager", Permission.MANAGE_AUTHORISATION)
     target = _role(account_id, "operator")
-    async with _uow(engine) as uow:
+    async with _uow(engine, account_id) as uow:
         await uow.principals.add(actor)
         await uow.principals.add(holder)
         await uow.roles.add(manager)
@@ -119,7 +123,10 @@ async def test_grant_is_durable_with_version_and_audit_in_one_transaction(
     actor = await _seed(migrated, account_id, holder_totp=True)
     correlation = uuid4()
 
-    changed = await GrantPermissionUseCase(lambda: _uow(migrated), clock=FrozenClock(NOW)).execute(
+    changed = await GrantPermissionUseCase(
+        lambda scoped_account: _uow(migrated, scoped_account),
+        clock=FrozenClock(NOW),
+    ).execute(
         actor_id=actor.principal_id,
         account_id=account_id,
         role_name="operator",
@@ -169,7 +176,10 @@ async def test_refused_protected_grant_commits_audit_without_mutating_role(
     correlation = uuid4()
 
     with pytest.raises(ConflictError):
-        await GrantPermissionUseCase(lambda: _uow(migrated), clock=FrozenClock(NOW)).execute(
+        await GrantPermissionUseCase(
+            lambda scoped_account: _uow(migrated, scoped_account),
+            clock=FrozenClock(NOW),
+        ).execute(
             actor_id=actor.principal_id,
             account_id=account_id,
             role_name="operator",

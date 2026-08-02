@@ -47,7 +47,7 @@ class _PermissionMutation:
 
     def __init__(
         self,
-        unit_of_work_factory: Callable[[], IdentityUnitOfWork],
+        unit_of_work_factory: Callable[[AccountId], IdentityUnitOfWork],
         *,
         clock: Clock,
     ) -> None:
@@ -65,7 +65,7 @@ class _PermissionMutation:
         correlation_id: UUID,
     ) -> Role:
         now = self._clock.now()
-        async with self._unit_of_work_factory() as uow:
+        async with self._unit_of_work_factory(account_id) as uow:
             await uow.authorisation.serialise(account_id)
             actor = await uow.principals.get(actor_id)
             if actor is None:

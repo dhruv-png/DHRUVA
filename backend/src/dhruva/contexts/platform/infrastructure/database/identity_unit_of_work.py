@@ -52,6 +52,7 @@ from dhruva.contexts.platform.infrastructure.persistence.identity import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from dhruva.shared.identity import AccountId
     from dhruva.shared.time import Clock
 
 __all__ = ["SqlAlchemyIdentityUnitOfWork"]
@@ -88,6 +89,7 @@ class SqlAlchemyIdentityUnitOfWork:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         clock: Clock | None = None,
+        account_id: AccountId | None = None,
         principal_factory: PrincipalFactory | None = None,
         refresh_factory: RefreshTokenFactory | None = None,
         role_factory: RoleFactory | None = None,
@@ -101,7 +103,11 @@ class SqlAlchemyIdentityUnitOfWork:
         calendar is exactly that -- and a constructor that could not accept one
         would have to be changed the first time it was.
         """
-        self._inner = SqlAlchemyUnitOfWork(session_factory, clock=clock)
+        self._inner = SqlAlchemyUnitOfWork(
+            session_factory,
+            clock=clock,
+            account_id=account_id,
+        )
         self._principal_factory = principal_factory or PrincipalFactory()
         self._refresh_factory = refresh_factory or RefreshTokenFactory()
         self._role_factory = role_factory or RoleFactory()

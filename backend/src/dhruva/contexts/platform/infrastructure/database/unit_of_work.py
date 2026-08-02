@@ -27,8 +27,14 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Self
 from uuid import UUID
 
+from sqlalchemy import text
+
+from dhruva.contexts.platform.infrastructure.database.tenant_context import (
+    SESSION_ACCOUNT_SETTING,
+)
 from dhruva.contexts.platform.infrastructure.persistence.outbox import OutboxWriter
 from dhruva.shared.errors import InvariantViolation
+from dhruva.shared.identity import AccountId
 from dhruva.shared.logging import get_logger
 
 if TYPE_CHECKING:
@@ -55,13 +61,21 @@ class SqlAlchemyUnitOfWork:
             await uow.commit()
     """
 
-    __slots__ = ("_clock", "_committed", "_events", "_session", "_session_factory")
+    __slots__ = (
+        "_account_id",
+        "_clock",
+        "_committed",
+        "_events",
+        "_session",
+        "_session_factory",
+    )
 
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
         *,
         clock: Clock | None = None,
+        account_id: AccountId | None = None,
     ) -> None:
         """Create a Unit of Work bound to a session factory.
 
@@ -76,11 +90,17 @@ class SqlAlchemyUnitOfWork:
             Injected rather than read from the wall clock (ADR-011) so a replay
             controls it, which is what makes the ``as_of`` bound of ADR-069
             enforceable. Defaults to :class:`SystemClock`.
+        account_id
+            Tenant scope for an account-owned transaction. When present, entry
+            sets PostgreSQL's account context transaction-locally before any
+            repository can be reached. Authentication transactions whose tenant
+            is not known yet leave it absent.
         """
         from dhruva.shared.time import SystemClock  # noqa: PLC0415 - avoids an import cycle
 
         self._session_factory = session_factory
         self._clock = clock or SystemClock()
+        self._account_id = account_id
         self._session: AsyncSession | None = None
         self._events: list[DomainEvent] = []
         self._committed = False
@@ -178,6 +198,14 @@ class SqlAlchemyUnitOfWork:
             raise InvariantViolation(msg)
         self._session = self._session_factory()
         self._committed = False
+        if self._account_id is not None:
+            await self._session.execute(
+                text("SELECT set_config(:setting, :account_id, true)"),
+                {
+                    "setting": SESSION_ACCOUNT_SETTING,
+                    "account_id": str(self._account_id.value),
+                },
+            )
         return self
 
     async def __aexit__(

@@ -33,11 +33,21 @@ class FakeSession:
     #: list it clears itself (AR-001b), and a fake that kept them would let a
     #: broken rollback pass.
     added: list[Any] = field(default_factory=list)
+    executed: list[tuple[Any, dict[str, object] | None]] = field(default_factory=list)
 
     def add(self, instance: Any) -> None:
         """Stage an object, as ``AsyncSession.add`` does."""
         self.calls.append("add")
         self.added.append(instance)
+
+    async def execute(
+        self,
+        statement: Any,
+        parameters: dict[str, object] | None = None,
+    ) -> None:
+        """Record SQL issued directly by the transaction boundary."""
+        self.calls.append("execute")
+        self.executed.append((statement, parameters))
 
     async def commit(self) -> None:
         """Record a commit, or raise if the test asked for a failing one."""

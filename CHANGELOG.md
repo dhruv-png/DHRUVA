@@ -23,6 +23,14 @@ first table that says who a human is.
 
 ### Added
 
+- **Exercised RLS scaffolding** (ADR-074). Migration `0012` enrolls the one
+  tenant-owned table that predated the S06 policies, while the deployed v1
+  predicates remain permissive. Account-scoped Units of Work set
+  `dhruva.current_account_id` transaction-locally, and real-PostgreSQL tests run
+  the restrictive form as a non-owner role to prove missing and cross-tenant
+  contexts cannot see rows. A schema-completeness test keeps every non-null
+  `account_id` table enrolled; nullable outbox provenance remains outside tenant
+  ownership so unattributed system events are preserved.
 - **Tenant-safe authorisation persistence** (ADR-073). A principal holds at most
   one role, and the assignment binds both principal identity and account so a
   real principal cannot borrow another tenant's authority. Roles retain the

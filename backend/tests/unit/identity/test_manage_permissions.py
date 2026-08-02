@@ -86,7 +86,7 @@ async def _grant(
     permission: Permission = Permission.PLACE_ORDER,
     role_name: str = "operator",
 ) -> Role:
-    return await GrantPermissionUseCase(lambda: uow, clock=FrozenClock(NOW)).execute(
+    return await GrantPermissionUseCase(lambda _account_id: uow, clock=FrozenClock(NOW)).execute(
         actor_id=ACTOR_ID,
         account_id=ACCOUNT,
         role_name=role_name,
@@ -101,7 +101,7 @@ async def _revoke(
     permission: Permission = Permission.PLACE_ORDER,
     role_name: str = "operator",
 ) -> Role:
-    return await RevokePermissionUseCase(lambda: uow, clock=FrozenClock(NOW)).execute(
+    return await RevokePermissionUseCase(lambda _account_id: uow, clock=FrozenClock(NOW)).execute(
         actor_id=ACTOR_ID,
         account_id=ACCOUNT,
         role_name=role_name,

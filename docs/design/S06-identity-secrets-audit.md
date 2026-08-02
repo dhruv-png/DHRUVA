@@ -1,9 +1,9 @@
 # S06 — Identity, Secrets Vault & Audit
 
 > **Status:** Approved and in progress. ADRs 070–074 are accepted; delivery
-> steps 1–6 are complete, and step 7 has implemented and validated its schema,
-> persistence, grant and revoke slices against real PostgreSQL. Assignment and
-> principal-administration workflows remain before step 7 is complete.
+> steps 1–8 are complete. Step 8 preserves permissive v1 RLS while exercising
+> real isolation under a non-owner PostgreSQL role. Redaction and authentication
+> metrics are next.
 >
 > Everything below is justified from the Master Project Plan (§5 C9, §6 the S06
 > catalogue row, §8 G0, §12 retention, §15.1 security controls) and from
@@ -341,20 +341,11 @@ ADR-004 already decided it:
 > module-level caches keyed without account. **PostgreSQL RLS policies authored
 > from the start, permissive in v1.**
 
-**Finding: no RLS policy exists anywhere in the repository.** ADR-004 says
-policies are authored *from the start*. As of this writing there is no
-`CREATE POLICY` and no `ENABLE ROW LEVEL SECURITY` in any of the six migrations,
-nor anywhere in `src` or `tests` — verified by search, not by memory. The
-`account_id` half of ADR-004 was implemented in S04 and is enforced (
-`daily_snapshot.account_id` is `NOT NULL`); the RLS half was not, and the gap has
-been carried silently through v0.4.0 and v0.5.0.
-
-This is an accepted ADR that is partly unimplemented, so closing it is not
-optional and is not S44's job. It is not fixed here either, because the policy
-expression and the name of the session variable the policies read are exactly
-what ADR-074 must decide, and a migration cannot be verified in the sandbox
-this design was written in. **S06 closes it at §13 step 8**, and that step should
-be understood as repaying a debt rather than adding a feature.
+**Closed at step 8.** The S06 tables were enrolled as they were created, and
+migration `0012` enrolls `daily_snapshot`, the one tenant-owned table that
+predated ADR-074. The deployed predicates remain `true`: S06 does not activate
+restrictive production RLS. `outbox.account_id` is nullable event provenance,
+not tenant ownership, so unattributed system events remain valid.
 
 "Permissive in v1" is the part needing care. A permissive policy that is never
 exercised is a policy nobody knows works, and its first real test would be the
@@ -364,10 +355,13 @@ policy actually bites: set the session's account, read, and observe another
 tenant's rows are unreachable. Plan §6 gives S42 an "RLS activation test
 suite"; S06's job is to ensure that suite has something real to activate.
 
-The session variable carrying the current account is set by the Unit of Work,
-because the Unit of Work owns the transaction (ADR-053) and RLS is scoped to the
-session. A caller setting it independently could set it in one transaction and
-read in another.
+The session variable carrying the current account is
+`dhruva.current_account_id`, the name established by migration `0007`. The Unit
+of Work sets it with PostgreSQL's transaction-local `set_config` form before an
+account-owned repository can be reached. Tests prove commit and rollback both
+clear it before the pooled connection is reused. Restrictive-policy coverage
+runs under a temporary non-owner, non-superuser role so PostgreSQL's owner,
+superuser and `BYPASSRLS` exemptions cannot make the test pass vacuously.
 
 ---
 
@@ -446,7 +440,10 @@ establishes that neither changes.
    shared-role TOTP checks, optimistic concurrency and last-manager protection
    are enforced. Assignment writes (including the protected-role TOTP guard)
    and principal administration remain.
-8. RLS scaffolding, with a test that a restrictive policy bites
+8. ~~RLS scaffolding, with a test that a restrictive policy bites~~ — **done.**
+   Migration `0012` completes permissive policy enrollment; the Unit of Work
+   sets transaction-local tenant context; completeness, isolation, rollback and
+   pooled-reuse behavior are exercised against real PostgreSQL.
 9. Redaction coverage for S06 types; authentication metrics
 10. Validation, documentation, v0.6.0
 
