@@ -23,7 +23,9 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --project backend --all-groups
       - name: pip-audit
-        run: uv run --project backend pip-audit --strict --desc
+        run: >-
+          uv run --project backend pip-audit --strict --desc --require-hashes
+          --requirement backend/requirements.lock
 
   secrets:
     name: Secret scan
