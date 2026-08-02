@@ -14,6 +14,9 @@ in production the way it behaved in test.
 | mypy | 1.18.2 | `backend/pyproject.toml` dev group |
 | import-linter | 2.4 | `backend/pyproject.toml` dev group |
 | pytest | 8.4.2 | `backend/pyproject.toml` dev group |
+| FastAPI | 0.133.1 | `backend/pyproject.toml` runtime dependencies |
+| Starlette | 1.3.1 | `backend/uv.lock` (FastAPI transitive dependency) |
+| httpx2 | 2.9.1 | `backend/pyproject.toml` dev group (Starlette test client) |
 
 A test — `test_python_version_is_declared_consistently` — asserts the three Python
 declarations agree. Each is read by a different tool, and the assertion is cheaper
@@ -47,20 +50,34 @@ Regenerate after any dependency change:
 
 ```bash
 cd backend
+uv lock
 uv pip compile pyproject.toml --python-version 3.12 --universal \
     --generate-hashes --all-extras -o requirements.lock
 uv pip compile pyproject.toml --python-version 3.12 --universal \
     --generate-hashes --group dev -o requirements-dev.lock
 ```
 
-Commit `pyproject.toml` and both lockfiles in the same commit.
+Commit `pyproject.toml`, `uv.lock` and both exported lockfiles in the same commit.
+Install the canonical environment with `uv sync --all-groups --frozen`. For a
+deliberate narrow upgrade, use `uv lock --upgrade-package <name>` before
+regenerating both exports; review the normalized package/version delta before
+commit.
 
-> **Known deviation.** The canonical `uv.lock` plus `uv sync --frozen` is the
-> intended end state. It cannot be generated in the current environment: `uv lock`
-> requires an interpreter satisfying `requires-python`, and the Python 3.12 build
-> artefact is not reachable from the sandbox. Hash-pinned `uv pip compile` output
-> provides the same guarantee — exact transitive pins, verified by hash — and the
-> migration is tracked in the S02 technical debt register with `HIGH` priority.
+Audit the exact hash-pinned deployment set, without installing the local editable
+project into the audit target:
+
+```bash
+uv run --project backend pip-audit --strict --desc --require-hashes \
+    --disable-pip --requirement backend/requirements.lock
+```
+
+Generate a release CycloneDX SBOM from that same lock:
+
+```bash
+uv run --project backend pip-audit --strict --require-hashes --disable-pip \
+    --requirement backend/requirements.lock --format cyclonedx-json \
+    --output docs/releases/vX.Y.Z.sbom.cdx.json
+```
 
 ## CI guarantees
 

@@ -177,10 +177,30 @@ def test_no_order_placing_code_exists(source_root: Path) -> None:
     is when catching it is cheapest.
     """
     forbidden = ("place_order", "kiteconnect", "KiteConnect", "order_variety", "transaction_type")
+
+    # The one narrow exception, approved by the Product Owner (ADR-073).
+    #
+    # ADR-073 requires that order placement is granted only by being named, so
+    # the Platform context's authorisation module must contain the literal
+    # `place_order`. A permission label is not an order path: it constructs no
+    # order, imports no broker, and reaches no execution code -- which is what
+    # ADR-028 and Gate G5 actually forbid.
+    #
+    # Scoped as tightly as it can be: one module, one token. The other four
+    # tokens still fail inside it, `place_order` still fails in every other
+    # module, and the exemption disappears with this whole test at Gate G5.
+    exempt: dict[Path, frozenset[str]] = {
+        Path("dhruva/contexts/platform/domain/identity/authorisation.py"): frozenset(
+            {"place_order"}
+        )
+    }
+
     offenders = [
-        f"{module.relative_to(source_root)}: {token}"
+        f"{relative}: {token}"
         for module in sorted(source_root.rglob("*.py"))
+        for relative in (module.relative_to(source_root),)
         for token in forbidden
+        if token not in exempt.get(relative, frozenset())
         if token in module.read_text(encoding="utf-8")
     ]
     assert not offenders, (

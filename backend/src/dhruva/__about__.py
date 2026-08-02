@@ -6,7 +6,7 @@ the running process can always report exactly which build it is.
 
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 """Semantic version.
 
 Minor bumps on subsystem completion, major bumps on gate completion

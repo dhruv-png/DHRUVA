@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dhruva.shared.errors.base import DhruvaError, ErrorCode
 from dhruva.shared.errors.taxonomy import (
+    AuthenticationError,
     ConfigurationError,
     ConflictError,
     DataQualityError,
@@ -25,6 +26,8 @@ from dhruva.shared.errors.taxonomy import (
     RateLimitedError,
     SafetyError,
     StaleDataError,
+    TokenExpiredError,
+    TokenRevokedError,
     UnsafeConfigurationError,
     UpstreamTimeoutError,
     UpstreamUnavailableError,
@@ -32,6 +35,7 @@ from dhruva.shared.errors.taxonomy import (
 )
 
 __all__ = [
+    "AuthenticationError",
     "ConfigurationError",
     "ConflictError",
     "DataQualityError",
@@ -47,6 +51,8 @@ __all__ = [
     "RateLimitedError",
     "SafetyError",
     "StaleDataError",
+    "TokenExpiredError",
+    "TokenRevokedError",
     "UnsafeConfigurationError",
     "UpstreamTimeoutError",
     "UpstreamUnavailableError",

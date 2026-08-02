@@ -68,3 +68,30 @@ def test_ci_scans_full_history_not_just_the_diff(repo_root: Path) -> None:
 
     assert "gitleaks" in workflow
     assert "fetch-depth: 0" in workflow, "full history is required for the scan to be meaningful"
+
+
+@pytest.mark.unit
+def test_dependency_audit_checks_the_hash_pinned_deployment_lock(repo_root: Path) -> None:
+    """The release audit targets what production installs, not the editable project."""
+    workflow = (repo_root / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
+    deployment_lock = (repo_root / "backend" / "requirements.lock").read_text(encoding="utf-8")
+
+    assert "pip-audit --strict --desc --require-hashes" in workflow
+    assert "--disable-pip" in workflow, (
+        "the complete hash-pinned export must be audited as pre-resolved input"
+    )
+    assert "--requirement backend/requirements.lock" in workflow
+    assert "--hash=sha256:" in deployment_lock
+    assert "\ndhruva==" not in deployment_lock, (
+        "the local editable distribution is not a third-party deployable dependency"
+    )
+
+
+@pytest.mark.unit
+def test_dependency_audit_cannot_suppress_findings_or_its_exit_code(repo_root: Path) -> None:
+    """A vulnerable third party must make the security job fail closed."""
+    workflow = (repo_root / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
+
+    assert "--ignore-vuln" not in workflow
+    assert "continue-on-error" not in workflow
+    assert "|| true" not in workflow

@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**69 decisions — 68 accepted, 1 superseded.** Records are immutable once accepted
+**74 decisions — 73 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -78,6 +78,11 @@ should not have been made gets caught.
 | [ADR-067](ADR-067-eventstream-is-a-port-live-and-replay-are-peers.md) | EventStream is a port; live and replay are peer adapters | Accepted |
 | [ADR-068](ADR-068-boundary-rule-r9-no-transport-in-domain-or-strategy.md) | Boundary rule R9: no strategy or domain module imports a transport | Accepted |
 | [ADR-069](ADR-069-replay-is-bitemporally-correct-by-construction.md) | Replay is bitemporally correct by construction: as_of is structural, not a filter | Accepted |
+| [ADR-070](ADR-070-envelope-encryption-behind-a-key-provider-port.md) | Envelope encryption with per-record data keys behind a KeyProvider port | Accepted |
+| [ADR-071](ADR-071-the-audit-log-is-append-only-enforced-by-the-database.md) | The audit log is append-only, enforced by the database, and publishes AuditRecorded | Accepted |
+| [ADR-072](ADR-072-access-tokens-are-stateless-refresh-tokens-are-stored-and-rotated.md) | Access tokens are short-lived and stateless; refresh tokens are stored, rotated on use, and revocable | Accepted |
+| [ADR-073](ADR-073-authorisation-defaults-to-deny.md) | Authorisation defaults to deny; order placement is a separate permission gated on enrolled 2FA | Accepted |
+| [ADR-074](ADR-074-rls-policies-are-authored-and-exercised-from-the-start.md) | Row-level security policies are authored *and exercised* from the start, permissive in v1 | Accepted |
 
 ## Reading order for someone new
 
@@ -98,9 +103,10 @@ it does, read these six in order:
 
 ## Architecture Revisions
 
-None. A revision is the heavier instrument, reserved for changes that invalidate a
-gate or a scope parameter (plan section 1.2). It requires written Product Owner
-approval and a reissued Master Project Plan.
+One approved revision is recorded below. A revision is the heavier instrument,
+reserved for changes that invalidate a gate or a scope parameter (plan section
+1.2); it requires written Product Owner approval and, when the plan itself
+changes, a reissued Master Project Plan.
 
 | AR | Date | Change | Plan version |
 |---|---|---|---|

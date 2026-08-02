@@ -26,6 +26,7 @@ from dhruva.contexts.platform.infrastructure.database.unit_of_work import SqlAlc
 from dhruva.contexts.platform.infrastructure.persistence.outbox import OutboxRow
 from dhruva.shared.errors import InvariantViolation
 from dhruva.shared.events import DomainEvent
+from dhruva.shared.identity import AccountId
 from dhruva.shared.time import FrozenClock
 from tests.unit.persistence.fakes import (
     CommittingRepository,
@@ -45,6 +46,24 @@ def _event() -> _Happened:
 
 def _uow(factory: FakeSessionFactory) -> Any:
     return SqlAlchemyUnitOfWork(cast("Any", factory))
+
+
+@pytest.mark.asyncio
+async def test_an_account_scoped_transaction_sets_context_before_work() -> None:
+    """The UoW owns both transaction start and tenant context (ADR-074)."""
+    factory = FakeSessionFactory()
+    account_id = AccountId(uuid4())
+
+    async with SqlAlchemyUnitOfWork(cast("Any", factory), account_id=account_id) as uow:
+        assert cast("object", uow.session) is factory.latest
+
+    statement, parameters = factory.latest.executed[0]
+    assert str(statement) == "SELECT set_config(:setting, :account_id, true)"
+    assert parameters == {
+        "setting": "dhruva.current_account_id",
+        "account_id": str(account_id.value),
+    }
+    assert factory.latest.calls == ["execute", "rollback", "close"]
 
 
 # --------------------------------------------------------------------------- #

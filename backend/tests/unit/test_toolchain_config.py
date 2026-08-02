@@ -137,6 +137,15 @@ DEPENDENCY_PROVENANCE: dict[str, str] = {
         "S05 - asynchronous job execution and scheduling runtime, "
         "confined to the infrastructure execution adapters."
     ),
+    "cryptography": (
+        "S06 - AES-256-GCM envelope encryption of stored credentials (ADR-020, "
+        "ADR-070). Confined to the crypto adapter behind the KeyProvider port; "
+        "no domain module imports it"
+    ),
+    "pyjwt": "S06 - signing and verifying access tokens (ADR-072), confined to "
+    "the TokenIssuer adapter",
+    "argon2-cffi": "S06 - hashing the secret a principal presents; ADR-033 "
+    "forbids storing it recoverably",
 }
 
 
