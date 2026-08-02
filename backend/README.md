@@ -36,6 +36,10 @@ S04, Celery and Redis with S05, and cryptography, PyJWT and argon2 with S06.
 Install from the lock with `uv sync --all-groups --frozen`; do not add an
 unreviewed package directly to the environment.
 
+The v0.6.0 HTTP baseline is FastAPI `0.133.1` with transitive Starlette `1.3.1`.
+The development test client is `httpx2==2.9.1`, Starlette's supported successor
+to the legacy `httpx` package.
+
 ## Commands
 
 Run from the repository root: `make lint`, `make types`, `make boundaries`,

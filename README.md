@@ -46,6 +46,10 @@ make check      # run every gate CI runs
 
 `make help` lists every target.
 
+**Current checkpoint.** The S06 `v0.6.0` release candidate is prepared at
+migration head `0012_rls_scaffolding`. Creating the tag, publishing the release,
+merging the branch, and beginning S07 remain separate owner-controlled actions.
+
 ## Architecture in one paragraph
 
 A **modular monolith** with nine bounded contexts whose boundaries are enforced at

@@ -15,7 +15,9 @@ capital (ADR-026, ADR-029).
 
 ## [Unreleased]
 
-S06 in progress. The credential store landed, and with it the encryption half of
+## [0.6.0] — 2026-08-02 — S06 Identity, Secrets Vault & Audit
+
+S06 is complete. The credential store landed, and with it the encryption half of
 the G0 checklist item that has been open since Phase 0. The audit log followed,
 and it is the first table in the platform the application cannot edit. Then
 tokens — which brought with them the platform's first application layer, and the
@@ -44,8 +46,11 @@ first table that says who a human is.
   real principal cannot borrow another tenant's authority. Roles retain the
   actor and instant behind each live permission, use optimistic versioning for
   concurrent changes, and round-trip through primitive records, pure mappers, a
-  reconstruction factory and a Unit-of-Work-owned repository. Grant/revoke and
-  assignment workflows remain part of S06 step 7.
+  reconstruction factory and a Unit-of-Work-owned repository. Audited,
+  tenant-scoped grant and revoke workflows enforce shared-role TOTP,
+  self-escalation prevention, last-manager protection and optimistic
+  concurrency. Principal administration, role assignment and the first-principal
+  bootstrap operator path are explicitly deferred.
 - **Authentication and session refresh** (ADR-072), as the repository's **first
   two application-layer use cases**. Every context's `application` package had
   been empty until now, so this also settles what a use case may depend on: ports
@@ -169,6 +174,12 @@ first table that says who a human is.
 
 ### Changed
 
+- **The HTTP dependency stack was upgraded without widening the application
+  surface.** FastAPI is now `0.133.1`, Starlette is `1.3.1`, and Starlette's
+  supported test client uses `httpx2==2.9.1`. The security workflow audits the
+  hash-pinned deployment export rather than the editable development
+  environment, and the v0.6.0 CycloneDX SBOM is generated from that same lock.
+
 - **Envelope ciphertexts are bound to their record — TD-S06-6, closed.**
   `encrypt_secret` and `decrypt_secret` take `associated_data` as a **required
   keyword argument**. It is required rather than defaulted because a default of
@@ -207,8 +218,8 @@ first table that says who a human is.
   migration generated for any unrelated change would have carried those `DROP`s
   into production. `AuditLogModel` and `RefreshTokenModel` now mirror their
   migrations column for column and index for index. `RefreshTokenModel` carries
-  no behaviour and has no repository: it is schema metadata, and token issuance,
-  rotation and reuse detection remain S06's next step.
+  no behaviour and has no repository: it is schema metadata. Token issuance,
+  rotation and reuse detection are now implemented and validated.
 - **`credential` had no `version` column**, contradicting ADR-057's "every
   aggregate carries a `version` column". Found while writing the repository's
   `update`, which could not otherwise detect a lost update — two concurrent

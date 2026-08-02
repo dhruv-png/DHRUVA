@@ -410,7 +410,7 @@ and through registered-value interpolation.
 | ~~TD-S06-6~~ | ~~**Envelope ciphertexts carry no associated data**~~ | **Closed at step 4**, as this row said it would be. `encrypt_secret`/`decrypt_secret` take `associated_data` as a required keyword argument, and `credential_associated_data` derives it from the credential's identity, account and broker. An integration test copies one row's ciphertext and wrapped key onto another with SQL and asserts the result no longer opens, while the victim row still does |
 | TD-S06-7 | **Service principals are not modelled** | §14 question 2, answered at step 6: humans only for now. `TokenClaims.subject` and `AuditRecord.actor` stay `str` rather than becoming a sum of human and service identity, and the refresh lifetimes are human-shaped. Nothing in S01–S07 needs a service identity, and inventing the type ahead of a caller would be architecture nobody can validate. Revisit when the first non-human caller exists — the change is a domain type and a token lifetime, not a schema migration |
 | TD-S06-8 | **A mistyped password can land in `audit_log.actor`** | A failed login records the subject as presented, which is what lets the log distinguish a brute force against one account from a scan across many. If an operator types their password into the username field, that password becomes a permanent audit row on a table nothing may edit. The mitigation is not obvious: hashing the actor destroys the grouping the field exists for, and the platform cannot tell a mistyped password from an unusual username. Recorded rather than solved, and it belongs with S42's threat-model work |
-| TD-S06-9 | **`principal` has no administrative path** | Step 6 stores principals and authenticates them; nothing creates one except a test. Registration, password reset and disablement are operations with their own authorisation questions (ADR-073), so they belong with step 7 rather than being added here without one |
+| TD-S06-9 | **Operator paths for principal administration, role assignment and bootstrap are deferred** | S06 stores and authenticates principals and administers role permissions, but deliberately does not create or assign principals outside tests. Registration, password reset, disablement, assignment and the idempotent first-authorised-principal bootstrap command have distinct authority and operational questions; they require their own approved slice rather than being inferred from permission grant/revoke |
 
 Retention is *not* on this list: plan §12 already fixes it at indefinite and
 immutable, so there is nothing deferred.
@@ -444,13 +444,13 @@ establishes that neither changes.
    referenced an `account_id` and nothing named the human whose session it was,
    and ADR-072's "no such user versus wrong password are indistinguishable"
    presupposes a user store to be meaningful at all
-7. **Authorisation — in progress.** The owner approved exactly one tenant-scoped
-   role per principal. Migration `0011`, the versioned `Role` aggregate,
-   persistence, `RoleStore`, and the audited grant/revoke use cases are
-   implemented and validated against real PostgreSQL. Tenant advisory locking,
-   shared-role TOTP checks, optimistic concurrency and last-manager protection
-   are enforced. Assignment writes (including the protected-role TOTP guard)
-   and principal administration remain.
+7. ~~Authorisation~~ — **approved S06 scope done.** The owner approved exactly
+   one tenant-scoped role per principal. Migration `0011`, the versioned `Role`
+   aggregate, persistence, `RoleStore`, and the audited grant/revoke use cases
+   are implemented and validated against real PostgreSQL. Tenant advisory
+   locking, shared-role TOTP checks, optimistic concurrency and last-manager
+   protection are enforced. Assignment writes, principal administration and the
+   bootstrap operator command are explicitly deferred in TD-S06-9.
 8. ~~RLS scaffolding, with a test that a restrictive policy bites~~ — **done.**
    Migration `0012` completes permissive policy enrollment; the Unit of Work
    sets transaction-local tenant context; completeness, isolation, rollback and
@@ -459,7 +459,10 @@ establishes that neither changes.
    Both ADR-037 strategies are exercised with S06 material; login, refresh,
    grant and revoke outcomes use bounded labels and distinguish expected refusal
    from infrastructure error without accepting identity or secret data.
-10. Validation, documentation, v0.6.0
+10. ~~Validation, documentation, v0.6.0~~ — **release candidate prepared.** The
+    configured PostgreSQL/default suite, coverage, lint, format, strict typing,
+    import contracts, custom boundaries, ADR guard, migration cycle, deployment
+    dependency audit and release SBOM are recorded in the v0.6.0 release notes.
 
 Steps 2–5 are the substance. If they are right, 6–9 are adapters and wiring.
 
