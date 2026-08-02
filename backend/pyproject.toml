@@ -156,6 +156,19 @@ ignore = [
 # live inside `pytest.raises`, which PT012 flags. Splitting it would test
 # something else.
 "tests/unit/persistence/test_unit_of_work.py" = ["PT012"]
+# A test of a password hasher has to contain passwords. S105 exists to catch a
+# credential committed by accident; these are committed on purpose, are not a
+# credential for anything, and the file would be untestable without them.
+"tests/unit/identity/test_password_hasher.py" = ["S105", "S106"]
+"tests/unit/identity/test_authenticate.py" = ["S105", "S106"]
+"tests/integration/test_authentication_flow.py" = ["S105", "S106"]
+# The identity use cases assemble audit records from six or seven values, all
+# keyword-only. PLR0913 guards against positional argument lists nobody can read
+# at the call site; keyword-only parameters are the fix that rule is pointing at,
+# and collapsing them into a parameter object here would hide exactly the fields
+# an auditor reads -- who acted, on what, with what outcome, under which
+# correlation.
+"src/dhruva/contexts/platform/application/identity/*.py" = ["PLR0913"]
 "tests/**" = [
   "S101",    # assert is the point of a test
   "PLR2004", # magic values are readable in assertions

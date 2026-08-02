@@ -179,6 +179,43 @@ class CryptoSettings(_Group):
     )
 
 
+class AuthSettings(_Group):
+    """Token signing and session lifetimes, used from S06 (ADR-072).
+
+    Separate from :class:`CryptoSettings` because the two keys protect different
+    things and rotate on different schedules. The vault master key protects data
+    at rest and rotating it means re-wrapping every stored credential; the
+    signing key protects tokens in flight and rotating it invalidates every
+    outstanding access token and nothing else. One group holding both would
+    invite an operator to rotate one while meaning the other.
+
+    ``signing_key`` is symmetric key material for HS256. The default is a
+    placeholder that is deliberately not usable, refused twice for the same
+    reason ``crypto.master_key`` is: a working default means every deployment
+    that forgot to set the variable signs tokens anyone reading this repository
+    can forge.
+
+    The lifetimes are here rather than hard-coded because ADR-072 makes each an
+    operational decision with a stated default, and because a refresh token
+    stores its own ``expires_at`` at issue -- so changing the setting affects new
+    sessions and leaves outstanding ones exactly as they were.
+    """
+
+    signing_key: Secret = Field(
+        default_factory=lambda: SecretValue("change-me-local-only", register=False)
+    )
+
+    #: Plan §15.1 fixes this at fifteen minutes. It is configurable because an
+    #: incident may justify shortening it, and not because lengthening it is a
+    #: normal thing to do -- ADR-072 bounds the damage of an unrevocable access
+    #: token by exactly this number.
+    access_token_seconds: int = Field(default=900, ge=60, le=3600)
+
+    #: Long enough that nobody stores a password in a script to avoid
+    #: re-authenticating, which is the failure ADR-072 names.
+    refresh_token_days: int = Field(default=30, ge=1, le=365)
+
+
 class TracingSettings(_Group):
     """OpenTelemetry configuration.
 
@@ -223,6 +260,7 @@ class Settings(BaseSettings):
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     crypto: CryptoSettings = Field(default_factory=CryptoSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
     otel: TracingSettings = Field(default_factory=TracingSettings)
 
     @property
@@ -277,6 +315,13 @@ class Settings(BaseSettings):
         if _looks_like_a_placeholder(self.crypto.master_key.reveal()):
             msg = "credential vault master key is still a development placeholder"
             raise UnsafeConfigurationError(msg, environment=environment, field="crypto.master_key")
+
+        # A placeholder signing key is worse than a placeholder password: the
+        # value is in this repository, so anybody who can read it can mint an
+        # access token for any principal and any account (ADR-072).
+        if _looks_like_a_placeholder(self.auth.signing_key.reveal()):
+            msg = "token signing key is still a development placeholder"
+            raise UnsafeConfigurationError(msg, environment=environment, field="auth.signing_key")
 
         if self.log.format == "console":
             msg = "deployed environments must emit machine-readable logs"

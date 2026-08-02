@@ -113,6 +113,60 @@ class PermissionDeniedError(DhruvaError):
     code = ErrorCode("DHR-PRM-001")
 
 
+class AuthenticationError(DhruvaError):
+    """The caller did not establish who they are (ADR-072).
+
+    Distinct from :class:`PermissionDeniedError`, and the distinction is the one
+    that decides an HTTP status: this is "we do not know who you are" (401),
+    that is "we know, and you may not" (403). They share the ``PRM`` family
+    because the taxonomy's families are coarse groupings rather than claims that
+    two errors mean the same thing.
+
+    Raised **directly** for a failed credential presentation, and deliberately
+    for both halves of it. ADR-072 requires that an unknown subject and a wrong
+    password be indistinguishable to the caller: an error that separated them is
+    a user-enumeration oracle, useful to an attacker and to nobody else. Which of
+    the two actually happened is recorded in the audit log, which is where it is
+    useful.
+
+    Subclassed where the caller's *recovery* genuinely differs -- an expired
+    token means refresh, a revoked one means log in again -- and nowhere else.
+    """
+
+    code = ErrorCode("DHR-PRM-002")
+
+
+class TokenExpiredError(AuthenticationError):
+    """The presented token has passed its lifetime (ADR-072).
+
+    A distinct code because the client's response is distinct and benign: obtain
+    a new token. Access tokens live fifteen minutes by design (plan §15.1), so
+    this is the ordinary end of a session rather than a sign of anything.
+
+    Expiry is always evaluated against the injected clock (ADR-011), never the
+    wall clock, so a replay and a test can both reach this deterministically.
+    """
+
+    code = ErrorCode("DHR-PRM-003")
+
+
+class TokenRevokedError(AuthenticationError):
+    """The presented token has been withdrawn (ADR-072).
+
+    Raised for an explicitly revoked refresh token **and** for one whose lineage
+    was revoked after reuse was detected — and the two are deliberately
+    indistinguishable here. Telling a caller "this token was revoked because we
+    detected you reusing it" tells a thief they have been noticed, which is the
+    one piece of information worth withholding at that moment. The audit log
+    records which it was.
+
+    Distinct from :class:`TokenExpiredError` because the recovery differs: an
+    expired token is refreshed, a revoked one means authenticating again.
+    """
+
+    code = ErrorCode("DHR-PRM-004")
+
+
 # --------------------------------------------------------------------------- #
 # EXT -- external services
 # --------------------------------------------------------------------------- #

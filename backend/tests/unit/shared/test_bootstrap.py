@@ -20,6 +20,10 @@ from dhruva.shared.runtime import bootstrap
 #: this file already repeats the environment-cleaning fixture next door.
 DEPLOYABLE_MASTER_KEY: Final = base64.b64encode(bytes(32)).decode()
 
+#: And its token-signing counterpart (ADR-072). Raw material rather than base64,
+#: because HS256 takes a key rather than an encoding of one.
+DEPLOYABLE_SIGNING_KEY: Final = "s" * 48
+
 
 @pytest.fixture(autouse=True)
 def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,6 +68,7 @@ def test_the_startup_banner_states_the_facts_an_operator_needs(
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "staging")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-staging-password")
     monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
+    monkeypatch.setenv("DHRUVA_AUTH__SIGNING_KEY", DEPLOYABLE_SIGNING_KEY)
 
     bootstrap(service="dhruva-test")
 

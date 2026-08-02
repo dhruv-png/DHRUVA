@@ -18,6 +18,12 @@ from dhruva.shared.errors import ConfigurationError, UnsafeConfigurationError
 #: valid base64 of the right length, and obviously not a key anyone chose.
 DEPLOYABLE_MASTER_KEY: Final = base64.b64encode(bytes(32)).decode()
 
+#: The same idea for the token signing key (ADR-072). Not base64 -- HS256 takes
+#: raw key material rather than an encoding of it -- and long enough to pass the
+#: issuer's minimum, so a test that loads a deployed configuration is not also
+#: silently testing the length check.
+DEPLOYABLE_SIGNING_KEY: Final = "s" * 48
+
 
 @pytest.fixture(autouse=True)
 def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -118,6 +124,10 @@ def test_deployed_environments_reject_human_readable_logs(
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "production")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
     monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
+    # Every secret is set so that this test fails on the thing it is named
+    # after. The checks run in severity order -- secrets first -- so leaving one
+    # unset would make this assert on whichever secret was missing instead.
+    monkeypatch.setenv("DHRUVA_AUTH__SIGNING_KEY", DEPLOYABLE_SIGNING_KEY)
     monkeypatch.setenv("DHRUVA_LOG__FORMAT", "console")
 
     with pytest.raises(UnsafeConfigurationError) as caught:
@@ -147,11 +157,44 @@ def test_deployed_environments_reject_a_placeholder_master_key(
 
 
 @pytest.mark.unit
+def test_deployed_environments_reject_a_placeholder_signing_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A placeholder signing key is worse than a placeholder password.
+
+    ADR-072: the key that signs access tokens ships in this repository as a
+    refused default, so a deployment that inherited it could have a token minted
+    for any principal and any account by anybody who can read the source. Unlike
+    a stolen password, that needs no interaction with the platform at all.
+    """
+    monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "staging")
+    monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
+    monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
+
+    with pytest.raises(UnsafeConfigurationError) as caught:
+        load_settings()
+
+    assert caught.value.context["field"] == "auth.signing_key"
+
+
+@pytest.mark.unit
+def test_the_access_token_lifetime_defaults_to_the_plan_s_fifteen_minutes() -> None:
+    """Plan §15.1 fixes it, so the default is the decision rather than a guess.
+
+    Configurable because an incident may justify shortening it -- not because
+    lengthening it is routine. ADR-072 bounds the damage of an access token that
+    cannot be revoked by exactly this number.
+    """
+    assert load_settings().auth.access_token_seconds == 900
+
+
+@pytest.mark.unit
 def test_a_valid_production_configuration_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     """The safety checks must not block a correct deployment."""
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "production")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
     monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
+    monkeypatch.setenv("DHRUVA_AUTH__SIGNING_KEY", DEPLOYABLE_SIGNING_KEY)
 
     settings = load_settings()
 
@@ -173,7 +216,9 @@ def test_log_format_is_derived_rather_than_defaulted(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("DHRUVA_APP__ENVIRONMENT", "staging")
     monkeypatch.setenv("DHRUVA_DB__PASSWORD", "a-real-looking-production-password")
     monkeypatch.setenv("DHRUVA_CRYPTO__MASTER_KEY", DEPLOYABLE_MASTER_KEY)
-
+    monkeypatch.setenv(
+        "DHRUVA_AUTH__SIGNING_KEY", "abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz"
+    )
     assert load_settings().resolved_log_format() == "json"
 
 
