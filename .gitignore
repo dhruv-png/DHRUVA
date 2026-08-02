@@ -39,3 +39,12 @@ out/
 .vscode/
 !.vscode/extensions.json
 .DS_Store
+
+# Local handoff and review snapshots
+/CLAUDE_HANDOFF.md
+/backend/git_status.txt
+/backend/git_diff_stat.txt
+/backend/recent_commits.txt
+/backend/uncommitted_changes.patch
+/backend/untracked_files.txt
+/s06-step*-evidence.diff
