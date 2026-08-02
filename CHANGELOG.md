@@ -22,6 +22,8 @@ capital (ADR-026, ADR-029).
   as active work. Four product milestones now cover unified equity/futures/news
   data; scanning, backtesting and separate paper portfolios; news intelligence and
   optional validated ML ranking; and the private dashboard, alerts and operations.
+  The repository-layout control now permits behaviour in every bounded context
+  required by those milestones while retaining the explicit no-broker-order scan.
 - **Provider spending is bounded.** Read-only Zerodha market data is approved up to
   ₹500/month; news and sentiment/inference must have zero recurring cost. Current
   news uses official NSE sources, resilient public discovery/RSS and prospective

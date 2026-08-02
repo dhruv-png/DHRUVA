@@ -9,7 +9,6 @@ that quietly stopped running.
 
 from __future__ import annotations
 
-import ast
 import importlib
 from pathlib import Path
 
@@ -22,10 +21,6 @@ from dhruva.tooling.boundaries import (
 )
 
 CONTEXTS = tuple(ALLOWED_CONTEXT_DEPENDENCIES)
-
-#: Contexts that carry logic during Stage 1 (ADR-028). The rest exist as empty
-#: contract-enforced boundaries until Gate G-MCP passes.
-STAGE_ONE_CONTEXTS = frozenset({"reference", "marketdata", "analytics", "platform"})
 
 
 @pytest.mark.unit
@@ -71,13 +66,16 @@ def test_composition_roots_exist(source_root: Path, root: str) -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("context", CONTEXTS)
 def test_context_api_module_imports_cleanly(context: str) -> None:
-    """Every public API module must import without side effects and export nothing yet.
+    """Every public API module imports and every declared export resolves.
 
     Importing them here is not ceremony: it proves the nine public surfaces are
-    real, importable modules rather than files that merely exist.
+    real modules. AR-002 activates work across the original context boundaries,
+    so an empty export list is no longer a roadmap gate; a truthful one is.
     """
     module = importlib.import_module(f"dhruva.contexts.{context}.api")
-    assert module.__all__ == [], f"'{context}' exports names before its subsystem is built"
+    assert isinstance(module.__all__, list)
+    missing = [name for name in module.__all__ if not hasattr(module, name)]
+    assert not missing, f"'{context}' declares exports it does not provide: {missing}"
 
 
 @pytest.mark.unit
@@ -126,57 +124,15 @@ def test_required_repository_files_exist(repo_root: Path, relative: str) -> None
     assert (repo_root / relative).is_file(), f"missing required file: {relative}"
 
 
-def _is_boundary_only(module: Path) -> bool:
-    """Return whether a module contains nothing but a docstring and inert scaffolding.
-
-    Permitted statements are the module docstring, ``from __future__`` imports,
-    and an ``__all__`` assignment. Anything else -- a function, a class, an
-    import of real machinery -- means the module has grown behaviour.
-    """
-    tree = ast.parse(module.read_text(encoding="utf-8"))
-    for index, node in enumerate(tree.body):
-        if index == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-            continue  # module docstring
-        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
-            continue
-        if isinstance(node, ast.AnnAssign | ast.Assign):
-            targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
-            if all(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
-                continue
-        return False
-    return True
-
-
-@pytest.mark.unit
-def test_stage_two_contexts_carry_no_logic(source_root: Path) -> None:
-    """ADR-028: contexts beyond Stage 1 exist as empty boundaries only.
-
-    The moment one grows behaviour before Gate G-MCP, this test fails and forces
-    the conversation. That is the intent: the gate is protected by a control, not
-    by the author's memory of having agreed to it.
-    """
-    offenders = [
-        str(module.relative_to(source_root))
-        for context in CONTEXTS
-        if context not in STAGE_ONE_CONTEXTS
-        for module in sorted((source_root / "dhruva" / "contexts" / context).rglob("*.py"))
-        if not _is_boundary_only(module)
-    ]
-    assert not offenders, (
-        "Stage 2 contexts must contain no logic until Gate G-MCP passes (ADR-028). "
-        f"Offending modules: {offenders}"
-    )
-
-
 @pytest.mark.unit
 def test_no_order_placing_code_exists(source_root: Path) -> None:
-    """ADR-028 and Gate G5: Stage 1 must contain nothing that can place an order.
+    """AR-002 permits market-data adapters but no code that can place an order.
 
     A crude textual scan is the right tool here precisely because it is crude --
     it catches the earliest, most innocent-looking version of the mistake, which
     is when catching it is cheapest.
     """
-    forbidden = ("place_order", "kiteconnect", "KiteConnect", "order_variety", "transaction_type")
+    forbidden = ("place_order", "order_variety", "transaction_type")
 
     # The one narrow exception, approved by the Product Owner (ADR-073).
     #
@@ -187,8 +143,8 @@ def test_no_order_placing_code_exists(source_root: Path) -> None:
     # ADR-028 and Gate G5 actually forbid.
     #
     # Scoped as tightly as it can be: one module, one token. The other four
-    # tokens still fail inside it, `place_order` still fails in every other
-    # module, and the exemption disappears with this whole test at Gate G5.
+    # tokens still fail inside it and `place_order` still fails in every other
+    # module. Read-only Kite integration is deliberately not a forbidden token.
     exempt: dict[Path, frozenset[str]] = {
         Path("dhruva/contexts/platform/domain/identity/authorisation.py"): frozenset(
             {"place_order"}
@@ -204,6 +160,6 @@ def test_no_order_placing_code_exists(source_root: Path) -> None:
         if token in module.read_text(encoding="utf-8")
     ]
     assert not offenders, (
-        "No order-constructing or broker-connecting code may exist during Stage 1 "
-        f"(ADR-028). Found: {offenders}"
+        "No broker-order code may exist in the personal research product "
+        f"(AR-002). Found: {offenders}"
     )
