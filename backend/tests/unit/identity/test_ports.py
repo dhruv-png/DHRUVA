@@ -17,9 +17,15 @@ from uuid import UUID
 import pytest
 
 from dhruva.contexts.platform.domain import identity
-from dhruva.contexts.platform.domain.identity import KeyProvider, TokenClaims, TokenIssuer
-from dhruva.shared.identity import AccountId
+from dhruva.contexts.platform.domain.identity import (
+    KeyProvider,
+    RoleStore,
+    TokenClaims,
+    TokenIssuer,
+)
+from dhruva.shared.identity import AccountId, PrincipalId
 from dhruva.shared.time import Clock, FrozenClock
+from tests.unit.identity.fakes import FakeRoleStore, FakeUnitOfWork
 
 pytestmark = pytest.mark.unit
 
@@ -72,6 +78,45 @@ def test_a_conforming_object_satisfies_the_key_provider_port() -> None:
 def test_a_conforming_object_satisfies_the_token_issuer_port() -> None:
     """The same structural check for the second port."""
     assert isinstance(StubTokenIssuer(), TokenIssuer)
+
+
+def test_the_role_fake_satisfies_the_role_store_port() -> None:
+    """The next application slice can use the same structural contract as production."""
+    assert isinstance(FakeRoleStore(), RoleStore)
+
+
+def test_each_fake_unit_of_work_owns_its_role_state() -> None:
+    """A use-case test cannot leak a role or assignment into the next test."""
+    first = FakeUnitOfWork()
+    second = FakeUnitOfWork()
+
+    assert first.roles is not second.roles
+    assert first.roles.by_key is not second.roles.by_key
+    assert first.roles.assignments is not second.roles.assignments
+
+
+@pytest.mark.asyncio
+async def test_the_role_fake_models_missing_assignment_add_update_and_lookup() -> None:
+    """Use-case tests can distinguish deny-by-default state from stored authority."""
+    store = FakeRoleStore()
+    principal_id = PrincipalId.new()
+    role = identity.Role(
+        account_id=ACCOUNT,
+        name="operator",
+        created_at=EXPIRES,
+        updated_at=EXPIRES,
+    )
+
+    assert await store.get(ACCOUNT, role.name) is None
+    assert await store.get_for_principal(principal_id) is None
+
+    await store.add(role)
+    store.assign(principal_id, role)
+    assert await store.get_for_principal(principal_id) == role
+
+    updated = dataclasses.replace(role, version=2)
+    await store.update(updated)
+    assert await store.get(ACCOUNT, role.name) == updated
 
 
 def test_an_object_missing_a_method_does_not_satisfy_the_port() -> None:
