@@ -41,6 +41,12 @@ capital (ADR-026, ADR-029).
   but the static list does not claim eligibility. Current `NFO-FUT` contracts,
   tokens, expiries and lots will be resolved on each provider-master refresh;
   unavailable futures never remove the underlying cash instrument.
+- **Narrow read-only Kite instrument discovery (ADR-076).** A direct async HTTP
+  adapter consumes only the documented daily instrument-master endpoint, bounds
+  retries and payloads, rejects schema drift and protects API credentials. A
+  sanitized master resolves exact cash mappings and all evidenced active futures
+  months while missing, malformed or ambiguous contracts become visible
+  `CURRENTLY_UNAVAILABLE` results for only the affected underlying.
 
 ## [0.6.0] — 2026-08-02 — S06 Identity, Secrets Vault & Audit
 

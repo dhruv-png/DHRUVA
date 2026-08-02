@@ -42,6 +42,7 @@ __all__ = [
     "SafetyError",
     "StaleDataError",
     "UnsafeConfigurationError",
+    "UpstreamAuthenticationError",
     "UpstreamTimeoutError",
     "UpstreamUnavailableError",
     "ValidationError",
@@ -210,6 +211,17 @@ class RateLimitedError(ExternalServiceError):
     """
 
     code = ErrorCode("DHR-EXT-004")
+
+
+class UpstreamAuthenticationError(ExternalServiceError):
+    """An upstream rejected or expired the credential used for a safe read.
+
+    Retrying the same token cannot repair an authentication failure. The
+    operator must complete that provider's login flow and replace the token.
+    """
+
+    code = ErrorCode("DHR-EXT-005")
+    retryable = False
 
 
 # --------------------------------------------------------------------------- #

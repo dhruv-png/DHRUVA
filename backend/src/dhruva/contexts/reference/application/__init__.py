@@ -6,6 +6,10 @@ May import this context's ``domain`` and ``dhruva.shared``. May not import
 ``infrastructure`` or ``interfaces``.
 """
 
+from dhruva.contexts.reference.application.instrument_discovery import (
+    DiscoverOwnerInstruments,
+    DiscoverOwnerInstrumentsCommand,
+)
 from dhruva.contexts.reference.application.watchlist import (
     ConfigureReferenceUniverse,
     ConfigureReferenceUniverseCommand,
@@ -18,6 +22,8 @@ __all__ = [
     "ConfigureReferenceUniverse",
     "ConfigureReferenceUniverseCommand",
     "ConfigureReferenceUniverseResult",
+    "DiscoverOwnerInstruments",
+    "DiscoverOwnerInstrumentsCommand",
     "GetSharedWatchlist",
     "UniverseDefinition",
 ]

@@ -15,10 +15,16 @@ from dhruva.contexts.reference.infrastructure.persistence import (
     ReferenceRepository,
     SqlAlchemyReferenceUnitOfWork,
 )
+from dhruva.contexts.reference.infrastructure.zerodha_instruments import (
+    KiteInstrumentMasterAdapter,
+    parse_instrument_master,
+)
 
 __all__ = [
     "OWNER_UNIVERSE_REVISION",
+    "KiteInstrumentMasterAdapter",
     "ReferenceRepository",
     "SqlAlchemyReferenceUnitOfWork",
     "load_owner_universe",
+    "parse_instrument_master",
 ]

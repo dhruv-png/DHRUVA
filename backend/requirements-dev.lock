@@ -539,7 +539,7 @@ httpcore2==2.9.1 \
 httpx2==2.9.1 \
     --hash=sha256:1820fe14a9ab1107bfeff39259987429450b070ec0ff38cc87eb0d8c97fdc71a \
     --hash=sha256:1932a768737e3666291582833da748cc4e563c337cf96706fccc04fa6e58764a
-    # via dhruva (pyproject.toml:dev)
+    # via dhruva (pyproject.toml)
 hypothesis==6.140.3 \
     --hash=sha256:4f4a09bf77af21e0cc3dffed1ea639812dc75d38f81308ec9fb0e33f8557b0cb \
     --hash=sha256:a2cfff51641a58a56081f5c90ae1da6ccf3d043404f411805f7f0e0d75742d0e

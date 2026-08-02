@@ -146,6 +146,8 @@ DEPENDENCY_PROVENANCE: dict[str, str] = {
     "the TokenIssuer adapter",
     "argon2-cffi": "S06 - hashing the secret a principal presents; ADR-033 "
     "forbids storing it recoverably",
+    "httpx2": "MVP 1 - async transport for the narrow read-only Kite market-data "
+    "adapter (ADR-076); provider HTTP types remain in Reference infrastructure",
 }
 
 

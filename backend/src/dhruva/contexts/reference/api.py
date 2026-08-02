@@ -10,7 +10,19 @@ permitted to depend on. Provider and persistence adapters remain internal.
 
 from __future__ import annotations
 
-from dhruva.contexts.reference.application import GetSharedWatchlist
-from dhruva.contexts.reference.domain import InstrumentKind, WatchlistInstrument
+from dhruva.contexts.reference.application import DiscoverOwnerInstruments, GetSharedWatchlist
+from dhruva.contexts.reference.domain import (
+    FuturesAvailabilityStatus,
+    InstrumentDiscovery,
+    InstrumentKind,
+    WatchlistInstrument,
+)
 
-__all__ = ["GetSharedWatchlist", "InstrumentKind", "WatchlistInstrument"]
+__all__ = [
+    "DiscoverOwnerInstruments",
+    "FuturesAvailabilityStatus",
+    "GetSharedWatchlist",
+    "InstrumentDiscovery",
+    "InstrumentKind",
+    "WatchlistInstrument",
+]

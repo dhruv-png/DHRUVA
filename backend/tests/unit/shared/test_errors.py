@@ -44,6 +44,7 @@ EXPECTED_CODES: dict[str, str] = {
     "UpstreamUnavailableError": "DHR-EXT-002",
     "UpstreamTimeoutError": "DHR-EXT-003",
     "RateLimitedError": "DHR-EXT-004",
+    "UpstreamAuthenticationError": "DHR-EXT-005",
     "DataQualityError": "DHR-DQL-001",
     "StaleDataError": "DHR-DQL-002",
     "MissingDataError": "DHR-DQL-003",

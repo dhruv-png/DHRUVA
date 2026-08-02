@@ -560,6 +560,7 @@ dependencies = [
     { name = "celery" },
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "httpx2" },
     { name = "opentelemetry-api" },
     { name = "prometheus-client" },
     { name = "pydantic" },
@@ -580,7 +581,6 @@ tracing = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx2" },
     { name = "hypothesis" },
     { name = "import-linter" },
     { name = "mypy" },
@@ -602,6 +602,7 @@ requires-dist = [
     { name = "celery", specifier = "==5.5.3" },
     { name = "cryptography", specifier = "==50.0.0" },
     { name = "fastapi", specifier = "==0.133.1" },
+    { name = "httpx2", specifier = "==2.9.1" },
     { name = "opentelemetry-api", specifier = "==1.39.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'tracing'", specifier = "==1.39.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'tracing'", specifier = "==1.39.0" },
@@ -619,7 +620,6 @@ provides-extras = ["tracing"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx2", specifier = "==2.9.1" },
     { name = "hypothesis", specifier = "==6.140.3" },
     { name = "import-linter", specifier = "==2.4" },
     { name = "mypy", specifier = "==1.18.2" },

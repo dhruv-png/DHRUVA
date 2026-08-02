@@ -11,6 +11,8 @@ build/
 .ruff_cache/
 .pytest_cache/
 .hypothesis/
+.uv-cache/
+.uv-build-cache/
 .coverage
 .coverage.*
 htmlcov/

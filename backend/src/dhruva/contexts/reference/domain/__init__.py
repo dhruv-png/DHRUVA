@@ -7,6 +7,16 @@ This layer performs no I/O and imports no framework. It may import only
 and the import-linter contract ``Clean Architecture layers``.
 """
 
+from dhruva.contexts.reference.domain.instrument_master import (
+    FuturesAvailability,
+    FuturesAvailabilityStatus,
+    FuturesContract,
+    InstrumentDiscovery,
+    InstrumentMasterEntry,
+    InstrumentMasterSnapshot,
+    InstrumentResolution,
+    ResolvedCashInstrument,
+)
 from dhruva.contexts.reference.domain.watchlist import (
     CashInstrumentMapping,
     InstrumentIdentityRevision,
@@ -17,8 +27,16 @@ from dhruva.contexts.reference.domain.watchlist import (
 
 __all__ = [
     "CashInstrumentMapping",
+    "FuturesAvailability",
+    "FuturesAvailabilityStatus",
+    "FuturesContract",
+    "InstrumentDiscovery",
     "InstrumentIdentityRevision",
     "InstrumentKind",
+    "InstrumentMasterEntry",
+    "InstrumentMasterSnapshot",
+    "InstrumentResolution",
+    "ResolvedCashInstrument",
     "WatchlistInstrument",
     "WatchlistMembershipRevision",
 ]

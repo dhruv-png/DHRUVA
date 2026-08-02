@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 if TYPE_CHECKING:
     from datetime import date, datetime
 
+    from dhruva.contexts.reference.domain.instrument_master import InstrumentMasterSnapshot
     from dhruva.contexts.reference.domain.watchlist import (
         InstrumentIdentityRevision,
         WatchlistInstrument,
@@ -15,7 +16,16 @@ if TYPE_CHECKING:
     )
     from dhruva.shared.identity import AccountId
 
-__all__ = ["ReferenceStore", "ReferenceUnitOfWork"]
+__all__ = ["InstrumentMasterSource", "ReferenceStore", "ReferenceUnitOfWork"]
+
+
+@runtime_checkable
+class InstrumentMasterSource(Protocol):
+    """Read-only source of one immutable daily instrument master."""
+
+    async def fetch(self, *, market_date: date) -> InstrumentMasterSnapshot:
+        """Retrieve and parse the provider master assigned to ``market_date``."""
+        ...
 
 
 @runtime_checkable

@@ -135,3 +135,37 @@ slice, then implement the read-only Zerodha instrument-master adapter.
 
 **Open.** Zerodha app credentials remain unnecessary until the fixture-backed
 adapter is ready for its first explicit provider smoke test.
+
+---
+
+## 2026-08-02 — Read-only Kite instrument discovery
+
+**Done.** Recorded ADR-076 and implemented the first read-only Kite vertical
+against the official v3 instrument-master contract. The strict CSV adapter uses
+bounded payloads, three-attempt retry limits, explicit authentication/rate-limit
+errors, exact decimals, injected time and secret-safe headers. Sanitized fixture
+coverage resolves every approved cash identity plus Nifty 50 and retains every
+active unambiguous futures month. Expired contracts, options, invalid lots and
+ambiguous expiries cannot create eligibility; cash analysis remains available.
+
+**Decided.** Direct HTTP through the already pinned BSD-3-Clause `httpx2` client
+is smaller and safer than the all-capabilities official SDK, whose order, GTT,
+holdings and positions surfaces are outside DHRUVA. Contract identity derives
+from stable underlying, exchange and expiry; provider tokens remain dated
+attributes. The existing pin moved from development-only to runtime, both
+hash-pinned lockfiles were regenerated, and the deployment audit found no known
+vulnerabilities.
+
+**Next.** Persist and archive each daily instrument master, resolved cash mapping,
+actual futures contract revision and explicit availability result.
+
+**Validated.** 1,980 tests passed, 5 intentional skips, 29 benchmark
+deselections and one documented non-strict XFAIL; coverage is 95.59%. Ruff,
+strict mypy over 303 files, import-linter, custom boundaries, ADR guard, lock
+consistency, package build and diff checks pass. The exact deployment lock has no
+known vulnerability; its temporary CycloneDX 1.4 verification contains 62
+components, `httpx2==2.9.1`, no vulnerability and no machine-local path.
+
+**Open.** Real credentials and the redirect URL remain unnecessary until the
+fixture-backed archive and historical-data paths are ready for one explicit
+provider smoke test.
