@@ -239,6 +239,36 @@ async def test_missing_required_session_is_stale_not_an_empty_success() -> None:
     assert factory.created == []
 
 
+async def test_a_batch_answering_a_different_request_is_refused() -> None:
+    """A provider must never be trusted to have understood which instrument was asked for."""
+
+    class ConfusedSource:
+        """Answer every request with the benchmark batch."""
+
+        async def fetch(self, request: DailyHistoryRequest) -> DailyHistoryBatch:
+            """Ignore the requested identity, as a defective provider would."""
+            assert request is not None
+            return _batch(REQUESTS[0])
+
+    factory = Factory(FakeStore())
+
+    with pytest.raises(DataQualityError, match="different instrument request"):
+        await IngestDailyHistory(ConfusedSource(), factory).execute(_command())
+
+    assert factory.created == []
+
+
+async def test_a_refresh_that_mixes_providers_is_refused() -> None:
+    """One refresh is one provider; mixed sources cannot share a session calendar."""
+    source = FakeSource((_batch(REQUESTS[0]), replace(_batch(REQUESTS[1]), provider="other")))
+    factory = Factory(FakeStore())
+
+    with pytest.raises(DataQualityError, match="mixes providers"):
+        await IngestDailyHistory(source, factory).execute(_command())
+
+    assert factory.created == []
+
+
 async def test_possible_corporate_action_discontinuity_requires_reconciliation() -> None:
     """A large unexplained close move cannot silently enter an unknown-adjustment series."""
     stock = _batch(REQUESTS[1])

@@ -258,6 +258,64 @@ for a budget change, and this is the evidence such a decision would rest on.
 
 ---
 
+## E2 — canonical measurement (2026-08-03T07:38:39Z, commit `7f541b6` + the uncommitted futures-history slice)
+
+Evidence: `docs/evidence/s04-20260803T073839Z/`. First canonical run on the
+`mvp-personal-swing-assistant` branch. Every functional stage passed; only
+`50-benchmarks` is non-zero, which ADR-060 §2 records as informational on E2.
+
+Suite result: **25 passed, 2 failed, 2 xfailed, 2051 deselected**, against
+22 passed / 5 failed on 2026-07-29.
+
+### Persistence layer — three budgets close on E2
+
+| Benchmark | Budget | **E2, 2026-08-03** | E2, 2026-07-29 | Verdict |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | **1.021 ms** | 1.573 ms | ✓ met |
+| End-to-end read p95 | < 3 ms | **2.429 ms** | 4.281 ms ✗ | ✓ **now met** |
+| End-to-end write p95 | < 5 ms | **4.501 ms** | 6.111 ms ✗ | ✓ **now met** |
+| Bulk append, 10,000 rows | < 500 ms | **69.9 ms** | 84.2 ms | ✓ met |
+| 2000-day range iteration | < 1000 µs | passed | 1062.9 µs ✗ | ✓ **now met** |
+
+Every database figure improved by 17–43% on the same machine with no change to
+the persistence layer, which is consistent with the ADR-060 finding that these
+numbers are dominated by Docker Desktop's transport rather than by this codebase.
+Three of the five budgets missed on 2026-07-29 are now measured as met on E2.
+Under ADR-060 A4 they are closed *on E2*; they remain unverified on the
+authoritative Linux CI environment.
+
+### CPU-bound primitives on E2
+
+| Benchmark | Budget | **E2, 2026-08-03** | E2 range, 2026-07-29 | Over budget |
+|---|---|---|---|---|
+| `money add` | 0.500 µs | **0.572 µs** | 0.571 – 0.584 µs | +14% |
+| `money mul` | 0.500 µs | **0.589 µs** | 0.587 – 0.625 µs | +18% |
+
+Both figures sit at the bottom of their previously recorded E2 range — `money
+add` ties the lowest E2 measurement ever taken and `money mul` is faster than
+three of the four prior runs. **This is not a regression.** It is the stable
+platform property ADR-060 documents, re-observed on a fourth run.
+
+The slice under test cannot reach this code: no module under
+`contexts/marketdata` or `contexts/reference` imports `dhruva.shared.money`, and
+the benchmark constructs `Money` directly.
+
+No budget adjusted. TD-13 and TD-14 remain open; see the note below on why the
+Linux figures ADR-060 A3–A5 require have not yet been produced.
+
+### Gap — the authoritative environment does not measure these budgets
+
+`tests/benchmarks/test_primitives.py` skips every sub-microsecond budget unless
+`DHRUVA_CANONICAL_BENCHMARKS` is set, and its comment states that "CI sets it on
+the benchmark job only". The `benchmarks` job in `.github/workflows/ci.yml` sets
+only `DHRUVA_TEST_DATABASE_URL`. `money add`, `money mul`, `Money` construction
+(TD-13) and the million-addition aggregate (TD-14) are therefore **skipped** on
+Linux CI, so ADR-060 A3, A4 and A5 cannot close on the evidence that job
+produces. Recorded here rather than fixed in passing; the fix is one environment
+variable and belongs in its own commit.
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing

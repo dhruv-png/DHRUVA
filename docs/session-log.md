@@ -247,3 +247,75 @@ then define and test the deterministic continuous research-series roll policy.
 **Open.** Corporate-action verification and the explicit credential-gated Kite
 smoke test remain future steps; no credential is needed for the next fixture-backed
 futures history slice.
+
+---
+
+## 2026-08-03 — Actual futures contract history
+
+**Done.** Completed the handed-over futures slice. `IngestActualFuturesHistory`
+resolves every unambiguous contract in a persisted daily archive — active and
+expired alike — into bounded, open-interest-enabled, explicitly non-continuous
+provider requests, validates them against the archived Nifty session calendar,
+and appends them in one transaction. The shared parts of the cash path were
+lifted into `fetch_history_batches`, `build_daily_series` and
+`append_daily_series` so both refreshes share one set of semantics rather than
+two copies of them.
+
+**Decided.** Two guards in the draft were unreachable and were removed rather
+than left as decoration: contract identity, instrument kind and provider token
+are already guaranteed because `fetch_history_batches` refuses a batch answering
+a different request, and open interest is already guaranteed because
+`DailyHistoryBatch` refuses a response whose candles omit it when the request
+asked for it. Unreachable defence reads like protection and measures like
+coverage, so the guarantee is stated in the validator's docstring instead. A
+continuous research series is never requested from the provider; it is a derived,
+versioned artefact and only actual contracts are fetched and stored. An archive
+older than the required session is stale, not a smaller success. One contract
+identity may not appear twice in one archive, and a refresh may not mix providers
+with the archive that named its contracts.
+
+**Validated.** Nineteen new focused unit tests: lifecycle counts across active
+and expired contracts, open-interest persistence, benchmark-read-but-never-
+written, no-continuous-request, explicit incompleteness, idempotent retry,
+non-index benchmark, out-of-range cutoffs, stale archive, benchmark/archive
+mapping mismatch, absent Nifty mapping, no contracts in range, repeated contract
+identity, provider mismatch, stale benchmark calendar, non-benchmark sessions,
+missing in-life sessions and stale contract history. Two further tests cover the
+helpers the cash path now shares: a provider answering a different request, and a
+refresh mixing providers.
+
+Owner-run figures, recorded exactly: the focused daily-history and
+futures-history unit tests pass **23**; the complete marketdata unit suite passes
+**39**; the focused daily-market-bars integration test passes; `git diff --check`
+passes. Canonical Windows run `docs/evidence/s04-20260803T073839Z/` passes every
+functional stage — database versions, Ruff lint and format, strict mypy,
+import-linter, custom boundaries, ADR guard, the complete unit suite, migration
+upgrade, downgrade and re-upgrade, history, current, empty autogenerate drift,
+and the integration suite at **231 passed with one non-strict XPASS**. Windows
+benchmarks: **25 passed, 2 failed, 2 xfailed**; both failures are informational
+and non-gating under ADR-060 §2.
+
+**Decided (benchmarks).** The manifest reads `OVERALL: FAIL - 50-benchmarks`.
+Under ADR-060 §2 that stage is informational on E2 and does not gate. The two
+misses are `money add` 0.572 µs and `money mul` 0.589 µs against 0.500 µs
+budgets — the lowest and second-lowest figures in four recorded E2 runs, inside
+the band ADR-060 already documents as a stable platform property. Nothing in
+this slice can reach them: no module under `contexts/marketdata` or
+`contexts/reference` imports `dhruva.shared.money`. In the other direction three
+budgets that were over on 2026-07-29 are now met on E2 — end-to-end read
+2.429 ms, end-to-end write 4.501 ms and the 2000-day range iteration. No budget
+was adjusted and no Money code was touched; the figures are recorded in
+`PERFORMANCE_BASELINE.md` under a new dated E2 section per ADR-060 §2.
+
+**Next.** Define and test the deterministic liquidity-aware roll policy and the
+versioned continuous research series over these actual-contract facts.
+
+**Open.** Two harness gaps found while resolving the benchmark verdict, each
+belonging in its own commit rather than bundled here. First, the CI `benchmarks`
+job does not set `DHRUVA_CANONICAL_BENCHMARKS`, so every sub-microsecond budget —
+including both of today's misses and TD-13 — is skipped on the authoritative
+Linux environment, and ADR-060 A3–A5 cannot close on evidence that job produces.
+Second, `canonical_validation.ps1` records each stage's exit code and continues
+by design but never calls `exit`, so the shell status is 0 even when a gating
+stage fails; the manifest is the only verdict. Corporate-action verification and
+the credential-gated Kite smoke test remain future steps.

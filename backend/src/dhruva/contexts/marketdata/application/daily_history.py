@@ -89,12 +89,10 @@ class IngestDailyHistory:
     async def execute(self, command: IngestDailyHistoryCommand) -> IngestDailyHistoryResult:
         """Reject stale or calendar-incompatible data before any write occurs."""
         self._validate_command(command)
-        fetched: list[DailyHistoryBatch] = []
-        for request in command.requests:
-            fetched.append(await self._source.fetch(request))
-        batches = tuple(fetched)
+        batches = await fetch_history_batches(self._source, command.requests)
         series = tuple(
-            _series(batch, completed_through=command.completed_through) for batch in batches
+            build_daily_series(batch, completed_through=command.completed_through)
+            for batch in batches
         )
         for item in series:
             _reject_unexplained_discontinuities(item)
@@ -104,14 +102,11 @@ class IngestDailyHistory:
             required_through=command.required_through,
         )
 
-        added = 0
-        unchanged = 0
-        async with self._unit_of_work_factory(command.account_id) as unit_of_work:
-            for item in series:
-                write = await unit_of_work.daily_bars.add_series(item)
-                added += write.added
-                unchanged += write.unchanged
-            await unit_of_work.commit()
+        added, unchanged = await append_daily_series(
+            account_id=command.account_id,
+            series=series,
+            unit_of_work_factory=self._unit_of_work_factory,
+        )
 
         return IngestDailyHistoryResult(
             instruments=len(series),
@@ -168,7 +163,51 @@ class GetDailyBarSeries:
             )
 
 
-def _series(batch: DailyHistoryBatch, *, completed_through: date) -> DailyBarSeries:
+async def fetch_history_batches(
+    source: DailyHistorySource,
+    requests: tuple[DailyHistoryRequest, ...],
+) -> tuple[DailyHistoryBatch, ...]:
+    """Fetch sequentially and reject provider responses for a different request."""
+    fetched: list[DailyHistoryBatch] = []
+    provider: str | None = None
+    for request in requests:
+        batch = await source.fetch(request)
+        if batch.request != request:
+            raise DataQualityError(
+                "daily history source returned a different instrument request",
+                requested_instrument_id=str(request.instrument_id),
+                returned_instrument_id=str(batch.request.instrument_id),
+            )
+        if provider is not None and batch.provider != provider:
+            raise DataQualityError(
+                "daily history refresh mixes providers",
+                expected_provider=provider,
+                returned_provider=batch.provider,
+            )
+        provider = batch.provider
+        fetched.append(batch)
+    return tuple(fetched)
+
+
+async def append_daily_series(
+    *,
+    account_id: AccountId,
+    series: tuple[DailyBarSeries, ...],
+    unit_of_work_factory: Callable[[AccountId], MarketDataUnitOfWork],
+) -> tuple[int, int]:
+    """Append a validated set atomically and return added/unchanged totals."""
+    added = 0
+    unchanged = 0
+    async with unit_of_work_factory(account_id) as unit_of_work:
+        for item in series:
+            write = await unit_of_work.daily_bars.add_series(item)
+            added += write.added
+            unchanged += write.unchanged
+        await unit_of_work.commit()
+    return added, unchanged
+
+
+def build_daily_series(batch: DailyHistoryBatch, *, completed_through: date) -> DailyBarSeries:
     """Attach persistence provenance and explicit completeness to one provider batch."""
     bars = tuple(
         DailyBarRevision(

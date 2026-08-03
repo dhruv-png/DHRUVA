@@ -248,10 +248,14 @@ async def test_market_data_unit_of_work_rolls_back_by_default(
     async with migrated.begin() as connection:
         await connection.execute(sql_text("TRUNCATE daily_market_bar_revision"))
 
-    from dhruva.contexts.marketdata.application.daily_history import _series  # noqa: PLC0415
+    from dhruva.contexts.marketdata.application.daily_history import (  # noqa: PLC0415
+        build_daily_series,
+    )
 
     async with factory(ACCOUNT) as unit_of_work:
-        await unit_of_work.daily_bars.add_series(_series(fetched, completed_through=DATES[-1]))
+        await unit_of_work.daily_bars.add_series(
+            build_daily_series(fetched, completed_through=DATES[-1])
+        )
 
     assert await _count(migrated) == 0
 

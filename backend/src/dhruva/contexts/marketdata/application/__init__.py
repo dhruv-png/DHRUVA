@@ -14,11 +14,19 @@ from dhruva.contexts.marketdata.application.daily_history import (
     IngestDailyHistoryCommand,
     IngestDailyHistoryResult,
 )
+from dhruva.contexts.marketdata.application.futures_history import (
+    IngestActualFuturesHistory,
+    IngestActualFuturesHistoryCommand,
+    IngestActualFuturesHistoryResult,
+)
 
 __all__ = [
     "DAILY_HISTORY_QUALITY_REVISION",
     "GetDailyBarSeries",
     "GetDailyBarSeriesQuery",
+    "IngestActualFuturesHistory",
+    "IngestActualFuturesHistoryCommand",
+    "IngestActualFuturesHistoryResult",
     "IngestDailyHistory",
     "IngestDailyHistoryCommand",
     "IngestDailyHistoryResult",
