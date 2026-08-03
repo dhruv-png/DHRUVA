@@ -364,6 +364,53 @@ remains informational.
 
 ---
 
+## E2 — canonical measurement (2026-08-03T10:45:56Z, commit `c9c612c` + the uncommitted news-domain slice)
+
+Evidence: `docs/evidence/s04-20260803T104556Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` is the only failure and is informational under
+ADR-060 §2. The paired run `docs/evidence/s04-20260803T103655Z/` is the gating
+failure that preceded it (`12-mypy`), kept because a repair is only evidence
+alongside what it repaired.
+
+Suite result: **22 passed, 5 failed, 2 xfailed, 2224 deselected**.
+
+### Three runs, one morning, one machine
+
+| Benchmark | Budget | 07:38:39Z | 08:40:14Z | **10:45:56Z** |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.021 ms ✓ | 1.070 ms ✓ | **1.228 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 2.429 ms ✓ | 3.750 ms ✗ | **4.862 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 4.501 ms ✓ | 5.726 ms ✗ | **6.058 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 69.9 ms ✓ | 76.0 ms ✓ | **75.3 ms** ✓ |
+| `money add` | 0.500 µs | 0.572 µs ✗ | 0.573 µs ✗ | **0.581 µs** ✗ |
+| `money mul` | 0.500 µs | 0.589 µs ✗ | 0.604 µs ✗ | **0.580 µs** ✗ |
+| 2000-day range iteration | < 1000 µs | passed ✓ | passed ✓ | **failed** ✗ |
+
+The end-to-end read has now drifted from 2.429 ms to 4.862 ms — **twice its
+morning figure, against an unchanged 3 ms budget** — across three runs of the
+same commit lineage on the same laptop. The slice measured here is a pure text
+domain: no repository, no session, no ORM, no query. The write budget drifted
+the same direction over the same hours.
+
+Meanwhile `money add` moved 0.572 → 0.573 → 0.581 µs and `money mul` moved
+0.589 → 0.604 → 0.580 µs. The CPU-bound pair is flat; the database-bound pair
+walked steadily upward while the machine did other work.
+
+That contrast is the finding. A budget whose measurement doubles over a morning
+without a line of relevant code changing is not measuring the code, and no
+amount of optimisation would have moved it. ADR-060 §1 put enforcement on Linux
+CI for exactly this reason, and three same-day E2 runs now demonstrate it more
+plainly than the original two-environment comparison did.
+
+The 2000-day range iteration failed here having passed in both earlier runs
+today, which is the same story in a fourth place.
+
+No budget adjusted, no Money or benchmark code touched, and nothing in the news
+domain reaches any of these paths. All seven remain unverified on the
+authoritative Linux environment.
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing

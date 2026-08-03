@@ -1,0 +1,30 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:587 char:48
++ ... d '34-migration-current'   { uv run alembic current --verbose } | Out ...
++                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlImpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+Current revision(s) for postgresql+asyncpg://dhruva_test:***@localhost:55432/dhruva_test:
+Rev: 0015_daily_market_bars (head)
+Parent: 0014_instrument_archive
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_1300_daily_market_bars.py
+
+    Add point-in-time daily OHLCV revisions.
+    
+    Revision ID: 0015_daily_market_bars
+    Revises: 0014_instrument_archive
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0014_instrument_archive` removes the
+        daily bar revisions. Export any real history first if it has been collected.
+    Irreversible operations: none
+    Expected runtime: sub-second on the initial empty table.
+    Operational impact: one new empty global market-data table and two indexes are
+        created. Existing tables are not rewritten or locked. This append-only daily
+        table remains plain PostgreSQL; hypertable policies would add complexity
+        without value at the approved 50-symbol end-of-day scale.
+
+exit_code: 0

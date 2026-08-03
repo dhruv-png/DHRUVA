@@ -1,0 +1,39 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:585 char:48
++ ... ptured '32-migration-reupgrade' { uv run alembic upgrade head }   | O ...
++                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlImpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, Initial schema: the worked example table and the 
+transactional outbox.
+INFO  [alembic.runtime.migration] Running upgrade 0001_initial -> 0002_example_tick, The append-only timeseries worked 
+example (ADR-054).
+INFO  [alembic.runtime.migration] Running upgrade 0002_example_tick -> 0003_outbox_envelope, Complete the ADR-002 
+envelope on the outbox table.
+INFO  [alembic.runtime.migration] Running upgrade 0003_outbox_envelope -> 0004_outbox_lease, Lease and dead-letter 
+columns for the outbox relay.
+INFO  [alembic.runtime.migration] Running upgrade 0004_outbox_lease -> 0005_outbox_aggregate_type, Store the aggregate 
+type on the outbox.
+INFO  [alembic.runtime.migration] Running upgrade 0005_outbox_aggregate_type -> 0006_processed_event, The consumer 
+idempotency ledger.
+INFO  [alembic.runtime.migration] Running upgrade 0006_processed_event -> 0007_credential, The encrypted broker 
+credential store.
+INFO  [alembic.runtime.migration] Running upgrade 0007_credential -> 0008_audit_log, The append-only audit log, with 
+mutation refused by the database.
+INFO  [alembic.runtime.migration] Running upgrade 0008_audit_log -> 0009_refresh_token, Refresh tokens, stored as 
+hashes and rotated on every use.
+INFO  [alembic.runtime.migration] Running upgrade 0009_refresh_token -> 0010_principal, The authenticating principal: 
+who logs in, and what proves it.
+INFO  [alembic.runtime.migration] Running upgrade 0010_principal -> 0011_authorisation, Roles, the permissions they 
+grant, and which principal holds which (ADR-073).
+INFO  [alembic.runtime.migration] Running upgrade 0011_authorisation -> 0012_rls_scaffolding, Complete the permissive 
+row-level-security scaffolding.
+INFO  [alembic.runtime.migration] Running upgrade 0012_rls_scaffolding -> 0013_reference_watchlist, Add 
+effective-dated instruments and the shared watchlist.
+INFO  [alembic.runtime.migration] Running upgrade 0013_reference_watchlist -> 0014_instrument_archive, Archive daily 
+instrument masters and resolved provider mappings.
+INFO  [alembic.runtime.migration] Running upgrade 0014_instrument_archive -> 0015_daily_market_bars, Add point-in-time 
+daily OHLCV revisions.
+exit_code: 0

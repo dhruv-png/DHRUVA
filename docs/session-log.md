@@ -399,3 +399,84 @@ deduplication, entity linking and point-in-time archiving.
 first figures for the primitive budgets. Corporate-action verification and the
 credential-gated Kite smoke test remain future steps. No credential is needed
 for the next slice.
+
+---
+
+## 2026-08-03 — News domain and lexical sentiment baseline
+
+**Done.** Activated the Intelligence context with a pure, provider-neutral news
+foundation and no persistence. `news.py` holds source credibility tiers, item
+identity, canonical-URL reduction, the permitted title and bounded snippet, both
+timestamps, deterministic fingerprints and five ordered deduplication rules.
+`events.py` assigns exactly one of eighteen bounded event categories.
+`entity_linking.py` maps a headline onto approved instruments at its publication
+date. `sentiment.py` is the deterministic lexical baseline over the five
+required labels.
+
+**Decided.** Deduplication is five named rules tried strongest first — provider
+item id, canonical URL, repeated filing, syndicated headline, rewritten headline
+— so a verdict always has exactly one explanation and every decision names the
+rule and the original it repeats. Nothing scores similarity. The rewrite rule is
+set equality over significant tokens on the same publication date and declines
+entirely below six tokens, because short headlines share their few words by
+coincidence. It catches reordering and not "bags" → "bagged"; a test asserts
+that, because the failure mode worth preventing is two contracts collapsing into
+one.
+
+Entity linking answers matched, ambiguous or unresolved, and one wording naming
+two instruments is reported as candidates rather than as findings — a confident
+wrong link is worse than no link. A bare canonical symbol needs its exact ticker
+spelling, always: `ETERNAL` is a company and "eternal optimism" is a mood.
+Corporate suffixes are stripped only when at least two tokens survive, so
+"ICICI Bank Limited" matches the way headlines write it while "Eternal Limited"
+can never shorten to the adjective. Former names stay usable for one year past
+the rename, because nobody renames a company in print on the day its
+shareholders do. Aliases never replace canonical symbols.
+
+Sentiment is wording, not markets, and the module says so first. Severity
+outranks the mixed rule: a governance term is not balanced out by a good quarter
+in the same sentence. Negation inverts and halves, so "cleared of fraud" is
+relief rather than triumph. Hedging with nothing to hedge is UNCERTAIN, not
+NEUTRAL. Event category stays independent of sentiment throughout.
+
+Nothing here stores an article body, and the type cannot hold one. No migration,
+no model, no adapter, no HTTP client and no job enter this slice; a test walks
+the import graph and the source text to keep it that way.
+
+**Repaired.** The first canonical run failed one gating stage:
+`docs/evidence/s04-20260803T103655Z/` records `12-mypy` exit 1 —
+`tests\unit\intelligence\test_entity_linking.py:94: error: Function is missing a
+return type annotation [no-untyped-def]`. A test helper lacked its return type.
+Because it was untyped, mypy stopped analysing its callers and hid a second
+helper whose `**kwargs: object` carried a `type: ignore[arg-type]`. Both helpers
+were given explicit parameters and return types in one file and the ignore was
+deleted rather than left to justify itself. No ignore was added, no cast, no
+`Any`, no configuration change and no behaviour change. The slice now contains
+no `type: ignore` at all. The failing evidence is kept: a repair is only
+evidence alongside what it repaired.
+
+**Validated.** Owner-run Windows figures, recorded exactly: focused intelligence
+tests **127 passed**; strict mypy over the configured `src` and `tests` scope
+**passed with no issues in 337 source files**; the complete unit suite **2,218
+passed, 5 skipped, 1 XPASS**; the integration suite **231 passed with one
+non-strict XPASS**; `git diff --check` passed. Every gating canonical stage
+passed in `docs/evidence/s04-20260803T104556Z/` — `GATING: PASS`, shell exit
+status 0.
+
+**Benchmarks: 22 passed, 5 failed, 2 xfailed, informational and non-gating under
+ADR-060 §2.** Three E2 runs of the same commit lineage this morning moved the
+end-to-end read budget 2.429 → 3.750 → 4.862 ms against an unchanged 3 ms
+threshold, while `money add` sat at 0.572, 0.573 and 0.581 µs. A database budget
+that doubles over a morning, measured against a pure text domain that touches no
+repository, no session and no ORM, is not measuring this codebase. Recorded in
+`PERFORMANCE_BASELINE.md`; no budget adjusted, no Money or benchmark code
+touched.
+
+**Next.** The persistence and provider half: news models and migration,
+repository and application ports, the official NSE adapter, one legally usable
+zero-cost broader source, idempotent ingestion and point-in-time storage.
+
+**Open.** No credential is required for the next slice; the official NSE feeds
+and the broader public source are anonymous. A compact local sentiment model
+remains optional and absent, which is exactly the condition this baseline was
+built to be the fallback for.
