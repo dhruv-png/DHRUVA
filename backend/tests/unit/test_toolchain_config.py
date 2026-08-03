@@ -265,3 +265,65 @@ def test_precommit_runs_the_same_gates_as_ci(repo_root: Path) -> None:
     for gate in ("ruff", "mypy", "lint-imports", "dhruva-check-boundaries", "dhruva-adr-guard"):
         assert gate in precommit, f"'{gate}' missing from pre-commit"
         assert gate in ci, f"'{gate}' missing from CI"
+
+
+#: The environment variable `requires_stable_timing` reads before it will run a
+#: sub-microsecond budget (tests/benchmarks/test_primitives.py).
+STABLE_TIMING_VARIABLE = "DHRUVA_CANONICAL_BENCHMARKS"
+
+
+def _workflow_job(text: str, name: str) -> str:
+    """Return one top-level job block from a workflow, by job key.
+
+    Textual rather than parsed: PyYAML is not a dependency of this project, and
+    adding one to assert on six lines of configuration would be a worse trade
+    than reading the indentation the file already guarantees.
+    """
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line == f"  {name}:")
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("  ") and not lines[index].startswith("   ")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+@pytest.fixture(scope="module")
+def ci_workflow(repo_root: Path) -> str:
+    """Read the CI workflow once for the configuration assertions below."""
+    return (repo_root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_the_authoritative_benchmark_job_can_measure_sub_microsecond_budgets(
+    ci_workflow: str,
+) -> None:
+    """ADR-060 A3-A5 need Linux figures for budgets that skip without this flag.
+
+    ADR-060 section 1 makes Linux CI the authoritative environment. The primitive
+    budgets skip unless `requires_stable_timing` sees this variable, so without
+    it the one environment permitted to close a budget never measures the
+    budgets most often missed -- and TD-13 and TD-14 cannot close on anything
+    this job produces.
+    """
+    job = _workflow_job(ci_workflow, "benchmarks")
+
+    assert STABLE_TIMING_VARIABLE in job, (
+        f"the benchmark job must set {STABLE_TIMING_VARIABLE}; "
+        "without it ADR-060 A3-A5 cannot close"
+    )
+
+
+@pytest.mark.unit
+def test_the_ordinary_test_job_does_not_claim_stable_timing(ci_workflow: str) -> None:
+    """A shared runner is not a quiet machine outside the dedicated benchmark job.
+
+    Setting the flag globally would turn measurement noise into red builds on the
+    job that does gate a merge, which is how a budget stops being believed
+    (ADR-060 R-060-4).
+    """
+    assert STABLE_TIMING_VARIABLE not in _workflow_job(ci_workflow, "backend")

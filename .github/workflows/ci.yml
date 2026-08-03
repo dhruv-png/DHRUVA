@@ -137,6 +137,21 @@ jobs:
       - name: Benchmarks against PostgreSQL
         env:
           DHRUVA_TEST_DATABASE_URL: postgresql+asyncpg://dhruva:dhruva_local_only@localhost:5432/dhruva
+          # `requires_stable_timing` in tests/benchmarks/test_primitives.py skips
+          # every sub-microsecond budget unless this is set, and its comment
+          # already says "CI sets it on the benchmark job only" -- but it was
+          # never set here. `money add`, `money mul`, `Money` construction
+          # (TD-13) and the million-addition aggregate (TD-14) were therefore
+          # skipped on the one environment ADR-060 section 1 makes authoritative,
+          # so A3, A4 and A5 could not close on anything this job produced.
+          #
+          # R-060-4 is the reason to hesitate: a shared runner is noisy, and that
+          # noise is exactly what the skip guard exists to keep out. A2 is the
+          # containment -- `continue-on-error: true` above means a noisy red here
+          # reports and cannot block a merge. Enabling a report is not the same
+          # act as letting it gate, and turning this into a gate remains the
+          # separate, deliberate commit described above.
+          DHRUVA_CANONICAL_BENCHMARKS: "1"
         run: uv run --project backend pytest -m benchmark -p no:randomly
 
   build:
