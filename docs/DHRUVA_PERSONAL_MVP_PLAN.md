@@ -318,7 +318,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history and actual futures contract OHLCV/OI implemented; continuous roll series and news ingestion outstanding |
+| MVP 1 | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history, actual futures contract OHLCV/OI and the versioned continuous research series with its deterministic roll policy implemented; news ingestion, event classification and local sentiment outstanding |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |

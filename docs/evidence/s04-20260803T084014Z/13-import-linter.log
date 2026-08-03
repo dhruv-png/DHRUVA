@@ -1,0 +1,18 @@
+﻿[1m=============[0m
+[1mImport Linter[0m
+[1m=============[0m
+[22m[0m
+[1m---------[0m
+[1mContracts[0m
+[1m---------[0m
+[22m[0m
+[1mAnalyzed 198 files, 420 dependencies.[0m
+[1m-------------------------------------[0m
+[22m[0m
+[22mClean Architecture layers within each bounded context [0m[32m[22mKEPT[0m[33m[22m[0m[22m[0m
+[22mInterfaces must not import infrastructure; wiring is the composition root's job [0m[32m[22mKEPT[0m[33m[22m[0m[22m[0m
+[22mThe shared kernel and tooling import nothing from the contexts [0m[32m[22mKEPT[0m[33m[22m[0m[22m[0m
+[22mNothing imports a composition root [0m[32m[22mKEPT[0m[33m[22m[0m[22m[0m
+[22m[0m
+[22mContracts: 4 kept, 0 broken.[0m
+exit_code: 0

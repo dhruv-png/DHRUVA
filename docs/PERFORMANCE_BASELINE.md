@@ -316,6 +316,54 @@ variable and belongs in its own commit.
 
 ---
 
+## E2 — canonical measurement (2026-08-03T08:40:14Z, commit `2793fb5` + the uncommitted continuous-futures slice)
+
+Evidence: `docs/evidence/s04-20260803T084014Z/`. Every gating stage passed; the
+manifest reads `OVERALL: FAIL`, `GATING: PASS`, shell exit status 0 — the first
+run under the two-verdict harness, behaving as ADR-060 §2 describes.
+
+Suite result: **23 passed, 4 failed, 2 xfailed, 2097 deselected**.
+
+### The same machine, sixty-two minutes apart
+
+| Benchmark | Budget | **08:40:14Z** | 07:38:39Z | Verdict |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | **1.070 ms** | 1.021 ms | ✓ met |
+| End-to-end read p95 | < 3 ms | **3.750 ms** ✗ | 2.429 ms ✓ | **reverted** |
+| End-to-end write p95 | < 5 ms | **5.726 ms** ✗ | 4.501 ms ✓ | **reverted** |
+| Bulk append, 10,000 rows | < 500 ms | **76.0 ms** | 69.9 ms | ✓ met |
+| `money add` | 0.500 µs | **0.573 µs** ✗ | 0.572 µs | +15% |
+| `money mul` | 0.500 µs | **0.604 µs** ✗ | 0.589 µs | +21% |
+
+**This is the most useful benchmark evidence recorded so far, and it is not
+about the code.** Two budgets were measured as met on E2 at 07:38 and as missed
+at 08:40, on the same machine, from a tree whose only difference is a pure
+in-memory roll rule with no database path. Nothing in the continuous-futures
+slice touches the repository, the session, the ORM or `dhruva.shared.money`.
+
+A pair of budgets that swings 54% on the read and 27% on the write inside an
+hour is not measuring this codebase. It is measuring Docker Desktop's transport
+on a laptop under whatever else that laptop was doing — exactly the finding
+ADR-060 §1 rests on, now demonstrated within a single morning rather than across
+two environments. The 2026-08-03 07:38 entry above should be read with that in
+mind: those two budgets were not *closed* on E2, they were sampled favourably.
+
+The Money figures are the stable half of the picture. Four E2 runs now give
+`money add` 0.571–0.584 µs and `money mul` 0.587–0.625 µs, and today's 0.573 and
+0.604 sit inside both. A reproducible platform property, unchanged.
+
+No budget adjusted, no Money code touched, nothing in this slice reaches either
+measurement. All four remain unverified on the authoritative Linux environment.
+
+### Still unmeasured where it counts
+
+`ci(benchmarks)` (commit `9082a49`) now sets `DHRUVA_CANONICAL_BENCHMARKS` on the
+Linux job, so the primitive budgets will run there for the first time. Until that
+job has reported, ADR-060 A3–A5 stay open and every figure in this section
+remains informational.
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing

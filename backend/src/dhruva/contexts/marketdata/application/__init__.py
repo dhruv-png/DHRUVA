@@ -6,6 +6,11 @@ May import this context's ``domain`` and ``dhruva.shared``. May not import
 ``infrastructure`` or ``interfaces``.
 """
 
+from dhruva.contexts.marketdata.application.continuous_futures import (
+    GetContinuousFuturesSeries,
+    GetContinuousFuturesSeriesQuery,
+    contract_terms,
+)
 from dhruva.contexts.marketdata.application.daily_history import (
     DAILY_HISTORY_QUALITY_REVISION,
     GetDailyBarSeries,
@@ -22,6 +27,8 @@ from dhruva.contexts.marketdata.application.futures_history import (
 
 __all__ = [
     "DAILY_HISTORY_QUALITY_REVISION",
+    "GetContinuousFuturesSeries",
+    "GetContinuousFuturesSeriesQuery",
     "GetDailyBarSeries",
     "GetDailyBarSeriesQuery",
     "IngestActualFuturesHistory",
@@ -30,4 +37,5 @@ __all__ = [
     "IngestDailyHistory",
     "IngestDailyHistoryCommand",
     "IngestDailyHistoryResult",
+    "contract_terms",
 ]

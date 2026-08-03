@@ -319,3 +319,83 @@ Second, `canonical_validation.ps1` records each stage's exit code and continues
 by design but never calls `exit`, so the shell status is 0 even when a gating
 stage fails; the manifest is the only verdict. Corporate-action verification and
 the credential-gated Kite smoke test remain future steps.
+
+---
+
+## 2026-08-03 — Continuous futures research series
+
+**Done.** Both harness gaps above are closed, each in its own commit: the Linux
+benchmark job now sets `DHRUVA_CANONICAL_BENCHMARKS` (`9082a49`), and
+`canonical_validation.ps1` now reports a second `GATING` verdict and returns it
+as the shell status, with `50-benchmarks` the sole informational stage
+(`2793fb5`). Today's run is the first under that harness and behaved exactly as
+designed: `OVERALL: FAIL`, `GATING: PASS`, exit 0.
+
+Then the roll policy and the continuous series. `build_continuous_series`
+stitches persisted actual-contract history into one versioned research series
+under `continuous-futures-roll-v1`: roll when the back month beats the front on
+**both** volume and open interest, otherwise when the expiry buffer is reached,
+counted in benchmark sessions. Every bar names its source contract, token,
+expiry and lot; every roll records the decision date, roll date, reason, both
+closes, both volumes, both open interests and the visible price gap.
+
+**Decided.** A roll is decided on one session and takes effect on the next; a
+rule that switched on the session it read the close of would be trading a bar it
+had already seen. Requiring both volume and open interest to cross keeps the
+series from depending on which day a scan happened to run — one side alone is an
+ordinary noisy session. The buffer counts sessions, not calendar days, so a
+holiday cannot move the fallback roll.
+
+A roll is *materialised* from the two bars that actually abut the change rather
+than from the pair the decision was about. The named successor can itself be
+illiquid or expire in the gap, and provenance assembled from the real pair stays
+true when that happens. `_reason_for` refuses to let a liquidity decision explain
+a roll that landed on a different contract; that becomes an expiry fallback,
+because that is what it was.
+
+The series is research output and the types refuse to pretend otherwise. It has
+no identity, no token, no lot and no `MarketInstrumentKind` — which is what the
+daily-bar table and every provider request are keyed by, so a stitched price has
+nothing to be persisted or requested as. `execution_contract_on` is the only
+bridge to a fill and always answers with an actual contract at its then-effective
+lot size. v1 emits unadjusted prices and records the gap; back-adjustment would
+be a new policy revision consuming exactly that number.
+
+Derived on read, not stored. Every input is already persisted point-in-time and
+the rule is deterministic and versioned, so a second table could only ever
+disagree with its own inputs, and the first time it did the question "which is
+right?" would have no answer.
+
+**Known v1 property.** If the front contract goes silent for several sessions
+before expiry, the series shows the real gap rather than jumping early to a
+further-out month. Deterministic, visible in the bar dates, and pinned by test.
+
+**Validated.** Forty-one focused tests — twenty-eight over the roll rule and the
+research-only guarantees, thirteen over the point-in-time derivation. The
+complete marketdata unit suite passes **80**. Canonical Windows run
+`docs/evidence/s04-20260803T084014Z/` passes every gating stage: database
+versions, Ruff lint and format, strict mypy, import-linter, custom boundaries,
+ADR guard, the complete unit suite at **2,091 passed with 5 skipped and one
+XPASS**, migration upgrade, downgrade and re-upgrade, history, current, empty
+autogenerate drift, and the integration suite at **231 passed with one
+non-strict XPASS**.
+
+**Benchmarks: 23 passed, 4 failed, 2 xfailed, informational and non-gating under
+ADR-060 §2.** The misses are end-to-end read 3.750 ms, end-to-end write
+5.726 ms, `money add` 0.573 µs and `money mul` 0.604 µs. The two database
+budgets were measured as *met* on this same machine sixty-two minutes earlier
+(2.429 ms and 4.501 ms) from a tree differing only by a pure in-memory roll rule
+that touches no repository, no session and no ORM. A read budget that swings 54%
+within an hour is measuring Docker Desktop's transport, not this codebase —
+ADR-060's central finding, now visible inside a single morning. No budget was
+adjusted, no Money code touched, and the harness was not altered as part of this
+slice. Figures recorded in `PERFORMANCE_BASELINE.md` under a new dated section.
+
+**Next.** Provider-neutral news ingestion: official NSE sources first, then at
+least one legally usable zero-cost broader source, with idempotent ingestion,
+deduplication, entity linking and point-in-time archiving.
+
+**Open.** ADR-060 A3–A5 stay open until the Linux benchmark job reports its
+first figures for the primitive budgets. Corporate-action verification and the
+credential-gated Kite smoke test remain future steps. No credential is needed
+for the next slice.
