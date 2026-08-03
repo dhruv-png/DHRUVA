@@ -1,0 +1,49 @@
+﻿S04 canonical validation evidence
+captured: 20260803T164517Z
+commit:   28383742e0a06f840b16cc407e3293bf6af04827
+branch:   mvp-personal-swing-assistant
+
+stage verdicts
+--------------
+03-database-versions                     PASS (exit 0)
+10-ruff-check                            PASS (exit 0)
+11-ruff-format                           PASS (exit 0)
+12-mypy                                  FAIL (exit 1)
+13-import-linter                         PASS (exit 0)
+14-boundaries                            PASS (exit 0)
+15-adr-guard                             PASS (exit 0)
+20-unit-suite                            FAIL (exit 1)
+30-migration-upgrade                     PASS (exit 0)
+31-migration-downgrade                   PASS (exit 0)
+32-migration-reupgrade                   PASS (exit 0)
+33-migration-history                     PASS (exit 0)
+34-migration-current                     PASS (exit 0)
+35-autogenerate-empty-diff               PASS (exit 0)
+40-integration-suite                     FAIL (exit 1)
+50-benchmarks                            FAIL (exit 1)
+
+OVERALL: FAIL - 4 stage(s) failed: 12-mypy, 20-unit-suite, 40-integration-suite, 50-benchmarks
+GATING: FAIL - 3 gating stage(s) failed: 12-mypy, 20-unit-suite, 40-integration-suite
+informational failures (ADR-060 section 2, non-gating): 50-benchmarks
+shell exit status: 1
+
+files
+-----
+01-environment.log                       12 lines
+02-database-target.log                   8 lines
+03-database-versions.log                 6 lines
+10-ruff-check.log                        2 lines
+11-ruff-format.log                       2 lines
+12-mypy.log                              5 lines
+13-import-linter.log                     18 lines
+14-boundaries.log                        2 lines
+15-adr-guard.log                         2 lines
+20-unit-suite.log                        2394 lines
+30-migration-upgrade.log                 41 lines
+31-migration-downgrade.log               41 lines
+32-migration-reupgrade.log               41 lines
+33-migration-history.log                 771 lines
+34-migration-current.log                 43 lines
+35-autogenerate-empty-diff.log           16 lines
+40-integration-suite.log                 376 lines
+50-benchmarks.log                        180 lines

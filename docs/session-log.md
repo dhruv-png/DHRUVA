@@ -480,3 +480,105 @@ zero-cost broader source, idempotent ingestion and point-in-time storage.
 and the broader public source are anonymous. A compact local sentiment model
 remains optional and absent, which is exactly the condition this baseline was
 built to be the fallback for.
+
+---
+
+## 2026-08-03 — Point-in-time news archive
+
+**Done.** Persistence for the news domain, deliberately without any provider
+adapter. Migration `0016_news_archive` adds three append-only tables:
+`news_item_revision` (one observed version of one item), `news_analysis` (one
+pass of the event, sentiment and linking rulesets over it) and
+`news_entity_link` (the instruments that pass resolved). Inward ports, a
+repository with point-in-time reads, an account-scoped unit of work, and an
+`IngestNewsItems` use case that deduplicates against both the archive and the
+batch, classifies the survivors and appends everything in one transaction.
+
+**Decided.** Row identity is `uuid5` over `(source_key, provider_item_id,
+content_revision)` with `ON CONFLICT DO NOTHING`, so a re-poll is a no-op rather
+than a duplicate. `first_seen_at` is deliberately outside every key: the second
+poll must leave the first observation's timestamp where it was, or the archive
+would quietly claim DHRUVA saw everything for the first time today. A correction
+changes `content_revision` and therefore appends beside the original; a read at
+the earlier cutoff still returns the earlier wording. There is no update path at
+all.
+
+The title and snippet bounds are enforced twice — in the domain type and again
+as database check constraints. The licence position is that DHRUVA stores a
+headline and a short extract, and a control living only in Python is one an
+ad-hoc script can walk past. `first_seen_at >= published_at` is a constraint for
+the same reason: an item observed before it was published is a clock defect, not
+a fact.
+
+Duplicates are stored with the rule that judged them and the item they repeat,
+named rather than hashed — attribution has to survive being read back, and a
+digest of an identity cannot be turned into one again. Entity links carry the
+stable `instrument_id` alongside the symbol, the match kind and the matched
+text; deriving identity from a ticker is what ADR-009 forbids, and reconstructing
+the match kind from its relevance would let a row disagree with itself.
+
+An analysis carries all three ruleset revisions in its key, so re-running an
+unchanged ruleset is idempotent while a changed one appends a second analysis
+beside the first. Nothing is ever reinterpreted in place.
+
+**Repaired, in three rounds.** The schema was correct throughout; every defect
+was in the harness or in a stale assumption.
+
+First, seven integration tests failed while each passed alone. The shared
+`truncated_after_test` fixture truncates a hard-coded table list and the three
+news tables were missing from it, so rows survived into the next test and
+`pytest-randomly` decided which one noticed. The fixture's own docstring
+predicts exactly this. While fixing it, the rollback test was strengthened: it
+appended an empty tuple, which returns early without staging anything and would
+have passed even with rollback broken.
+
+Second, one test failed deterministically: the archived match kind was
+`COMPANY_NAME` where the test expected `ALIAS`. The linker was right.
+"Hindustan Aeronautics" is reachable twice over for that fixture — the
+registered name minus its corporate suffix *and* a listed alias — and the
+registered name is the stronger evidence, so precedence gives it 0.90 rather
+than 0.80. Persistence had round-tripped every field exactly. The test now
+computes its expectation from the linker itself and compares structurally, which
+is stronger than the hand-written constant that was wrong: it catches corruption
+in any field for any headline and cannot go stale.
+
+Third, canonical validation found three gating failures. Strict mypy wanted a
+concrete annotation on a list only ever filled by `extend`, and refused
+`Model.__table__.insert()` because `__table__` is typed `FromClause`; both fixed
+narrowly, with no ignore, cast or `Any` anywhere in the slice. And three
+historical migration tests hard-coded `0015_daily_market_bars` as the
+repository's current head — a second, silent claim that adding 0016 falsified in
+tests that have nothing to do with news. They now take a new session-scoped
+`sole_alembic_head` fixture that reads the head from `ScriptDirectory` and
+asserts there is exactly one. The duplication is removed rather than updated: no
+future migration needs to edit a historical test, and a branched history now
+fails loudly at the fixture instead of quietly satisfying an equality against
+one of two heads.
+
+**Validated.** Owner-run Windows figures, recorded exactly: focused intelligence
+unit suite **144 passed**; focused migration and news integration tests **16
+passed**; strict mypy over the configured `src` and `tests` scope **passed with
+no issues in 346 source files**. Canonical run
+`docs/evidence/s04-20260803T170908Z/` passed every gating stage — database
+versions, Ruff lint and format, strict mypy, import-linter, custom boundaries,
+ADR guard, the complete unit suite at **2,256 passed with 5 skipped and one
+XPASS**, migration upgrade, downgrade and re-upgrade, history, current, **empty
+autogenerate drift**, and the integration suite at **244 passed with one
+non-strict XPASS**. `GATING: PASS`, shell exit status 0.
+
+**Benchmarks: 23 passed, 4 failed, 2 xfailed, informational and non-gating under
+ADR-060 §2.** Across four E2 runs today the end-to-end read went 2.429 → 3.750 →
+4.862 → 6.023 ms against an unchanged 3 ms budget — 2.5× and monotonic — while
+`money add` moved 0.572 → 0.584 µs and `money mul` 0.589 → 0.598 µs. The
+database-bound pair drifts over a working day; the CPU-bound pair does not. This
+slice adds three empty tables and a repository nothing else calls. Recorded in
+`PERFORMANCE_BASELINE.md`; no budget adjusted, no Money or benchmark code
+touched.
+
+**Next.** The provider half: the official NSE ingestion adapter, one legally
+usable zero-cost broader source, provider payload mapping behind the existing
+ports, source-health handling and the ingestion wiring.
+
+**Open.** Both feeds are anonymous, so no credential is needed. The three
+`text[]` columns are the first native arrays in the schema; autogenerate drift
+came back empty, so the model and migration agree on them.

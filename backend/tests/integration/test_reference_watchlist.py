@@ -257,6 +257,7 @@ async def test_reference_unit_of_work_rolls_back_by_default(
 
 async def test_reference_migration_downgrades_and_reapplies_cleanly(
     migrated: AsyncEngine,
+    sole_alembic_head: str,
 ) -> None:
     """Revision 0013 is reversible and restores exactly one current head."""
     await asyncio.to_thread(_run_alembic, "downgrade", "0012_rls_scaffolding")
@@ -276,7 +277,7 @@ async def test_reference_migration_downgrades_and_reapplies_cleanly(
 
     async with migrated.connect() as connection:
         current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
-    assert current == "0015_daily_market_bars"
+    assert current == sole_alembic_head
 
 
 async def test_reference_metadata_has_no_autogenerate_drift(

@@ -411,6 +411,47 @@ authoritative Linux environment.
 
 ---
 
+## E2 — canonical measurement (2026-08-03T17:09:08Z, commit `2838374` + the uncommitted news-archive slice)
+
+Evidence: `docs/evidence/s04-20260803T170908Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` is the only failure and is informational under
+ADR-060 §2. The paired run `docs/evidence/s04-20260803T164517Z/` is the gating
+failure that preceded it — strict mypy plus three stale migration-head
+assertions — kept because a repair is only evidence alongside what it repaired.
+
+Suite result: **23 passed, 4 failed, 2 xfailed, 2262 deselected**.
+
+### The drift continues, and it is still not the code
+
+| Benchmark | Budget | 07:38Z | 08:40Z | 10:45Z | **17:09Z** |
+|---|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.021 ✓ | 1.070 ✓ | 1.228 ✓ | **1.790 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 2.429 ✓ | 3.750 ✗ | 4.862 ✗ | **6.023 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 4.501 ✓ | 5.726 ✗ | 6.058 ✗ | **7.992 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 69.9 ✓ | 76.0 ✓ | 75.3 ✓ | **82.8 ms** ✓ |
+| `money add` | 0.500 µs | 0.572 ✗ | 0.573 ✗ | 0.581 ✗ | **0.584 µs** ✗ |
+| `money mul` | 0.500 µs | 0.589 ✗ | 0.604 ✗ | 0.580 ✗ | **0.598 µs** ✗ |
+
+Four runs across one day. The end-to-end read has gone 2.429 → 3.750 → 4.862 →
+**6.023 ms** against an unchanged 3 ms budget: **2.5× its morning figure**, and
+monotonic. The write followed the same curve. Meanwhile `money add` moved 0.572
+→ 0.584 µs and `money mul` 0.589 → 0.598 µs — flat to within a hundredth of a
+microsecond across the same twelve hours.
+
+The database-bound pair drifts; the CPU-bound pair does not. That is not a
+property of code that changed between runs — this slice adds three empty tables
+and a repository nothing else calls. It is a laptop accumulating work over a
+day, seen through Docker Desktop's transport. A budget whose measurement grows
+2.5× while the machine stays up is measuring the machine.
+
+The 2000-day range iteration passed again here, having failed at 10:45 and
+passed at 07:38 and 08:40. Same story, fourth place.
+
+No budget adjusted, no Money or benchmark code touched. All six remain
+unverified on the authoritative Linux environment.
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing

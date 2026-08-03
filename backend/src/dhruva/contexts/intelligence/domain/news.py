@@ -459,6 +459,27 @@ class DeduplicationLedger:
         """Observe a batch in order and return one decision per item."""
         return tuple(self.observe(item) for item in items)
 
+    def restore(
+        self,
+        stored: Iterable[tuple[NewsItemIdentity, NewsFingerprints]],
+    ) -> None:
+        """Seed the ledger from fingerprints already held in the archive.
+
+        Deduplication has to reach across polls or every restart would re-admit
+        yesterday's syndication. Rows produced under an older identity revision
+        are skipped rather than compared: different normalisation makes their
+        fingerprints answers to a different question.
+        """
+        for identity, keys in stored:
+            if keys.revision != NEWS_IDENTITY_REVISION:
+                continue
+            self._by_identity.setdefault(keys.identity, identity)
+            self._by_url.setdefault(keys.url, identity)
+            self._by_headline.setdefault(keys.headline, identity)
+            self._filings.setdefault((identity.source_key, keys.headline), identity)
+            if keys.rewrite is not None:
+                self._by_rewrite.setdefault(keys.rewrite, identity)
+
 
 def _duplicate(
     rule: DeduplicationRule,

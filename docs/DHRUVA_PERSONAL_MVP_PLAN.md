@@ -318,7 +318,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history, actual futures contract OHLCV/OI, the versioned continuous research series with its deterministic roll policy, and the pure news domain (identity, deduplication, entity linking, event categories, lexical sentiment baseline) implemented; news persistence, the NSE and broader-source adapters and idempotent ingestion outstanding |
+| MVP 1 | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history, actual futures contract OHLCV/OI, the versioned continuous research series with its deterministic roll policy, the pure news domain (identity, deduplication, entity linking, event categories, lexical sentiment baseline) and the append-only point-in-time news archive with idempotent ingestion implemented; the official NSE and broader-source adapters, provider payload mapping and source-health handling outstanding |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |

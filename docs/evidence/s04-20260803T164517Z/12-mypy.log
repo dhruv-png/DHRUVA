@@ -1,0 +1,5 @@
+﻿src\dhruva\contexts\intelligence\infrastructure\persistence\repository.py:190: error: Need type annotation for "link_values" (hint: "link_values: list[<type>] = ...")  [var-annotated]
+tests\integration\test_news_archive.py:399: error: "FromClause" has no attribute "insert"  [attr-defined]
+tests\integration\test_news_archive.py:436: error: "FromClause" has no attribute "insert"  [attr-defined]
+Found 3 errors in 2 files (checked 346 source files)
+exit_code: 1

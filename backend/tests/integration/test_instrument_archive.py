@@ -268,6 +268,7 @@ def _run_alembic(command: str, revision: str) -> None:
 
 async def test_archive_migration_downgrades_and_reapplies_cleanly(
     migrated: AsyncEngine,
+    sole_alembic_head: str,
 ) -> None:
     """Revision 0014 is reversible and restores the sole current head."""
     await asyncio.to_thread(_run_alembic, "downgrade", "0013_reference_watchlist")
@@ -288,4 +289,4 @@ async def test_archive_migration_downgrades_and_reapplies_cleanly(
 
     async with migrated.connect() as connection:
         current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
-    assert current == "0015_daily_market_bars"
+    assert current == sole_alembic_head

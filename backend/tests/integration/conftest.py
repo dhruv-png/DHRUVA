@@ -32,6 +32,7 @@ import pytest
 import pytest_asyncio
 
 if TYPE_CHECKING:
+    from alembic.config import Config
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
@@ -384,7 +385,8 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
                 text(
                     "TRUNCATE daily_snapshot, outbox, example_tick, processed_event, "
                     "credential, principal, refresh_token, role, reference_instrument, "
-                    "instrument_master_snapshot, daily_market_bar_revision CASCADE"
+                    "instrument_master_snapshot, daily_market_bar_revision, "
+                    "news_item_revision, news_analysis, news_entity_link CASCADE"
                 )
             )
 
@@ -513,13 +515,42 @@ def export_database_settings(url: str) -> None:
         os.environ["DHRUVA_DB__NAME"] = database
 
 
-def _run_alembic(command: str, revision: str) -> None:
-    """Run an Alembic command against the database the fixtures are using."""
-    from alembic import command as alembic_command  # noqa: PLC0415 - test-only import
+def _alembic_config() -> Config:
+    """Build the Alembic config the fixtures and helpers share."""
     from alembic.config import Config  # noqa: PLC0415 - test-only import
 
     from dhruva.tooling.boundaries import find_repo_root  # noqa: PLC0415 - test-only import
 
     config = Config(str(find_repo_root() / "backend" / "alembic.ini"))
     config.set_main_option("script_location", str(find_repo_root() / "backend" / "alembic"))
-    getattr(alembic_command, command)(config, revision)
+    return config
+
+
+def _run_alembic(command: str, revision: str) -> None:
+    """Run an Alembic command against the database the fixtures are using."""
+    from alembic import command as alembic_command  # noqa: PLC0415 - test-only import
+
+    getattr(alembic_command, command)(_alembic_config(), revision)
+
+
+@pytest.fixture(scope="session")
+def sole_alembic_head() -> str:
+    """Return the repository's single current migration head, read from the scripts.
+
+    Every reversibility test ends by upgrading back to ``head`` and asserting the
+    database landed on it. Naming that revision literally made each of those
+    tests a second, silent declaration of "the latest migration is X" -- so
+    adding 0016 broke three historical tests that had nothing to do with news,
+    and the next migration would have broken four.
+
+    Reading the head from ``ScriptDirectory`` removes the duplication rather than
+    updating it. The assertion becomes what those tests always meant -- *the*
+    head, whatever it currently is -- and the single-head requirement is checked
+    here rather than assumed: a branched history fails loudly at this fixture
+    instead of quietly satisfying an equality against one of two heads.
+    """
+    from alembic.script import ScriptDirectory  # noqa: PLC0415 - test-only import
+
+    heads = ScriptDirectory.from_config(_alembic_config()).get_heads()
+    assert len(heads) == 1, f"expected exactly one Alembic head, found {sorted(heads)}"
+    return heads[0]

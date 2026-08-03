@@ -7,6 +7,13 @@ This layer performs no I/O and imports no framework. It may import only
 and the import-linter contract ``Clean Architecture layers``.
 """
 
+from dhruva.contexts.intelligence.domain.archive import (
+    ArchivedNewsItem,
+    NewsAnalysis,
+    NewsArchiveWrite,
+    NewsRevision,
+    content_revision,
+)
 from dhruva.contexts.intelligence.domain.entity_linking import (
     ENTITY_LINKING_REVISION,
     FORMER_NAME_GRACE,
@@ -39,6 +46,7 @@ from dhruva.contexts.intelligence.domain.news import (
     normalise_headline,
     significant_tokens,
 )
+from dhruva.contexts.intelligence.domain.ports import IntelligenceUnitOfWork, NewsStore
 from dhruva.contexts.intelligence.domain.sentiment import (
     SENTIMENT_RULESET_REVISION,
     AbstentionReason,
@@ -54,6 +62,7 @@ __all__ = [
     "NEWS_IDENTITY_REVISION",
     "SENTIMENT_RULESET_REVISION",
     "AbstentionReason",
+    "ArchivedNewsItem",
     "DeduplicationDecision",
     "DeduplicationLedger",
     "DeduplicationRule",
@@ -62,19 +71,25 @@ __all__ = [
     "EventCategory",
     "EventClassification",
     "HistoricalName",
+    "IntelligenceUnitOfWork",
     "LinkableInstrument",
     "MatchKind",
     "MatchState",
+    "NewsAnalysis",
+    "NewsArchiveWrite",
     "NewsFingerprints",
     "NewsItem",
     "NewsItemIdentity",
+    "NewsRevision",
     "NewsSource",
     "NewsSourceTier",
+    "NewsStore",
     "PermittedText",
     "SentimentLabel",
     "SentimentResult",
     "canonical_url",
     "classify_event",
+    "content_revision",
     "evaluate_sentiment",
     "link_entities",
     "normalise_headline",

@@ -288,6 +288,7 @@ def _check_alembic_drift() -> None:
 
 async def test_daily_bar_migration_downgrades_reapplies_and_has_no_drift(
     migrated: AsyncEngine,
+    sole_alembic_head: str,
 ) -> None:
     """Revision 0015 is reversible and restores the sole drift-free head."""
     await asyncio.to_thread(_run_alembic, "downgrade", "0014_instrument_archive")
@@ -306,5 +307,5 @@ async def test_daily_bar_migration_downgrades_reapplies_and_has_no_drift(
 
     async with migrated.connect() as connection:
         current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
-    assert current == "0015_daily_market_bars"
+    assert current == sole_alembic_head
     await asyncio.to_thread(_check_alembic_drift)

@@ -16,6 +16,10 @@ from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
+from dhruva.contexts.intelligence.infrastructure.persistence import (  # noqa: F401
+    models as intelligence_models,
+)
+from dhruva.contexts.intelligence.infrastructure.persistence.models import IntelligenceBase
 from dhruva.contexts.marketdata.infrastructure.persistence import (  # noqa: F401
     models as marketdata_models,
 )
@@ -40,7 +44,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = [Base.metadata, ReferenceBase.metadata, MarketDataBase.metadata]
+target_metadata = [
+    Base.metadata,
+    ReferenceBase.metadata,
+    MarketDataBase.metadata,
+    IntelligenceBase.metadata,
+]
 
 # The URL comes from validated settings rather than alembic.ini, so a credential
 # never lands in a committed file (ADR-031, ADR-033).
