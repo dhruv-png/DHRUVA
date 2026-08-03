@@ -76,6 +76,29 @@ $StartedContainer = $false
 #: run in which everything failed cannot be mistaken for a run that happened.
 $Verdicts = [ordered]@{}
 
+#: Stages whose failure is informational rather than gating.
+#:
+#: ADR-060 section 2: "Windows canonical runs record benchmark figures as
+#: informational... They do not gate a merge." Section 1 makes Linux CI the
+#: authoritative environment, so a Windows benchmark miss is evidence about this
+#: machine, not a verdict about the branch. That is why the manifest may read
+#: OVERALL: FAIL on a branch that is still mergeable.
+#:
+#: Nothing else belongs here. Adding a stage to this list is the act of deciding
+#: that a gate no longer gates, and it needs the ADR that says so.
+$InformationalStages = @('50-benchmarks')
+
+#: Shell status. Zero until a *gating* stage fails or the run aborts.
+#:
+#: Before this existed the script had no `exit` at all, so PowerShell returned
+#: the status of its last statement -- a green 0 even when strict mypy or the
+#: integration suite had failed. Every code was recorded truthfully in the
+#: manifest and every code was invisible to anything that called the script.
+$script:ExitCode = 0
+#: A run stopped by a throw never reaches its remaining stages. Without this, a
+#: crash before the first failure would look like a clean run to the shell.
+$script:Aborted = $false
+
 function Write-Stage([string]$Name) {
     Write-Host ""
     Write-Host "=== $Name ===" -ForegroundColor Cyan
@@ -245,6 +268,32 @@ function Write-Manifest {
         $overall = "OVERALL: FAIL - $($failed.Count) stage(s) failed: $names"
     }
 
+    # The overall verdict above still counts every stage, because a reviewer must
+    # see a benchmark miss. The shell status below counts only the gating ones,
+    # because ADR-060 section 2 says a Windows benchmark miss does not gate. The
+    # two answer different questions and the manifest states both.
+    $gating = @($failed | Where-Object { $InformationalStages -notcontains $_.Key })
+    $informational = @($failed | Where-Object { $InformationalStages -contains $_.Key })
+
+    if ($script:Aborted) {
+        $script:ExitCode = 1
+        $gatingVerdict = 'GATING: FAIL - the run aborted before every stage had reported.'
+    } elseif ($gating.Count -eq 0) {
+        $script:ExitCode = 0
+        $gatingVerdict = 'GATING: PASS - every gating stage exited 0.'
+    } else {
+        $script:ExitCode = 1
+        $gatingNames = ($gating | ForEach-Object { $_.Key }) -join ', '
+        $gatingVerdict = "GATING: FAIL - $($gating.Count) gating stage(s) failed: $gatingNames"
+    }
+
+    $informationalNote = if ($informational.Count -eq 0) {
+        'informational failures: none'
+    } else {
+        $seen = ($informational | ForEach-Object { $_.Key }) -join ', '
+        "informational failures (ADR-060 section 2, non-gating): $seen"
+    }
+
     $manifest = @(
         'S04 canonical validation evidence'
         "captured: $Stamp"
@@ -259,6 +308,9 @@ function Write-Manifest {
     }) + @(
         ''
         $overall
+        $gatingVerdict
+        $informationalNote
+        "shell exit status: $script:ExitCode"
         ''
         'files'
         '-----'
@@ -274,6 +326,12 @@ function Write-Manifest {
     } else {
         Write-Host $overall -ForegroundColor Red
     }
+    if ($script:ExitCode -eq 0) {
+        Write-Host $gatingVerdict -ForegroundColor Green
+    } else {
+        Write-Host $gatingVerdict -ForegroundColor Red
+    }
+    Write-Host $informationalNote -ForegroundColor Yellow
     Write-Host 'Attach the whole directory; do not summarise it.' -ForegroundColor Green
 }
 
@@ -589,6 +647,16 @@ sys.exit(asyncio.run(main()))
     # --------------------------------------------------------------------- #
     Write-Manifest
 }
+catch {
+    # A throw means the run never reached its remaining stages -- an unremovable
+    # cache, an unreachable database. The recorded verdicts are then a partial
+    # record, and a partial record with no failure in it must not be reported to
+    # the shell as a clean run. Re-thrown so the diagnostic still reaches the
+    # operator; `finally` writes the manifest either way.
+    $script:Aborted = $true
+    $script:ExitCode = 1
+    throw
+}
 finally {
     # The manifest is written from `finally` as well, so that a run stopped by a
     # throw -- an unremovable cache, an unreachable database -- still produces a
@@ -600,3 +668,13 @@ finally {
     Restore-Environment
     Pop-Location
 }
+
+# Last statement in the file, deliberately outside the try/finally: an `exit`
+# inside `finally` would discard a throw's own diagnostic. Reached only when no
+# exception escaped, and a run that did throw is non-zero already.
+#
+# This reports the *gating* verdict, not the overall one. ADR-060 section 2
+# keeps Windows benchmark misses informational, so a run whose only failure is
+# `50-benchmarks` exits 0 while its manifest still reads OVERALL: FAIL -- which
+# is exactly the state that ADR anticipates. Every other stage failing exits 1.
+exit $script:ExitCode

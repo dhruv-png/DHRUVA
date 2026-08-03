@@ -11,6 +11,7 @@ They assert on Master Project Plan sections 10.1 (Definition of Done),
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -316,6 +317,64 @@ def test_the_authoritative_benchmark_job_can_measure_sub_microsecond_budgets(
         f"the benchmark job must set {STABLE_TIMING_VARIABLE}; "
         "without it ADR-060 A3-A5 cannot close"
     )
+
+
+@pytest.fixture(scope="module")
+def canonical_script(repo_root: Path) -> str:
+    """Read the Windows canonical validation script."""
+    return (repo_root / "scripts" / "canonical_validation.ps1").read_text(encoding="utf-8")
+
+
+def _informational_stages(script: str) -> frozenset[str]:
+    """Return the stage names the canonical script treats as non-gating."""
+    match = re.search(r"\$InformationalStages = @\((?P<body>.*?)\)", script, re.DOTALL)
+    assert match is not None, "$InformationalStages is not declared"
+    return frozenset(re.findall(r"'([^']+)'", match.group("body")))
+
+
+@pytest.mark.unit
+def test_the_canonical_script_reports_a_gating_failure_to_the_shell(
+    canonical_script: str,
+) -> None:
+    """A validation run that fails must not look green to whatever called it.
+
+    The script previously had no `exit` at all, so PowerShell returned the status
+    of its last statement. Strict mypy or the integration suite could fail, be
+    recorded truthfully in the manifest, and still hand back 0.
+    """
+    assert canonical_script.rstrip().endswith("exit $script:ExitCode")
+
+
+@pytest.mark.unit
+def test_only_the_windows_benchmark_stage_is_informational(canonical_script: str) -> None:
+    """ADR-060 section 2 exempts benchmarks on Windows. It exempts nothing else.
+
+    This list is the one place a gate can be declassified, so it is the one place
+    worth pinning. Widening it must fail here first, which is what makes it a
+    deliberate act with an ADR behind it rather than a quiet edit.
+    """
+    assert _informational_stages(canonical_script) == frozenset({"50-benchmarks"})
+
+
+@pytest.mark.unit
+def test_every_stage_except_the_benchmarks_gates_the_shell_status(
+    canonical_script: str,
+) -> None:
+    """The exemption is one stage wide, not a general licence to fail."""
+    stages = frozenset(re.findall(r"Invoke-Captured '([^']+)'", canonical_script))
+    gating = stages - _informational_stages(canonical_script)
+
+    assert stages, "no stages found; the script's shape has changed"
+    for required in (
+        "12-mypy",
+        "13-import-linter",
+        "14-boundaries",
+        "15-adr-guard",
+        "20-unit-suite",
+        "35-autogenerate-empty-diff",
+        "40-integration-suite",
+    ):
+        assert required in gating, f"'{required}' no longer gates the shell status"
 
 
 @pytest.mark.unit

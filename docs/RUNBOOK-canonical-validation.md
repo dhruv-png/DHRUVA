@@ -134,6 +134,22 @@ copies of the same stack trace.
 Everything lands in `docs\evidence\s04-<timestamp>\`. Attach it whole. Read
 `99-manifest.log` first — it now states the outcome, not just the line counts.
 
+### Two verdicts, and which one is the exit status
+
+The manifest states both, because they answer different questions.
+
+- **`OVERALL`** counts every stage. A Windows benchmark miss shows up here, and
+  it should: a reviewer has to see it.
+- **`GATING`** counts every stage except the ones ADR-060 §2 records as
+  informational on Windows — today that is `50-benchmarks` and nothing else.
+  This is what the script returns as its shell exit status.
+
+So a run whose only failure is `50-benchmarks` prints `OVERALL: FAIL`, prints
+`GATING: PASS`, and **exits 0**. That is the state ADR-060 anticipates: the
+figures are recorded, the branch is still mergeable, and Linux CI remains the
+authoritative environment for the budget itself. Any other stage failing exits
+1, as does a run that aborts before every stage has reported.
+
 ### Two guards against a run that looks like it worked
 
 - **`DHRUVA_REQUIRE_DATABASE=1`** is set by the script. Under it, an unreachable
