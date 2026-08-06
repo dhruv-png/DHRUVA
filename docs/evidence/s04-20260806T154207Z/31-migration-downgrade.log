@@ -1,0 +1,52 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At 
+C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.local.ps1:584 
+char:48
++ ... ured '31-migration-downgrade' { uv run alembic downgrade base } | 
+Out ...
++                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlI 
+   mpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running downgrade 0016_news_archive -> 
+0015_daily_market_bars, Add the append-only point-in-time news archive.
+INFO  [alembic.runtime.migration] Running downgrade 0015_daily_market_bars 
+-> 0014_instrument_archive, Add point-in-time daily OHLCV revisions.
+INFO  [alembic.runtime.migration] Running downgrade 
+0014_instrument_archive -> 0013_reference_watchlist, Archive daily 
+instrument masters and resolved provider mappings.
+INFO  [alembic.runtime.migration] Running downgrade 
+0013_reference_watchlist -> 0012_rls_scaffolding, Add effective-dated 
+instruments and the shared watchlist.
+INFO  [alembic.runtime.migration] Running downgrade 0012_rls_scaffolding 
+-> 0011_authorisation, Complete the permissive row-level-security 
+scaffolding.
+INFO  [alembic.runtime.migration] Running downgrade 0011_authorisation -> 
+0010_principal, Roles, the permissions they grant, and which principal 
+holds which (ADR-073).
+INFO  [alembic.runtime.migration] Running downgrade 0010_principal -> 
+0009_refresh_token, The authenticating principal: who logs in, and what 
+proves it.
+INFO  [alembic.runtime.migration] Running downgrade 0009_refresh_token -> 
+0008_audit_log, Refresh tokens, stored as hashes and rotated on every use.
+INFO  [alembic.runtime.migration] Running downgrade 0008_audit_log -> 
+0007_credential, The append-only audit log, with mutation refused by the 
+database.
+INFO  [alembic.runtime.migration] Running downgrade 0007_credential -> 
+0006_processed_event, The encrypted broker credential store.
+INFO  [alembic.runtime.migration] Running downgrade 0006_processed_event 
+-> 0005_outbox_aggregate_type, The consumer idempotency ledger.
+INFO  [alembic.runtime.migration] Running downgrade 
+0005_outbox_aggregate_type -> 0004_outbox_lease, Store the aggregate type 
+on the outbox.
+INFO  [alembic.runtime.migration] Running downgrade 0004_outbox_lease -> 
+0003_outbox_envelope, Lease and dead-letter columns for the outbox relay.
+INFO  [alembic.runtime.migration] Running downgrade 0003_outbox_envelope 
+-> 0002_example_tick, Complete the ADR-002 envelope on the outbox table.
+INFO  [alembic.runtime.migration] Running downgrade 0002_example_tick -> 
+0001_initial, The append-only timeseries worked example (ADR-054).
+INFO  [alembic.runtime.migration] Running downgrade 0001_initial -> , 
+Initial schema: the worked example table and the transactional outbox.
+exit_code: 0

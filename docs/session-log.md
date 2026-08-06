@@ -791,3 +791,53 @@ run.
 **Open.** Live payload schema verification still needs a smoke run that gets
 past the rate limit. The canonical host-port configurability repair remains a
 separate follow-up and is deliberately not in this commit.
+
+---
+
+## 2026-08-06 — news workflow validated on Windows and pushed
+
+**Done.** Commit `3823739` was validated on the owner's Windows machine and
+pushed; local and remote heads match and the working tree is clean. This entry
+records the evidence, and it is a separate commit from the feature it describes
+because the feature was already published and history is not rewritten to make a
+document tidier.
+
+**Canonical evidence.** `docs/evidence/s04-20260806T154207Z/`, captured against
+commit `3823739` on branch `mvp-personal-swing-assistant`. Every one of the
+sixteen stages passed except benchmarks: database versions, Ruff check, Ruff
+format (**385 files already formatted**), strict mypy (**no issues found in 366
+source files**), import-linter, the boundary checker, the ADR guard, the unit
+suite (**2,480 passed, 5 skipped, 29 deselected, 1 XPASS in 78.24s**), migration
+upgrade, downgrade and re-upgrade, history, current, empty autogenerate drift,
+and the integration suite (**263 passed, 2,251 deselected, 1 non-strict XPASS in
+66.23s**). `GATING: PASS - every gating stage exited 0.` Shell exit status 0.
+
+A second, partial run is also on disk at `docs/evidence/s04-20260806T154549Z/` —
+eight stages, stopped after the unit suite, `OVERALL: PASS`. It is committed
+alongside the full run rather than deleted: an evidence directory that exists
+and is not in the repository is a gap somebody will later have to explain.
+
+**Benchmarks failed and stay informational** under ADR-060 §2: end-to-end read
+8.167 ms and write 23.517 ms, both the worst figures recorded across five runs,
+alongside `money add` at 0.560 µs — its *best*. The database query improved to
+0.929 ms in the same run the write nearly doubled. Full numbers and the argument
+are in `docs/PERFORMANCE_BASELINE.md`.
+
+**Not recorded, because it was not supplied.** The owner's report carried
+unfilled placeholders for the focused unit-test summary, the focused integration
+summary and the mypy summary. The canonical figures above are read directly from
+the evidence logs in the repository, so they are quoted rather than
+reconstructed; the three focused-run totals are simply absent and were not
+invented. The
+canonical unit and integration suites cover the same tests, so nothing material
+is missing — only the narrower counts.
+
+**Environment.** Windows 11, Python 3.12.13, uv 0.11.32, Docker 29.2.1,
+SQLAlchemy 2.0.44, Alembic 1.16.5, asyncpg 0.30.0. Canonical validation again
+used local host port **55632**, because Windows still reserves TCP 55411–55510.
+The committed `scripts/canonical_validation.ps1` was not modified; an untracked
+temporary copy was used and deleted. Two runs in a row needing the same manual
+edit is the argument for the next slice.
+
+**Next.** Make the canonical database host port an explicit parameter, with
+55432 preserved as the default.

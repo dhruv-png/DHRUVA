@@ -497,6 +497,56 @@ an HTTP transport, a pure text mapper and an orchestration class, with no schema
 change and no new dependency. No budget adjusted, no Money or benchmark code
 touched. All remain unverified on the authoritative Linux environment.
 
+## E2 — canonical measurement (2026-08-06T15:42:07Z, commit `3823739`)
+
+Evidence: `docs/evidence/s04-20260806T154207Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` is the only failure and is informational under
+ADR-060 §2. First canonical run of a commit rather than of an uncommitted
+slice — the news-workflow commit was already pushed when this ran.
+
+**Environment note.** Local host port **55632** again, because Windows still
+reserves TCP 55411–55510. The committed `scripts/canonical_validation.ps1` was
+*not* modified; the owner ran an untracked temporary copy and deleted it
+afterwards. This is the second run to need the workaround, which is what
+promoted the port repair from a note to the next slice.
+
+Suite result: **23 passed, 4 failed, 2 xfailed, 2486 deselected**.
+
+### Five runs, and the pattern has not changed
+
+| Benchmark | Budget | 07:38Z 08-03 | 10:45Z 08-03 | 17:09Z 08-03 | 14:20Z 08-06 | **15:42Z 08-06** |
+|---|---|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.021 ✓ | 1.228 ✓ | 1.790 ✓ | 1.150 ✓ | **0.929 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 2.429 ✓ | 4.862 ✗ | 6.023 ✗ | 2.910 ✓ | **8.167 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 4.501 ✓ | 6.058 ✗ | 7.992 ✗ | 15.811 ✗ | **23.517 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 69.9 ✓ | 75.3 ✓ | 82.8 ✓ | 68.3 ✓ | **84.6 ms** ✓ |
+| `money add` | 0.500 µs | 0.572 ✗ | 0.581 ✗ | 0.584 ✗ | 0.591 ✗ | **0.560 µs** ✗ |
+| `money mul` | 0.500 µs | 0.589 ✗ | 0.580 ✗ | 0.598 ✗ | 0.594 ✗ | **0.594 µs** ✗ |
+
+Both database round trips reached their **worst figures yet** — the read at
+8.167 ms after coming back inside budget at 2.910 ms three hours earlier, the
+write at 23.517 ms against a 5 ms budget. Three hours, same machine, same
+Python 3.12.13, and the write moved 15.8 → 23.5 ms while the query moved
+1.150 → 0.929 ms. A measurement where two numbers on the same connection pool
+disagree about direction is measuring the machine.
+
+Meanwhile `money add` **improved** to 0.560 µs, its best of the five runs, and
+`money mul` landed on 0.594 µs for the second time. Across five runs those two
+have occupied a 31- and 18-nanosecond band respectively while the write has
+ranged 4.5–23.5 ms. They are stable and they are over budget; the budget is the
+thing that has not been re-measured on the authoritative environment.
+
+The 2000-day range iteration **passed** here, having failed at 14:20Z. That is
+the third time it has changed verdict without a code change, and it is the
+cleanest single illustration of why ADR-060 §2 makes these informational on
+Windows.
+
+Nothing in the commit under test touches any of these paths. The news workflow
+adds a pure phrase planner, a string builder, an orchestration rule, a renderer
+and a CLI; it adds no schema change, no migration, no dependency and no query.
+No budget adjusted, no Money or benchmark code touched. All six remain
+unverified on the authoritative Linux environment.
+
 ---
 
 ## How to append

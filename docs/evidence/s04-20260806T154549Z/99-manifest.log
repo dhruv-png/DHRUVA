@@ -1,0 +1,33 @@
+﻿S04 canonical validation evidence
+captured: 20260806T154549Z
+commit:   3823739b73a784f28c7951b1dbc0e414e739a0c7
+branch:   mvp-personal-swing-assistant
+
+stage verdicts
+--------------
+03-database-versions                     PASS (exit 0)
+10-ruff-check                            PASS (exit 0)
+11-ruff-format                           PASS (exit 0)
+12-mypy                                  PASS (exit 0)
+13-import-linter                         PASS (exit 0)
+14-boundaries                            PASS (exit 0)
+15-adr-guard                             PASS (exit 0)
+20-unit-suite                            PASS (exit 0)
+
+OVERALL: PASS - every stage exited 0.
+GATING: PASS - every gating stage exited 0.
+informational failures: none
+shell exit status: 0
+
+files
+-----
+01-environment.log                       12 lines
+02-database-target.log                   8 lines
+03-database-versions.log                 6 lines
+10-ruff-check.log                        2 lines
+11-ruff-format.log                       2 lines
+12-mypy.log                              2 lines
+13-import-linter.log                     18 lines
+14-boundaries.log                        2 lines
+15-adr-guard.log                         2 lines
+20-unit-suite.log                        2494 lines
