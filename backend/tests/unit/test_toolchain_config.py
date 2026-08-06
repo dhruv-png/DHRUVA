@@ -386,3 +386,166 @@ def test_the_ordinary_test_job_does_not_claim_stable_timing(ci_workflow: str) ->
     (ADR-060 R-060-4).
     """
     assert STABLE_TIMING_VARIABLE not in _workflow_job(ci_workflow, "backend")
+
+
+#: The port the canonical script publishes its container on unless told otherwise.
+#: Pinned because changing it silently would invalidate every runbook that names
+#: it and every firewall rule somebody added for it.
+DEFAULT_CONTAINER_PORT = 55432
+
+#: PowerShell escape sequences. A backtick inside a double-quoted string escapes
+#: the character after it, so ``"`netsh ..."`` is a newline followed by ``etsh``
+#: rather than the command somebody meant to name.
+_POWERSHELL_ESCAPES = frozenset("0abefnrtv`\"$'")
+
+
+def _double_quoted_strings(script: str) -> list[str]:
+    """Return the body of every double-quoted PowerShell string literal."""
+    return re.findall(r'"((?:[^"`]|`.)*)"', script)
+
+
+@pytest.mark.unit
+def test_the_container_port_is_a_parameter_defaulting_to_the_documented_one(
+    canonical_script: str,
+) -> None:
+    """The port must be supplyable, and must still default to the documented one.
+
+    Windows reserves TCP ranges that move between reboots, so a fixed port is a
+    run that cannot start. The alternative, discovered the hard way, is an
+    operator editing the script and running the copy. Evidence produced that way
+    describes a script that is not the committed one, which is the one property
+    this evidence has to have.
+    """
+    assert re.search(
+        rf"\[int\]\$ContainerPort\s*=\s*{DEFAULT_CONTAINER_PORT}\b", canonical_script
+    ), "-ContainerPort must be a parameter defaulting to the documented port"
+
+
+@pytest.mark.unit
+def test_the_container_port_is_range_validated(canonical_script: str) -> None:
+    """An impossible port must be refused at the call site, naming the value.
+
+    PowerShell validates a parameter attribute before the script body runs, so
+    the refusal arrives before Docker is contacted and before an evidence
+    directory is created for a run that cannot happen.
+    """
+    assert "[ValidateRange(1, 65535)]" in canonical_script
+
+
+@pytest.mark.unit
+def test_the_script_never_chooses_a_port_by_itself(canonical_script: str) -> None:
+    """A run that quietly moved would record a port nobody asked for.
+
+    Worse, the next person to hit a collision would have no way to know it had
+    happened before, because nothing would have failed.
+    """
+    for forbidden in ("Get-Random", "GetAvailablePort", "FindFreePort", "Port = 0"):
+        assert forbidden not in canonical_script, (
+            f"'{forbidden}' suggests the script picks a port itself; it must refuse instead"
+        )
+
+
+@pytest.mark.unit
+def test_the_same_port_reaches_docker_and_the_connection_url(
+    canonical_script: str,
+) -> None:
+    """One value, propagated -- not two that can drift apart.
+
+    Everything downstream is derived from the URL: the DHRUVA_DB__* variables
+    alembic reads, the migration stages, and the test session. A published port
+    that disagreed with the URL would fail six stages in, with a connection
+    error rather than a port error.
+    """
+    assert '-p "${ContainerPort}:5432"' in canonical_script
+    assert "localhost:$ContainerPort/dhruva_test" in canonical_script
+
+
+@pytest.mark.unit
+def test_the_selected_port_is_recorded_in_the_evidence(canonical_script: str) -> None:
+    """A run on a non-default port is a fact about that run.
+
+    Both logs carry it, and they answer different questions: the environment log
+    records what was *requested*, the database-target log what was actually
+    published. They differ when a stale inherited URL is discarded and a
+    container is started after the environment log was already written.
+    """
+    assert "container_port:  $ContainerPortNote" in canonical_script
+    assert "container_port:           $effectivePort" in canonical_script
+
+
+@pytest.mark.unit
+def test_supplying_both_a_database_url_and_a_port_is_refused(
+    canonical_script: str,
+) -> None:
+    """Either resolution would be a guess.
+
+    Honouring the URL makes -ContainerPort silently do nothing; honouring the
+    port would connect somewhere the caller never named. Refusing is the only
+    answer that cannot be wrong.
+    """
+    assert re.search(
+        r"if \(\$DatabaseUrl -and \$ContainerPortWasSupplied\) \{\s*\n\s*throw",
+        canonical_script,
+    ), "the script must refuse -DatabaseUrl together with -ContainerPort"
+
+
+@pytest.mark.unit
+def test_the_port_is_checked_before_the_image_is_pulled(canonical_script: str) -> None:
+    """An unusable port should cost a second, not a multi-minute image download."""
+    assert_index = canonical_script.index("Assert-PortIsBindable $ContainerPort")
+    pull_index = canonical_script.index("docker pull $PostgresImage")
+
+    assert assert_index < pull_index, "the port check must run before the pull"
+
+
+@pytest.mark.unit
+def test_an_unbindable_port_names_the_port_and_the_way_out(
+    canonical_script: str,
+) -> None:
+    """Windows says "permission denied"; that is not what an operator needs.
+
+    The failure has to name the port, say why it cannot be used, and give the
+    flag that fixes it -- otherwise a working setup appears to break overnight
+    for no reason anybody can act on.
+    """
+    match = re.search(r"function Assert-PortIsBindable.*?\n\}\n", canonical_script, re.DOTALL)
+    assert match is not None, "Assert-PortIsBindable is not declared"
+    body = match.group(0)
+
+    assert "-ContainerPort" in body, "the failure must name the flag that fixes it"
+    assert "excludedportrange" in body, "the failure must point at Windows reservations"
+    assert "throw" in body, "an unusable port must stop the run, not warn"
+
+
+@pytest.mark.unit
+def test_no_double_quoted_string_nests_another_inside_a_subexpression(
+    canonical_script: str,
+) -> None:
+    """PowerShell 5.1 will not parse it, and the script says so in a comment.
+
+    The failure is a parse error before anything runs, so it cannot be caught by
+    a run that got far enough to produce evidence. This test is the substitute
+    for the PowerShell interpreter that the authoring environment lacks.
+    """
+    offenders = [body for body in _double_quoted_strings(canonical_script) if '$("' in body]
+
+    assert offenders == [], f"nested double-quoted subexpression: {offenders}"
+
+
+@pytest.mark.unit
+def test_no_backtick_in_a_double_quoted_string_is_an_accidental_escape(
+    canonical_script: str,
+) -> None:
+    """``"`netsh ..."`` is a newline and the word "etsh", not a command name.
+
+    Quoting a command inside an error message is a natural thing to write and a
+    silent corruption of the message the operator is supposed to act on.
+    """
+    offenders = [
+        body
+        for body in _double_quoted_strings(canonical_script)
+        for index, character in enumerate(body)
+        if character == "`" and index + 1 < len(body) and body[index + 1] not in _POWERSHELL_ESCAPES
+    ]
+
+    assert offenders == [], f"backtick used as a quote rather than an escape: {offenders}"

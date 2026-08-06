@@ -67,6 +67,10 @@ will not start one. Pointing `-DatabaseUrl` at `localhost:55432` — the port th
 script's own container uses — asks for a database nobody started, and the probe
 stops the run with `ConnectionRefusedError`.
 
+The one common reason to pass an argument is a port collision, and the answer to
+that is `-ContainerPort`, not `-DatabaseUrl`. See
+[When Windows has reserved port 55432](#when-windows-has-reserved-port-55432).
+
 ## Option A — your local PostgreSQL (fastest)
 
 TimescaleDB must be installed; three integration tests exercise hypertable DDL.
@@ -107,6 +111,44 @@ init script creates it as well. Racing that init made even
 `pg_extension_name_index` — `IF NOT EXISTS` reads the catalogue before the
 concurrent init commits, then collides with it. The extension is verified by the
 stage 03 probe instead, which is the more useful check regardless.
+
+### When Windows has reserved port 55432
+
+```powershell
+.\scripts\canonical_validation.ps1 -ContainerPort 55632
+```
+
+Hyper-V and WinNAT reserve blocks of TCP ports, and **the blocks move between
+reboots**. When 55432 lands inside one, Docker cannot publish it and the run
+cannot start. Nothing about your setup changed; the reservation did.
+
+The script checks this before pulling the image and refuses with the reserved
+range named, so the failure costs a second rather than a multi-minute download
+followed by an opaque `permission denied`. To see the current reservations:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+Pick any free port outside every listed range. `-ContainerPort` is validated to
+1–65535, is refused if something is already listening there, and **is never
+substituted silently** — a run that quietly moved would produce evidence naming
+a port nobody chose, and the next person to hit the collision would have no
+record that it had happened before.
+
+The port is recorded twice in the evidence: `01-environment.log` carries
+`container_port:` as *requested*, and `02-database-target.log` carries it as
+*actually published* along with `DHRUVA_DB__PORT`. They differ only when a stale
+inherited `DHRUVA_TEST_DATABASE_URL` is discarded after the environment log was
+written.
+
+`-ContainerPort` applies only to the container this script starts. Passing it
+together with `-DatabaseUrl` is refused rather than resolved, because the URL
+already carries its own port and either resolution would be a guess.
+
+> **Do not edit the script to change the port.** Evidence produced by an edited
+> copy describes a script that is not the committed one, which is the single
+> property the evidence exists to have. That is why this parameter exists.
 
 ---
 

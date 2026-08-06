@@ -841,3 +841,68 @@ edit is the argument for the next slice.
 
 **Next.** Make the canonical database host port an explicit parameter, with
 55432 preserved as the default.
+
+---
+
+## 2026-08-06 — the canonical database port is a parameter
+
+**Done.** `scripts/canonical_validation.ps1` takes `-ContainerPort`, defaulting
+to 55432. Nothing else about the script changed, and no feature behaviour was
+touched.
+
+**Why now.** Two consecutive canonical runs needed the same manual edit, because
+Windows currently reserves TCP 55411-55510 and 55432 sits inside it. Each time,
+the owner copied the script, changed one number, ran the copy and deleted it.
+That works, and it quietly costs the thing the evidence exists for: a run
+recorded against commit X was produced by a script that is not the committed
+script at commit X. Nobody reading the evidence six months later can tell how
+the copy differed. A parameter makes the deviation a recorded argument instead
+of an unrecorded edit.
+
+**Decided.** The port is validated by a `[ValidateRange(1, 65535)]` attribute,
+so an impossible value is refused by PowerShell before the script body runs --
+before Docker is contacted and before an evidence directory is created for a run
+that cannot happen.
+
+Availability is checked before the image is pulled, and the two ways a port can
+be unusable are reported separately because they need different fixes: something
+is already listening there, or Windows has reserved the range and nothing may
+listen there at all. The second is parsed out of `netsh interface ipv4 show
+excludedportrange`, best effort -- if that output is not in the expected shape
+the check falls back to a plain bind attempt, because an unrecognised format
+must not turn into a false accusation about the port.
+
+**The script never picks a port itself.** A run that quietly moved would record
+a port nobody chose, and the next person to hit the collision would have no
+evidence it had ever happened. Refusing with the flag that fixes it is worth
+more than succeeding by accident. A test pins this.
+
+`-ContainerPort` together with `-DatabaseUrl` is refused rather than resolved.
+Honouring the URL would make the port silently do nothing; honouring the port
+would connect somewhere the caller never named. Neither is defensible, so the
+script declines to choose.
+
+The port appears in the evidence twice, answering different questions.
+`01-environment.log` records what was *requested*, because it is written before
+provisioning is decided; `02-database-target.log` records what was actually
+published. They differ exactly when a stale inherited URL is discarded and a
+container is started after the environment log was already written.
+
+**Two PowerShell traps, avoided deliberately and pinned.** A backtick inside a
+double-quoted string is an escape character, so a command name quoted that way
+renders as a newline plus the rest of the word -- quoting a command inside an
+error message silently corrupts the message the operator is meant to act on. And
+PowerShell 5.1 will not parse a double-quoted string nested inside a `$()`
+subexpression of another double-quoted string, which the script already had a
+comment about. Both are parse-time or render-time failures that no successful
+run can catch, and this environment has no PowerShell to catch them either. They
+are now two tests over the script text -- the substitute for an interpreter I do
+not have.
+
+**Validated.** Ruff lint and format clean; strict mypy clean; **37 tests pass in
+`test_toolchain_config.py`**, 11 of them new. **The script itself was not
+executed** -- no PowerShell here, and no permission to install one. Its
+behaviour is asserted structurally, and a real run on Windows is still required.
+
+**Next.** Owner-side canonical validation, ideally once with `-ContainerPort
+55632` and once with no arguments, so both paths are exercised.

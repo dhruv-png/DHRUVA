@@ -24,12 +24,48 @@
     Use a dedicated database. This script truncates tables and runs
     `alembic downgrade base`.
 
+.PARAMETER ContainerPort
+    Host port to publish the disposable container on. Default 55432.
+
+    Windows reserves TCP port ranges for Hyper-V and WinNAT, and those ranges
+    move between reboots. When 55432 falls inside one, Docker cannot bind it and
+    the run cannot start. Supplying a port is the supported way through that;
+    editing this script is not, because an edited copy is not the script the
+    evidence claims was run.
+
+    The port is only used when this script provisions a container. With
+    -DatabaseUrl the port comes from that URL, and supplying both is refused
+    rather than silently resolved.
+
+    To see what Windows is currently reserving:
+        netsh interface ipv4 show excludedportrange protocol=tcp
+
 .EXAMPLE
     .\scripts\canonical_validation.ps1
+    .\scripts\canonical_validation.ps1 -ContainerPort 55632
     .\scripts\canonical_validation.ps1 -DatabaseUrl "postgresql+asyncpg://postgres:postgres@localhost:5432/dhruva_test"
 #>
 [CmdletBinding()]
-param([string]$DatabaseUrl)
+param(
+    [string]$DatabaseUrl,
+
+    # Validated by PowerShell before a single line of this script runs, so an
+    # impossible port is refused at the call site with the offending value
+    # named, rather than surfacing later as an opaque Docker error.
+    [ValidateRange(1, 65535)]
+    [int]$ContainerPort = 55432
+)
+
+# -ContainerPort only means something when this script provisions the database.
+# Supplying both is refused rather than resolved, because either resolution is a
+# guess: honouring the URL makes the port silently do nothing, and honouring the
+# port would connect somewhere the caller did not name.
+$ContainerPortWasSupplied = $PSBoundParameters.ContainsKey('ContainerPort')
+if ($DatabaseUrl -and $ContainerPortWasSupplied) {
+    throw ("-ContainerPort applies only to the container this script starts, and " +
+           "-DatabaseUrl was also supplied. Pass one or the other: the URL already " +
+           "carries its own port.")
+}
 
 # Whether the URL was asked for or merely inherited. The distinction matters:
 # an explicit -DatabaseUrl is an instruction and is obeyed even when it fails,
@@ -44,6 +80,16 @@ if ($DatabaseUrl) {
     $UrlSource = 'this script'
 }
 $UrlWasInherited = ($UrlSource -like '*environment variable*')
+
+# How the *request* is described in the environment log, which is written before
+# provisioning is decided. It records what was asked for; `02-database-target`
+# records what was actually used, and the two can differ when an inherited URL
+# turns out to be stale and a container is started after all.
+if ($ContainerPortWasSupplied) {
+    $ContainerPortNote = "$ContainerPort (supplied via -ContainerPort)"
+} else {
+    $ContainerPortNote = "$ContainerPort (default)"
+}
 
 # Saved so the session can be left as it was found. This script exports
 # DHRUVA_TEST_DATABASE_URL and DHRUVA_DB__* for its child processes, and
@@ -67,8 +113,11 @@ New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
 
 #: TimescaleDB, not plain PostgreSQL: hypertable DDL is part of what is verified.
 $PostgresImage = 'timescale/timescaledb:2.17.2-pg16'
-#: A non-default port, so a container never collides with a local PostgreSQL.
-$ContainerPort = 55432
+#: The default host port is a non-default PostgreSQL one, so a container never
+#: collides with a local server. It is a *parameter* rather than a constant
+#: because Windows reserves TCP ranges that move between reboots, and the
+#: alternative to a parameter turned out to be editing this file -- which makes
+#: the evidence describe a script that is not the committed one.
 $ContainerName = "dhruva-canonical-$Stamp"
 $StartedContainer = $false
 
@@ -133,11 +182,16 @@ function Start-CanonicalDatabase {
         before pytest starts and need the same database the tests will use.
     #>
     Write-Stage 'starting database container'
+    Write-Host "  host port $ContainerPortNote"
 
     docker info 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Docker is not responding. Start Docker Desktop, or pass -DatabaseUrl to use an existing PostgreSQL."
     }
+
+    # Checked before the pull, so an unusable port costs a second rather than a
+    # multi-minute image download followed by a failure.
+    Assert-PortIsBindable $ContainerPort
 
     Write-Host "  pulling $PostgresImage (first run only, this can take a few minutes)"
     docker pull $PostgresImage 2>&1 | Out-Host
@@ -148,7 +202,13 @@ function Start-CanonicalDatabase {
         -e POSTGRES_DB=dhruva_test `
         -p "${ContainerPort}:5432" `
         $PostgresImage 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Could not start container $ContainerName." }
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Could not start container $ContainerName on host port $ContainerPort. " +
+               "Docker's error is above. If it mentions binding or permissions, the port " +
+               "is unavailable: rerun with -ContainerPort <free port>. " +
+               "Run: netsh interface ipv4 show excludedportrange protocol=tcp " +
+               "to see what Windows has reserved.")
+    }
     $script:StartedContainer = $true
 
     # Readiness, done properly.
@@ -194,6 +254,69 @@ function Start-CanonicalDatabase {
 
     Write-Host "  container $ContainerName ready on port $ContainerPort" -ForegroundColor Green
     return "postgresql+asyncpg://dhruva_test:dhruva_test@localhost:$ContainerPort/dhruva_test"
+}
+
+function Get-WindowsExcludedPortRanges {
+    <#
+        Return the TCP ranges Windows has reserved, as [int[]] pairs.
+
+        Hyper-V and WinNAT reserve blocks of the dynamic port range, and the
+        blocks move between reboots. Docker cannot publish a host port inside
+        one, and the error it gives says "permission denied" rather than "that
+        port is reserved", which is how a working setup appears to break
+        overnight for no reason.
+
+        Best effort. If netsh is unavailable or its output is not in the shape
+        this parses, the caller falls back to the TCP probe -- an unrecognised
+        format must not turn into a false accusation about the port.
+    #>
+    $ranges = @()
+    try {
+        $output = netsh interface ipv4 show excludedportrange protocol=tcp 2>&1
+    } catch {
+        return $ranges
+    }
+    foreach ($line in $output) {
+        if ("$line" -match '^\s*(\d+)\s+(\d+)\s*$') {
+            $ranges += , @([int]$Matches[1], [int]$Matches[2])
+        }
+    }
+    return $ranges
+}
+
+function Assert-PortIsBindable([int]$Port) {
+    <#
+        Refuse to continue when the requested host port cannot be published.
+
+        Two distinct failures, reported distinctly, because they need different
+        fixes: something is already listening there, or Windows has reserved the
+        range and nothing may listen there at all.
+
+        This never picks a different port. A run that quietly moved would
+        produce evidence whose recorded port is not the one anybody asked for,
+        and the next person to see a collision would have no idea it had
+        happened before.
+    #>
+    foreach ($range in Get-WindowsExcludedPortRanges) {
+        if ($Port -ge $range[0] -and $Port -le $range[1]) {
+            throw ("Host port $Port is inside a range Windows has reserved " +
+                   "($($range[0])-$($range[1])), so Docker cannot publish it. " +
+                   "Rerun with -ContainerPort <port outside that range>. " +
+                   "These reservations change between reboots; run " +
+                   "netsh interface ipv4 show excludedportrange protocol=tcp " +
+                   "to see the current ones.")
+        }
+    }
+
+    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $Port)
+    try {
+        $listener.Start()
+        $listener.Stop()
+    } catch {
+        throw ("Host port $Port is not available: $($_.Exception.Message.Trim()) " +
+               "Something is already listening there, or it is reserved. " +
+               "Rerun with -ContainerPort <free port>.")
+    }
 }
 
 function Test-DatabasePort([string]$Url) {
@@ -388,6 +511,11 @@ try {
         "alembic:         $(uv run python -c 'import alembic; print(alembic.__version__)' 2>&1)"
         "asyncpg:         $(uv run python -c 'import asyncpg; print(asyncpg.__version__)' 2>&1)"
         "pytest:          $((uv run pytest --version 2>&1) -split "`n" | Select-Object -First 1)"
+        # Recorded whether or not it was used, and labelled either way. A run on
+        # a non-default port is a fact about that run, and reading the evidence
+        # months later should not require reconstructing which port was in force
+        # from a container name.
+        "container_port:  $ContainerPortNote"
     )
     Write-Log '01-environment' $env_log | Out-Null
 
@@ -434,6 +562,18 @@ try {
     }
     $redactedUrl = $DatabaseUrl -replace ':[^:@/]+@', ':<redacted>@'
 
+    # Computed outside the string for the same PowerShell 5.1 reason as above.
+    # This is the port that was actually published, which is not always the one
+    # the environment log recorded as requested: a stale inherited URL is
+    # discarded after that log is written, and a container is started instead.
+    if (-not $StartedContainer) {
+        $effectivePort = 'n/a - no container was started'
+    } elseif ($ContainerPortWasSupplied) {
+        $effectivePort = "$ContainerPort (supplied via -ContainerPort)"
+    } else {
+        $effectivePort = "$ContainerPort (default)"
+    }
+
     Write-Log '02-database-target' @(
         "provisioned_by:           $provisionedBy"
         "DHRUVA_TEST_DATABASE_URL: $redactedUrl"
@@ -443,6 +583,7 @@ try {
         "DHRUVA_DB__USER:          $($env:DHRUVA_DB__USER)"
         "DHRUVA_DB__PASSWORD:      <set, not logged>"
         "DHRUVA_REQUIRE_DATABASE:  1"
+        "container_port:           $effectivePort"
     ) | Out-Null
 
     # Prove the database is reachable *before* running six stages against it.
