@@ -704,3 +704,90 @@ and a feature change should not share a commit.
 rate limit; capturing and sanitising that response would let the synthetic
 fixtures be replaced by a real one. NSE stays deferred pending written
 permission or a licensed data agreement.
+
+---
+
+## 2026-08-06 — an operator can run the news pipeline end to end
+
+**Done.** Two commands, `dhruva-news poll` and `dhruva-news show`. The first
+builds deterministic query batches from the approved watchlist, issues one
+bounded GDELT request per batch, and ingests what came back through the existing
+path. The second answers "what did DHRUVA know about this instrument at this
+instant?" against the stored archive, touching no network at all. No migration,
+no scheduler, no new dependency, no new provider.
+
+**Decided.** A bare exchange symbol is never a search phrase. `HAL`, `PNB`,
+`M&M` and `SBI` are precise inside NSE and ambiguous everywhere else; searching
+news for `HAL` returns the computer from *2001*. Symbols identify instruments,
+company names find articles, and conflating the two is how a scan acquires
+evidence about the wrong company. The company name is the first phrase, with a
+trailing corporate suffix dropped only when two tokens survive it, so "Adani
+Power Limited" becomes the phrase headlines use while "Eternal Limited" stays
+whole rather than decaying into an adjective.
+
+Nothing is dropped quietly. Every refused candidate comes back with the rule
+that refused it, and an instrument left with no usable phrase comes back as
+unqueryable. Coverage somebody believes in but does not have is the failure
+this is guarding against, and silence is exactly what produces it.
+
+Two phrases per instrument, eight phrases per batch. Both numbers are about the
+provider rather than about us: the only live evidence of GDELT's throttling is
+an HTTP 429 on a single anonymous request, so what matters is keeping the
+request count small. One expression containing the whole watchlist would be
+fewer requests still, and is refused as unreviewable — and because a single
+rate-limited response would then lose the entire pass.
+
+**Being told to slow down ends the pass.** A source that has just asked for a
+slower rate is not persuaded by the next five requests, and issuing them anyway
+is the behaviour a provider blocks rather than throttles. Later batches come
+back marked as never issued — not empty, not failed, not asked — and everything
+the earlier batches returned is still ingested, because turning a pacing request
+into data loss would mean re-fetching the same articles tomorrow. Every other
+unhealthy outcome is reported and the pass continues: a malformed payload from
+one query says nothing about the next one.
+
+**An override is exclusive structurally.** Setting a query expression turns
+watchlist mode off by being the only query built; there is no second boolean to
+disagree with it. Two independent switches encoding one decision is how a
+configuration ends up contradicting itself with the code quietly picking a
+winner, so `watchlist_queries_enabled` is derived rather than settable.
+
+**Found by running it.** The planner was exercised against the real
+twenty-symbol universe rather than against invented instruments, and that
+produced two defects no unit test as written would have caught. Comparing an
+alias to the canonical symbol case-insensitively refused `IndiGo` along with
+`INDIGO`, which would have left that airline searchable only as "InterGlobe
+Aviation" — a phrase no headline about it contains. NSE symbols are uppercase by
+invariant, so the comparison is now case-sensitive and the brand survives while
+the ticker does not. Separately, a former name outside its grace period was
+being filtered out silently; it is now returned as refused with reason
+`EXPIRED`, because an operator who cannot see that "Zomato" stopped being
+searched cannot explain why coverage changed.
+
+**Reading is point-in-time or it is nothing.** `--as-of` is a knowledge cutoff.
+A correction observed after it stays invisible and the earlier wording is
+returned; both revisions are stored and neither overwrites the other. The result
+limit bounds what is printed rather than what is scanned, and that is written
+down: pushing it into SQL means deciding there which revision wins, and that
+decision belongs with the point-in-time rules. It becomes a repository concern
+when a window is large enough for the difference to be measurable.
+
+**Attribution is enforced where it cannot be forgotten.** `NewsSource` already
+refuses to exist without a canonical homepage, so an unattributable item never
+reaches the archive; the renderer then always prints the source, the citation
+link and the publisher's own URL. Every command also states that NSE filings are
+not an input, because a news list with no filings in it reads as "nothing was
+announced" unless it says otherwise.
+
+**Validated in the sandbox.** Ruff lint and format clean across `src` and
+`tests`; import-linter 4 contracts kept; custom boundary checker and ADR guard
+both OK; strict mypy clean on every new and changed module and test file; **349
+focused tests pass** across the intelligence, news-CLI and news-settings suites,
+stable across four random orderings. The 19 new PostgreSQL integration tests
+**collect** but could not be executed — this environment has no container
+runtime, so the database-backed evidence has to come from the owner's Windows
+run.
+
+**Open.** Live payload schema verification still needs a smoke run that gets
+past the rate limit. The canonical host-port configurability repair remains a
+separate follow-up and is deliberately not in this commit.

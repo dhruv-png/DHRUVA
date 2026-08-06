@@ -85,6 +85,9 @@ dhruva-adr-guard = "dhruva.tooling.adr_guard:main"
 # An operator tool and a composition root (ADR-064): it builds an engine from
 # settings, which nothing under `tooling` is permitted to do.
 dhruva-dlq = "dhruva.workers.dlq:main"
+# Also a composition root: it builds an engine and an HTTP client from settings.
+# Read-only against the provider, and it never fetches an article body.
+dhruva-news = "dhruva.workers.news:main"
 
 [dependency-groups]
 dev = [

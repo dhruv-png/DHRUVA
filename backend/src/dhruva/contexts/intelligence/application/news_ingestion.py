@@ -69,13 +69,22 @@ class IngestNewsItemsResult:
 
 @dataclass(frozen=True, slots=True)
 class GetArchivedNewsQuery:
-    """Point-in-time parameters for reading the archive."""
+    """Point-in-time parameters for reading the archive.
+
+    ``limit`` bounds what the caller is *shown*, not what the database scans.
+    The store returns the whole window and the newest results are kept, because
+    pushing the bound into SQL means deciding there which revision of an item
+    wins, and that decision belongs with the point-in-time rules rather than in
+    a ``LIMIT`` clause. It becomes a repository concern when a window is large
+    enough for the difference to be measurable; it is not yet.
+    """
 
     account_id: AccountId
     known_at: datetime
     published_from: datetime
     published_to: datetime
     canonical_symbol: str | None = None
+    limit: int | None = None
 
 
 class IngestNewsItems:
@@ -187,11 +196,30 @@ class GetArchivedNews:
         self._unit_of_work_factory = unit_of_work_factory
 
     async def execute(self, query: GetArchivedNewsQuery) -> tuple[ArchivedNewsItem, ...]:
-        """Return the latest revision of each item observable at the cutoff."""
+        """Return the latest revision of each item observable at the cutoff.
+
+        Raises
+        ------
+        ValidationError
+            If the window runs backwards, the cutoff is naive, or the limit is
+            not a positive count.
+        """
+        GetArchivedNews._validate_query(query)
         async with self._unit_of_work_factory(query.account_id) as unit_of_work:
-            return await unit_of_work.news.list_known_at(
+            found = await unit_of_work.news.list_known_at(
                 known_at=query.known_at,
                 published_from=query.published_from,
                 published_to=query.published_to,
                 canonical_symbol=query.canonical_symbol,
             )
+        return found if query.limit is None else found[: query.limit]
+
+    @staticmethod
+    def _validate_query(query: GetArchivedNewsQuery) -> None:
+        """Reject a read whose answer could not be interpreted point-in-time."""
+        if query.known_at.tzinfo is None or query.known_at.utcoffset() is None:
+            raise ValidationError("known_at must be timezone-aware")
+        if query.published_to < query.published_from:
+            raise ValidationError("the published window cannot end before it starts")
+        if query.limit is not None and query.limit < 1:
+            raise ValidationError("a result limit must be a positive count", limit=query.limit)

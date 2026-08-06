@@ -47,6 +47,22 @@ from dhruva.contexts.intelligence.domain.news import (
     significant_tokens,
 )
 from dhruva.contexts.intelligence.domain.ports import IntelligenceUnitOfWork, NewsStore
+from dhruva.contexts.intelligence.domain.search import (
+    DEFAULT_BATCH_SIZE,
+    MAX_BATCH_SIZE,
+    MAX_PHRASE_CHARACTERS,
+    MAX_PHRASES_PER_INSTRUMENT,
+    MIN_BATCH_SIZE,
+    MIN_SINGLE_TOKEN_CHARACTERS,
+    SEARCH_PLAN_REVISION,
+    PhraseRejection,
+    RejectedPhrase,
+    SearchBatch,
+    SearchPhrase,
+    SearchPlan,
+    UnqueryableInstrument,
+    plan_search_phrases,
+)
 from dhruva.contexts.intelligence.domain.sentiment import (
     SENTIMENT_RULESET_REVISION,
     AbstentionReason,
@@ -61,10 +77,17 @@ from dhruva.contexts.intelligence.domain.sources import (
 )
 
 __all__ = [
+    "DEFAULT_BATCH_SIZE",
     "ENTITY_LINKING_REVISION",
     "EVENT_CLASSIFICATION_REVISION",
     "FORMER_NAME_GRACE",
+    "MAX_BATCH_SIZE",
+    "MAX_PHRASES_PER_INSTRUMENT",
+    "MAX_PHRASE_CHARACTERS",
+    "MIN_BATCH_SIZE",
+    "MIN_SINGLE_TOKEN_CHARACTERS",
     "NEWS_IDENTITY_REVISION",
+    "SEARCH_PLAN_REVISION",
     "SENTIMENT_RULESET_REVISION",
     "AbstentionReason",
     "ArchivedNewsItem",
@@ -91,15 +114,22 @@ __all__ = [
     "NewsSourceTier",
     "NewsStore",
     "PermittedText",
+    "PhraseRejection",
+    "RejectedPhrase",
+    "SearchBatch",
+    "SearchPhrase",
+    "SearchPlan",
     "SentimentLabel",
     "SentimentResult",
     "SourceHealth",
     "SourceStatus",
+    "UnqueryableInstrument",
     "canonical_url",
     "classify_event",
     "content_revision",
     "evaluate_sentiment",
     "link_entities",
     "normalise_headline",
+    "plan_search_phrases",
     "significant_tokens",
 ]

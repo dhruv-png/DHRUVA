@@ -449,3 +449,153 @@ async def test_polling_never_reads_the_archive_back() -> None:
     await PollNewsFeeds([feed], Factory(store)).execute(_command())
 
     assert len(store.rows) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Being told to slow down
+# --------------------------------------------------------------------------- #
+
+
+def _rate_limited(source: NewsSource) -> NewsFetchResult:
+    return _unhealthy(source, SourceHealth.RATE_LIMITED, "the source asked for a slower rate")
+
+
+async def test_a_rate_limited_batch_stops_every_later_request() -> None:
+    """A source that just said "slow down" is not persuaded by five more tries.
+
+    Continuing is the behaviour a provider blocks rather than throttles, so the
+    later feeds are not polled at all.
+    """
+    store = FakeNewsStore()
+    first = FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE)))
+    throttled = FakeFeed(_rate_limited(FEED_A))
+    later = FakeFeed(_healthy(FEED_B, _item(FEED_B, "https://feed-b.example/1", ORDER_HEADLINE)))
+
+    result = await PollNewsFeeds([first, throttled, later], Factory(store)).execute(_command())
+
+    assert first.polls == 1
+    assert throttled.polls == 1
+    assert later.polls == 0
+    assert [outcome.attempted for outcome in result.outcomes] == [True, True, False]
+
+
+async def test_items_from_before_a_rate_limit_are_still_ingested() -> None:
+    """Keeping what arrived is the correct response to being throttled.
+
+    Discarding it would turn a provider's pacing request into data loss, and the
+    next pass would have to fetch the same articles again.
+    """
+    store = FakeNewsStore()
+    healthy = FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE)))
+    throttled = FakeFeed(_rate_limited(FEED_B))
+
+    result = await PollNewsFeeds([healthy, throttled], Factory(store)).execute(_command())
+
+    assert result.items_offered == 1
+    assert result.revisions_added == 1
+    assert len(store.rows) == 1
+
+
+async def test_a_skipped_batch_is_never_reported_as_an_empty_success() -> None:
+    """Not asked" and "asked and got nothing" are different facts."""
+    throttled = FakeFeed(_rate_limited(FEED_A))
+    skipped = FakeFeed(_healthy(FEED_B, _item(FEED_B, "https://feed-b.example/1", ORDER_HEADLINE)))
+
+    result = await PollNewsFeeds([throttled, skipped], Factory(FakeNewsStore())).execute(_command())
+
+    assert result.skipped[0].index == 2
+    assert result.skipped[0].status is None
+    assert result.skipped[0].source_key is None
+    assert result.statuses == (("feed-a", throttled.result.status),)
+
+
+async def test_the_rate_limited_batch_is_identified_by_position() -> None:
+    """An operator has to be able to say which request was refused."""
+    feeds = [
+        FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE))),
+        FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/2", ORDER_HEADLINE))),
+        FakeFeed(_rate_limited(FEED_A)),
+        FakeFeed(_healthy(FEED_B, _item(FEED_B, "https://feed-b.example/1", ORDER_HEADLINE))),
+    ]
+
+    result = await PollNewsFeeds(feeds, Factory(FakeNewsStore())).execute(_command())
+
+    assert [outcome.index for outcome in result.rate_limited] == [3]
+    assert [outcome.index for outcome in result.skipped] == [4]
+
+
+@pytest.mark.parametrize(
+    "health",
+    [
+        SourceHealth.TEMPORARILY_UNAVAILABLE,
+        SourceHealth.MALFORMED_PAYLOAD,
+        SourceHealth.UNSUPPORTED_SCHEMA,
+        SourceHealth.STALE,
+        SourceHealth.AUTHENTICATION_FAILED,
+    ],
+)
+async def test_only_rate_limiting_stops_the_pass(health: SourceHealth) -> None:
+    """Other failures degrade coverage; they do not mean "stop asking".
+
+    A malformed payload from one query says nothing about the next one, and
+    abandoning the pass would turn one bad response into a day with no news.
+    """
+    failing = FakeFeed(_unhealthy(FEED_A, health, "the feed did not answer usefully"))
+    later = FakeFeed(_healthy(FEED_B, _item(FEED_B, "https://feed-b.example/1", ORDER_HEADLINE)))
+
+    result = await PollNewsFeeds([failing, later], Factory(FakeNewsStore())).execute(_command())
+
+    assert later.polls == 1
+    assert result.skipped == ()
+    assert result.items_offered == 1
+
+
+async def test_an_empty_successful_batch_does_not_stop_the_pass() -> None:
+    """Nothing to report is a successful answer, not a reason to give up."""
+    empty = FakeFeed(_unhealthy(FEED_A, SourceHealth.EMPTY_RESULT, "no articles matched"))
+    later = FakeFeed(_healthy(FEED_B, _item(FEED_B, "https://feed-b.example/1", ORDER_HEADLINE)))
+
+    result = await PollNewsFeeds([empty, later], Factory(FakeNewsStore())).execute(_command())
+
+    assert later.polls == 1
+    assert result.unhealthy == ()
+    assert result.items_offered == 1
+
+
+async def test_every_batch_is_accounted_for_whatever_happened() -> None:
+    """One outcome per configured feed, in the configured order."""
+    feeds = [
+        FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE))),
+        FakeFeed(_rate_limited(FEED_A)),
+        FakeFeed(_healthy(FEED_B, _item(FEED_B, "https://feed-b.example/1", ORDER_HEADLINE))),
+    ]
+
+    result = await PollNewsFeeds(feeds, Factory(FakeNewsStore())).execute(_command())
+
+    assert [outcome.index for outcome in result.outcomes] == [1, 2, 3]
+    assert len(result.outcomes) == len(feeds)
+
+
+async def test_the_result_carries_the_analysis_counts_ingestion_produced() -> None:
+    """An operator reads these; deriving them again would let them disagree."""
+    store = FakeNewsStore()
+    feed = FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE)))
+
+    result = await PollNewsFeeds([feed], Factory(store)).execute(_command())
+
+    assert result.analyses_added == 1
+    assert result.links_added == 1
+    assert result.unresolved == 0
+
+
+async def test_an_unmatched_headline_is_counted_as_unresolved() -> None:
+    """Ingesting an article about nothing we follow is not a silent success."""
+    store = FakeNewsStore()
+    feed = FakeFeed(
+        _healthy(FEED_A, _item(FEED_A, "https://feed-a.example/9", "Rainfall delays the harvest"))
+    )
+
+    result = await PollNewsFeeds([feed], Factory(store)).execute(_command())
+
+    assert result.unresolved == 1
+    assert result.links_added == 0

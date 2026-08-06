@@ -14,13 +14,16 @@ from dhruva.contexts.intelligence.application.news_ingestion import (
     IngestNewsItemsResult,
 )
 from dhruva.contexts.intelligence.application.news_polling import (
+    BatchOutcome,
     NewsFeed,
     PollNewsFeeds,
     PollNewsFeedsCommand,
     PollNewsFeedsResult,
 )
+from dhruva.contexts.intelligence.application.universe import linkable_universe
 
 __all__ = [
+    "BatchOutcome",
     "GetArchivedNews",
     "GetArchivedNewsQuery",
     "IngestNewsItems",
@@ -30,4 +33,5 @@ __all__ = [
     "PollNewsFeeds",
     "PollNewsFeedsCommand",
     "PollNewsFeedsResult",
+    "linkable_universe",
 ]

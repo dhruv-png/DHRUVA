@@ -91,6 +91,19 @@ would be overstating what was tested.
 `language` and `sourcecountry` are read by the mapper and deliberately not
 persisted; no column exists for them and none was added.
 
+## Operator surface (2026-08-06)
+
+`dhruva-news poll` and `dhruva-news show` are the only ways news enters or
+leaves DHRUVA today. Both print the GDELT citation and its homepage link, and
+both state that NSE filings are not an input. The poll command issues only the
+documented DOC 2.0 endpoint, never fetches an article body, and stops issuing
+requests entirely when the provider rate-limits it.
+
+Search phrases are derived from approved watchlist names only. A bare exchange
+symbol is never queried, every refused phrase is reported with its reason, and
+no instrument is dropped from the report for lacking one. See
+[`docs/runbooks/news-workflow.md`](../runbooks/news-workflow.md).
+
 ## Consequence for the product
 
 MVP 1's news coverage is broader-source only until an official-filings route

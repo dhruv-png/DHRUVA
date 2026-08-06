@@ -21,8 +21,10 @@ Prefix ``DHRUVA_``, nested delimiter ``__``::
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -45,6 +47,7 @@ __all__ = [
     "CryptoSettings",
     "DatabaseSettings",
     "LogSettings",
+    "NewsSettings",
     "RedisSettings",
     "Settings",
     "TracingSettings",
@@ -76,6 +79,14 @@ Port = Annotated[int, Field(ge=1, le=65535)]
 _PLACEHOLDER_MARKERS: frozenset[str] = frozenset(
     {"change-me", "changeme", "placeholder", "example", "local_only", "your-", "xxxx"}
 )
+
+
+#: Documented DOC 2.0 timespan forms: a positive count and a unit.
+_TIMESPAN = re.compile(r"[1-9][0-9]{0,3}(min|h|d|w|m)")
+
+#: A query expression travels as a URL parameter and has to stay readable in a
+#: log line. Anything longer is a program, not a search.
+_MAX_QUERY_OVERRIDE = 512
 
 
 def _looks_like_a_placeholder(value: str) -> bool:
@@ -216,6 +227,109 @@ class AuthSettings(_Group):
     refresh_token_days: int = Field(default=30, ge=1, le=365)
 
 
+class NewsSettings(_Group):
+    """How the news discovery pass queries its one approved provider.
+
+    GDELT is the only configured source and it is anonymous, so there is no key,
+    no token and no credential of any kind in this group. There is also no proxy
+    setting: the recorded rate-limit response to GDELT is to send fewer requests,
+    and a proxy would be a way of sending the same number from somewhere else.
+
+    Every bound is deliberate. ``batch_size`` decides how many phrases share one
+    request and therefore how many requests a pass makes; ``max_records``
+    decides how much one request may return. Both have upper bounds because an
+    unbounded value here is an unbounded demand on a free shared service, and
+    lower bounds because a zero would produce a request that cannot answer
+    anything.
+
+    Watchlist-derived querying is the default and there is deliberately no
+    boolean to turn it off. Setting ``query_override`` is what turns it off, and
+    it does so structurally: an override runs as the pass's only query, and the
+    watchlist plan is never built. Two independent switches encoding one
+    decision is how a configuration ends up contradicting itself, with the code
+    silently picking a winner.
+    """
+
+    #: The documented anonymous DOC 2.0 endpoint. Written out rather than
+    #: imported because this module is a leaf: it may not import a context
+    #: (boundary rule R4), and the adapter that owns the real constant is one.
+    #: The two are kept honest by a test that asserts they agree.
+    gdelt_endpoint: str = "https://api.gdeltproject.org/api/v2/doc/doc"
+
+    #: An explicit expression for diagnostics or a deliberate one-off search.
+    #: When set, the watchlist plan is not built and this is the only query.
+    query_override: str | None = None
+
+    #: Phrases per request. See ``domain.search.DEFAULT_BATCH_SIZE`` for why
+    #: eight, and a test that keeps the two in agreement.
+    batch_size: int = Field(default=8, ge=1, le=25)
+
+    #: A documented DOC 2.0 timespan: a positive count and a unit.
+    timespan: str = "1d"
+
+    #: Articles one request may return. GDELT's documented ceiling is 250.
+    max_records: int = Field(default=75, ge=1, le=250)
+
+    #: Whole-request timeout. Long enough for a slow free service, short enough
+    #: that an operator running this by hand is not left wondering.
+    timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+
+    #: How many archived items a read command prints before truncating.
+    result_limit: int = Field(default=50, ge=1, le=500)
+
+    #: How many days back from the cutoff a read command looks by default.
+    lookback_days: int = Field(default=7, ge=1, le=365)
+
+    @property
+    def watchlist_queries_enabled(self) -> bool:
+        """Return whether the pass builds its queries from the watchlist."""
+        return self.query_override is None
+
+    @field_validator("gdelt_endpoint")
+    @classmethod
+    def _require_documented_endpoint(cls, value: str) -> str:
+        """Refuse anything but a plain https endpoint with no embedded query."""
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.hostname:
+            msg = "the news endpoint must be an absolute https URL"
+            raise ValueError(msg)
+        if parsed.query or parsed.fragment or parsed.username or parsed.password:
+            msg = "the news endpoint must carry no query, fragment or credentials"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("query_override")
+    @classmethod
+    def _reject_an_empty_override(cls, value: str | None) -> str | None:
+        """Refuse an override that is blank, unbalanced or absurdly long.
+
+        An empty string is the dangerous case: it is what an unset environment
+        variable looks like, and it would otherwise switch the pass out of
+        watchlist mode and then ask the provider for nothing at all.
+        """
+        if value is None:
+            return value
+        if not value.strip():
+            msg = "the news query override is empty; unset it to use the watchlist"
+            raise ValueError(msg)
+        if len(value) > _MAX_QUERY_OVERRIDE:
+            msg = f"the news query override is longer than {_MAX_QUERY_OVERRIDE} characters"
+            raise ValueError(msg)
+        if value.count('"') % 2 or value.count("(") != value.count(")"):
+            msg = "the news query override has unbalanced quotes or parentheses"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("timespan")
+    @classmethod
+    def _require_documented_timespan(cls, value: str) -> str:
+        """Accept only the documented ``<count><unit>`` forms."""
+        if not _TIMESPAN.fullmatch(value):
+            msg = "timespan must be a positive count and a unit, such as 15min, 12h, 1d, 3w or 1m"
+            raise ValueError(msg)
+        return value
+
+
 class TracingSettings(_Group):
     """OpenTelemetry configuration.
 
@@ -261,6 +375,7 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     crypto: CryptoSettings = Field(default_factory=CryptoSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    news: NewsSettings = Field(default_factory=NewsSettings)
     otel: TracingSettings = Field(default_factory=TracingSettings)
 
     @property
