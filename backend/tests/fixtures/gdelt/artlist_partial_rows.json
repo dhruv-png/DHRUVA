@@ -1,0 +1,18 @@
+{
+  "articles": [
+    {
+      "url": "https://example-wire.test/good/one",
+      "title": "A usable article that maps cleanly",
+      "seendate": "20260803T060000Z",
+      "domain": "example-wire.test",
+      "language": "English",
+      "sourcecountry": "India"
+    },
+    { "url": "https://example-wire.test/missing/title", "seendate": "20260803T060000Z" },
+    { "title": "Missing url", "seendate": "20260803T060000Z" },
+    { "url": "https://example-wire.test/bad/date", "title": "Bad date", "seendate": "not-a-date" },
+    { "url": "ftp://example-wire.test/bad/scheme", "title": "Bad scheme", "seendate": "20260803T060000Z" },
+    { "url": "https://example-wire.test/good/one?utm_source=x", "title": "Duplicate of the first by canonical URL", "seendate": "20260803T055900Z" },
+    "not-an-object"
+  ]
+}

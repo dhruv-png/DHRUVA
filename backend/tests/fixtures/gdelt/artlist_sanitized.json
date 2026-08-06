@@ -1,0 +1,44 @@
+{
+  "articles": [
+    {
+      "url": "https://example-business-daily.test/markets/hal-order-win?utm_source=rss",
+      "url_mobile": "",
+      "title": "Hindustan Aeronautics bags order worth Rs 5,000 crore from the ministry",
+      "seendate": "20260803T060000Z",
+      "socialimage": "https://example-business-daily.test/img/1.jpg",
+      "domain": "example-business-daily.test",
+      "language": "English",
+      "sourcecountry": "India"
+    },
+    {
+      "url": "https://example-wire.test/banking/sbi-q1-results",
+      "url_mobile": "",
+      "title": "State Bank of India Q1 net profit rises 18% to a record high",
+      "seendate": "20260803T053000Z",
+      "socialimage": "",
+      "domain": "example-wire.test",
+      "language": "English",
+      "sourcecountry": "India"
+    },
+    {
+      "url": "https://example-wire.test/autos/mm-launch",
+      "url_mobile": "",
+      "title": "M&M unveils a new electric SUV",
+      "seendate": "20260803T050000Z",
+      "socialimage": "",
+      "domain": "example-wire.test",
+      "language": "English",
+      "sourcecountry": "India"
+    },
+    {
+      "url": "https://example-regional.test/world/unrelated-story",
+      "url_mobile": "",
+      "title": "Unrelated regional story with no approved instrument",
+      "seendate": "20260803T044500Z",
+      "socialimage": "",
+      "domain": "example-regional.test",
+      "language": "Hindi",
+      "sourcecountry": "India"
+    }
+  ]
+}

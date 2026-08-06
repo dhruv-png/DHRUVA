@@ -1,0 +1,45 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.local.ps1:587 char:48
++ ... d '34-migration-current'   { uv run alembic current --verbose } | Out ...
++                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlImpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+Current revision(s) for postgresql+asyncpg://dhruva_test:***@localhost:55632/dhruva_test:
+Rev: 0016_news_archive (head)
+Parent: 0015_daily_market_bars
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260803_1400_news_archive.py
+
+    Add the append-only point-in-time news archive.
+    
+    Revision ID: 0016_news_archive
+    Revises: 0015_daily_market_bars
+    Created: 2026-08-03
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0015_daily_market_bars` drops the three
+        news tables in dependency order. Export any collected news first: the
+        archive is prospective, so anything dropped cannot be re-fetched from a free
+        source later.
+    Irreversible operations: none
+    Expected runtime: sub-second on the initial empty tables.
+    Operational impact: three new empty global tables and their indexes are created.
+        No existing table is rewritten or locked.
+    
+    Design notes carried into the schema rather than left in a docstring:
+    
+      * Nothing here is ever updated. A correction arrives as a new row with a new
+        `content_revision` and its own `first_seen_at`, so a query asking what was
+        knowable at an earlier instant still reads the earlier wording (ADR-007).
+      * `first_seen_at >= published_at` is enforced by the database, because an item
+        observed before it was published is a clock defect, not a fact.
+      * The title and snippet length bounds are the licence control. A column that
+        cannot hold an article body will not be talked into holding one by an
+        adapter in a hurry, and enforcing it only in Python leaves it to whoever
+        writes the next script.
+      * The uniqueness of (source_key, provider_item_id, content_revision) is what
+        makes a re-poll idempotent: identical content computes an identical row and
+        is discarded, leaving the original observation timestamp in place.
+
+exit_code: 0

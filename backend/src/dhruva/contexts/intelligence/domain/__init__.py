@@ -54,6 +54,11 @@ from dhruva.contexts.intelligence.domain.sentiment import (
     SentimentResult,
     evaluate_sentiment,
 )
+from dhruva.contexts.intelligence.domain.sources import (
+    NewsFetchResult,
+    SourceHealth,
+    SourceStatus,
+)
 
 __all__ = [
     "ENTITY_LINKING_REVISION",
@@ -77,6 +82,7 @@ __all__ = [
     "MatchState",
     "NewsAnalysis",
     "NewsArchiveWrite",
+    "NewsFetchResult",
     "NewsFingerprints",
     "NewsItem",
     "NewsItemIdentity",
@@ -87,6 +93,8 @@ __all__ = [
     "PermittedText",
     "SentimentLabel",
     "SentimentResult",
+    "SourceHealth",
+    "SourceStatus",
     "canonical_url",
     "classify_event",
     "content_revision",

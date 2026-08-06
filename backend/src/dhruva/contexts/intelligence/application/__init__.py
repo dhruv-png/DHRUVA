@@ -13,6 +13,12 @@ from dhruva.contexts.intelligence.application.news_ingestion import (
     IngestNewsItemsCommand,
     IngestNewsItemsResult,
 )
+from dhruva.contexts.intelligence.application.news_polling import (
+    NewsFeed,
+    PollNewsFeeds,
+    PollNewsFeedsCommand,
+    PollNewsFeedsResult,
+)
 
 __all__ = [
     "GetArchivedNews",
@@ -20,4 +26,8 @@ __all__ = [
     "IngestNewsItems",
     "IngestNewsItemsCommand",
     "IngestNewsItemsResult",
+    "NewsFeed",
+    "PollNewsFeeds",
+    "PollNewsFeedsCommand",
+    "PollNewsFeedsResult",
 ]

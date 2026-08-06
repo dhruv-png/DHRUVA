@@ -452,6 +452,53 @@ unverified on the authoritative Linux environment.
 
 ---
 
+## E2 — canonical measurement (2026-08-06T14:20:33Z, commit `d29af6b` + the uncommitted GDELT slice)
+
+Evidence: `docs/evidence/s04-20260806T142033Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` is the only failure and is informational under
+ADR-060 §2.
+
+**Environment note.** This run used local host port **55632** rather than the
+script's default 55432, because Windows currently reserves TCP 55411–55510. The
+committed `scripts/canonical_validation.ps1` was *not* modified — the owner
+ran a temporary local copy, since deleted. Making the port configurable is
+tracked as a
+follow-up, not folded into a feature commit.
+
+Suite result: **23 passed, 4 failed, 2 xfailed, 2313 deselected**.
+
+### The variance is now unmistakable
+
+| Benchmark | Budget | 07:38Z 08-03 | 10:45Z 08-03 | 17:09Z 08-03 | **14:20Z 08-06** |
+|---|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.021 ✓ | 1.228 ✓ | 1.790 ✓ | **1.150 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 2.429 ✓ | 4.862 ✗ | 6.023 ✗ | **2.910 ms** ✓ |
+| End-to-end write p95 | < 5 ms | 4.501 ✓ | 6.058 ✗ | 7.992 ✗ | **15.811 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 69.9 ✓ | 75.3 ✓ | 82.8 ✓ | **68.3 ms** ✓ |
+| `money add` | 0.500 µs | 0.572 ✗ | 0.581 ✗ | 0.584 ✗ | **0.591 µs** ✗ |
+| `money mul` | 0.500 µs | 0.589 ✗ | 0.580 ✗ | 0.598 ✗ | **0.594 µs** ✗ |
+
+The end-to-end read **came back inside its budget** at 2.910 ms after three runs
+outside it, peaking at 6.023 ms. In the same run the write went the other way
+and
+reached **15.811 ms — 3.5× its budget and roughly double its worst previous
+figure**. Two database budgets moving in opposite directions in a single run,
+three days after the last one, is not a signal about code.
+
+Across all four runs `money add` has moved 0.572 → 0.591 µs and `money mul`
+0.589 → 0.594 µs. Nineteen and five thousandths of a microsecond, against a
+database read that has ranged 2.4–6.0 ms and a write that has ranged
+4.5–15.8 ms.
+
+The 2000-day range iteration failed here having passed at 17:09.
+
+Nothing in the slice under test touches any of these paths: the GDELT adapter is
+an HTTP transport, a pure text mapper and an orchestration class, with no schema
+change and no new dependency. No budget adjusted, no Money or benchmark code
+touched. All remain unverified on the authoritative Linux environment.
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing

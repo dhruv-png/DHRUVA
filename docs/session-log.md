@@ -582,3 +582,125 @@ ports, source-health handling and the ingestion wiring.
 **Open.** Both feeds are anonymous, so no credential is needed. The three
 `text[]` columns are the first native arrays in the schema; autogenerate drift
 came back empty, so the model and migration agree on them.
+
+---
+
+## 2026-08-06 — GDELT news metadata, and NSE deferred
+
+**Decided first, built second.** The source-selection rule was applied before
+any adapter was written, and it changed the shape of the slice.
+
+**GDELT is approved.** Its Terms of Use
+(<https://www.gdeltproject.org/about.html>) grant "unlimited and unrestricted
+use for any academic, commercial, or governmental use of any kind without
+fee", with
+redistribution permitted provided "a citation to the GDELT Project and a link to
+this website". Access is the documented DOC 2.0 API, anonymous, no key, no
+recurring cost, and its `artlist` response carries article *metadata* only — so
+the storage model already built is the model the API supports.
+
+**NSE is deferred in full.** The owner reviewed NSE's current Terms of Use and
+Copyright Policy and identified four independent obstacles: content may not be
+stored in an electronic retrieval system without prior written permission;
+systematic or automated collection is prohibited; NSE information may not be
+used for gaming, virtual trading or simulation, and DHRUVA includes paper
+trading; and
+content may not be aggregated or duplicated unless expressly made available for
+download. The Copyright Policy's personal/non-commercial allowance covers
+viewing, printing and downloading — it does not clearly extend to database
+storage, and the Hyperlinking Policy separately requires written permission to
+link. That an RSS endpoint answers anonymous requests was explicitly *not*
+treated as evidence of permission. No NSE code exists in the repository; the
+decision and its reconsideration conditions are recorded in
+`docs/decisions/news-source-selection.md`. It is a product-risk decision, not a
+legal opinion.
+
+**Done.** Provider-neutral `SourceHealth` and `NewsFetchResult` in the domain; a
+narrow GDELT DOC 2.0 HTTP transport; a pure deterministic mapper; and a
+`PollNewsFeeds` orchestration that polls every configured feed and hands the
+healthy items to the existing ingestion path in one pass. No schema change, no
+migration, no scheduler, no new dependency.
+
+**Decided.** Operational outcomes and payload outcomes are settled in different
+places — the transport classifies HTTP, the mapper classifies bytes, and only
+bytes cross between them, which is why every failure mode is testable without a
+network. A result may carry items only when `HEALTHY`, enforced by invariant, so
+there is no path by which a failed poll smuggles an item into ingestion. 429 is
+`RATE_LIMITED` and is not retried: being asked to slow down means wait, not try
+harder. Timeouts and 5xx get three bounded attempts. A 4xx on a documented
+request is `UNSUPPORTED_SCHEMA`, because retrying an unchanged rejected request
+only repeats the mistake. `PollNewsFeeds` ingests once over the union of healthy
+feeds rather than once per feed, so an item syndicated across two sources is
+caught in the same batch; a failing feed degrades coverage and its status stays
+visible in the result rather than being raised or silently dropped.
+
+Two honesty notes are carried in the data rather than assumed away. GDELT's
+`seendate` is when *GDELT* saw the article, not when the publisher stamped it,
+so it becomes `published_at` as an upper bound, with `first_seen_at` as
+DHRUVA's own retrieval instant. And GDELT supplies no per-item identifier, so
+identity is
+derived from the canonical URL and prefixed `url-sha256:` to say so —
+inventing a field and inventing a derivation are different acts, and only the
+second is
+defensible.
+
+**Attribution.** Every persisted item names GDELT as its source, carries
+`https://gdeltproject.org` as the required citation link, names the originating
+publisher's domain in the source display name, and keeps the publisher's own
+article URL. Any future dashboard presentation must display that citation and
+link. DHRUVA never fetches the article itself; the adapter contains no code that
+could crawl it.
+
+**Deliberately not persisted.** GDELT supplies `language` and `sourcecountry`
+and this slice stores neither. There is no column for them, no migration 0017
+was added, and nothing in the code or documentation implies otherwise. Adding
+nullable columns because a provider happens to supply a field is how a schema
+accumulates data nobody reads.
+
+**Fixtures are synthetic.** Every GDELT fixture is hand-constructed against the
+documented field names — no live response was captured. Domains are reserved
+`.test` names, headlines are invented, and nothing is copied from any third
+party. `backend/tests/fixtures/gdelt/README.md` records this and asks that the
+first real sanitised capture replace them.
+
+**Validated.** Owner-run Windows figures, recorded exactly: focused intelligence
+suite **195 passed**; strict mypy **passed with no issues in 354 source files**;
+`git diff --check` passed. Canonical run
+`docs/evidence/s04-20260806T142033Z/` passed **every gating stage** — database
+versions, Ruff lint and format, strict mypy, import-linter, custom boundaries,
+ADR guard, the complete unit suite at **2,307 passed with 5 skipped and one
+XPASS**, migration upgrade, downgrade and re-upgrade, history, current, empty
+autogenerate drift, and the integration suite at **244 passed with one
+non-strict XPASS**. `GATING: PASS`, shell exit status 0.
+
+**Live smoke test — what it did and did not prove.** The owner ran
+`scripts/gdelt_smoke_test.py` against the real anonymous endpoint. Exact result:
+`health: RATE_LIMITED`, `http: 429`, `retry-after: not supplied by the server`,
+`items: 0`, `sha256: e3b0c442…b855` (the empty-payload digest),
+`mapper: gdelt-doc2-transport-v1`.
+
+That establishes exactly two things: the real endpoint is reachable, and the
+adapter classified a 429 correctly without retrying and without converting it
+into an empty success. **Live article-payload schema compatibility remains
+unverified.** No live response body has ever been observed, so the mapper's
+field handling is proven only against synthetic fixtures. GDELT publishes no
+rate-limit policy, so there is nothing to comply with beyond backing off; the
+smoke script's default query was already reduced to a single phrase and
+`maxrecords=1`, it now reports `Retry-After` unconditionally including when
+absent, and it offers an opt-in single bounded retry. The production feed's 429
+behaviour was not changed.
+
+**Environment note.** Canonical validation ran against local host port **55632**
+because Windows currently reserves TCP 55411–55510, which contains the script's
+default 55432. The committed `scripts/canonical_validation.ps1` was **not**
+modified; the owner used a temporary local copy. Making the container port
+explicitly configurable, with 55432 retained as the default, is a follow-up and
+was deliberately kept out of this feature commit — a validation-harness change
+and a feature change should not share a commit.
+
+**Next.** A composition or user-visible read path rather than another provider.
+
+**Open.** Live payload schema verification, whenever a smoke run gets past the
+rate limit; capturing and sanitising that response would let the synthetic
+fixtures be replaced by a real one. NSE stays deferred pending written
+permission or a licensed data agreement.
