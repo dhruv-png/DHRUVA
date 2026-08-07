@@ -17,6 +17,59 @@ configuration these commands read, and what each exit status means.
 > prints both, and anything built on top of this — a dashboard, an export, a
 > report — must keep doing so.
 
+## Before anything else: seed the watchlist
+
+**Every other command reads a watchlist that has to exist first.** On a fresh
+database `dhruva-news poll` has no instruments to build query phrases from, and
+`dhruva-digest` truthfully reports that no instruments are on the watchlist.
+
+```powershell
+# Rehearse: read the committed configuration and print it, write nothing.
+uv run --project backend dhruva-reference seed --account owner-family --dry-run
+
+# Write it.
+uv run --project backend dhruva-reference seed --account owner-family
+```
+
+**No network, no broker, no credential.** It reads one committed JSON file and
+writes reference rows. Zerodha is not involved, and instrument discovery and
+daily bars — which do need a broker — are separate concerns.
+
+**Safe to run repeatedly.** Identity and membership revisions are effective-
+dated and content-addressed, so a second run adds nothing and does not move
+the original `recorded_at`. The report distinguishes what was written from
+what was already there. There is no "updated" count, because nothing is
+updated: a changed fact arrives as a new revision beside the old one.
+
+### `--account`: use the same value everywhere
+
+There is no canonical owner account baked into the product, so `--account` is
+required by every command. It accepts two forms:
+
+| Form | Example | Notes |
+|---|---|---|
+| Stable label | `owner-family` | Lowercase, starts with a letter, 2–64 chars. The identifier is *derived* — the same label always resolves to the same account. |
+| Identifier | `acct_<uuid>` or a bare UUID | What the seed command prints back. |
+
+The label form exists to prevent one specific, silent failure: **seeding under
+one account and reading under another produces an empty digest that looks like a
+bug in the digest**. A label you can remember and retype is much harder to get
+wrong than a UUID you have to keep somewhere. Anything that is neither form is
+refused rather than turned into a new account, because silently minting one for
+a typo would create a second, empty watchlist and hide the mistake.
+
+A DHRUVA account identifier is **not** a broker account or a Zerodha client ID.
+It is an internal surrogate (ADR-004, ADR-009).
+
+### What gets written
+
+Twenty owner-approved equities as watchlist members, plus the Nifty 50 benchmark
+stored as a reference identity **without** a membership — it is market context,
+not something the owner asked to follow. The command names it in the output so
+it does not look like something that failed to load.
+
+---
+
 ## What the two commands do
 
 | Command | Network | Writes | Answers |

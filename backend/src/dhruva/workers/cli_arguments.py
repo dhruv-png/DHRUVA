@@ -13,6 +13,7 @@ empty report about an instrument DHRUVA does not follow.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -41,13 +42,48 @@ __all__ = [
 #: it is a dump, and a dump is what the export exists for.
 MAX_ITEMS_CEILING = 50
 
+#: A stable label an account may be named by. Bounded and lowercase so that two
+#: spellings of one intent cannot become two accounts, which is the failure this
+#: whole mechanism exists to avoid.
+_ACCOUNT_LABEL = re.compile(r"[a-z][a-z0-9-]{1,63}")
+
 
 def parse_account(raw: str) -> AccountId:
-    """Parse an account identifier, or refuse the command."""
+    """Resolve an account from an identifier or from a stable label.
+
+    Two accepted forms, because the repository has no canonical owner account
+    and inventing one here would be worse than accepting both:
+
+    * an existing identifier, ``acct_<uuid>`` or a bare UUID, which parses
+      straight through;
+    * a stable label such as ``owner-family``, from which the identifier is
+      *derived* -- the same label always yields the same account, in every
+      process and every run.
+
+    The label form exists because of a specific, silent failure. Every command
+    here requires ``--account``, and seeding the watchlist under one identifier
+    and then reading it under another produces an empty digest that looks like a
+    bug in the digest. A label the owner can remember and retype is far harder
+    to get wrong than a UUID they have to keep somewhere.
+
+    Raises
+    ------
+    ValidationError
+        If the text is neither a valid identifier nor a usable label. Refusing
+        is deliberate: silently minting an account for a typo would create a
+        second, empty watchlist and hide the mistake.
+    """
     try:
         return AccountId.parse(raw)
-    except DhruvaError as error:
-        raise ValidationError("--account is not a valid account identifier") from error
+    except DhruvaError:
+        pass
+    if _ACCOUNT_LABEL.fullmatch(raw):
+        return AccountId.deterministic(raw)
+    raise ValidationError(
+        "--account must be an account identifier (acct_<uuid> or a bare UUID) "
+        "or a stable lowercase label such as 'owner-family'",
+        supplied=raw,
+    )
 
 
 def parse_cutoff(raw: str | None) -> datetime:

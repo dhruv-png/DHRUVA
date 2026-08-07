@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from dhruva.contexts.reference.application import (
     ArchiveOwnerInstrumentMaster,
+    ConfigureReferenceUniverse,
+    ConfigureReferenceUniverseCommand,
+    ConfigureReferenceUniverseResult,
     DiscoverOwnerInstruments,
     GetArchivedInstrumentDiscovery,
     GetSharedWatchlist,
@@ -30,6 +33,9 @@ from dhruva.contexts.reference.domain import (
 __all__ = [
     "ArchiveOwnerInstrumentMaster",
     "ArchivedInstrumentDiscovery",
+    "ConfigureReferenceUniverse",
+    "ConfigureReferenceUniverseCommand",
+    "ConfigureReferenceUniverseResult",
     "DiscoverOwnerInstruments",
     "FuturesAvailabilityStatus",
     "FuturesContract",

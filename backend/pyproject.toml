@@ -93,6 +93,9 @@ dhruva-news = "dhruva.workers.news:main"
 dhruva-digest = "dhruva.workers.digest:main"
 # Read-only sibling of dhruva-digest: same read path, JSON instead of a terminal.
 dhruva-export = "dhruva.workers.export_snapshot:main"
+# Configuration only: reads one committed file and writes reference rows. The
+# one command in this set that touches no provider and needs no credential.
+dhruva-reference = "dhruva.workers.seed_reference:main"
 
 [dependency-groups]
 dev = [

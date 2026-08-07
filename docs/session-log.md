@@ -1303,3 +1303,69 @@ optimised, no budget adjusted; figures in `docs/PERFORMANCE_BASELINE.md`.
 
 **Next.** One operator command composing the pipeline into a daily workflow,
 after measuring whether stored daily-bar coverage can support it.
+
+---
+
+## 2026-08-07 — the watchlist can finally be written
+
+**Done.** `dhruva-reference seed` writes the owner-approved watchlist into the
+database from committed configuration. No network of any kind — no Zerodha, no
+provider, no credential, no session. No migration.
+
+**Why this came before the daily workflow.** Measuring coverage first, as
+asked, turned up something larger than thin daily bars: *no composition root
+wrote reference or market data at all*. Nothing in `src/` called
+`load_owner_universe`, `DiscoverOwnerInstruments` or `IngestDailyHistory`. The
+loader, the use case and the repository were written and tested; nothing
+called them. So on a real database the watchlist was empty, `dhruva-news poll`
+had no phrases to build, and `dhruva-digest` truthfully reported no
+instruments. Every read command shipped over the last several slices had only
+ever run against rows a test inserted. That was my omission and it is worth
+naming plainly.
+
+**Decided: `--account` accepts a stable label as well as an identifier.**
+There is no canonical owner account in the product — `owner-family` appears
+twenty-three times in tests and nowhere in `src` — so inventing one here would
+have been worse than accepting both forms. A label is derived
+deterministically, so `owner-family` always resolves to the same account, in
+every run. The reason is one specific silent failure: seeding under one
+account and reading under another produces an empty digest that looks like a
+bug in the digest, and a label somebody can retype is far harder to get wrong
+than a UUID they must keep somewhere. Anything that is neither form is refused
+rather than minted, because deriving an account from a typo would create a
+second empty watchlist and hide the mistake. The seed command prints the
+account it resolved and the exact `--account` value to reuse.
+
+A DHRUVA account is not a broker account. The identifier is an internal
+surrogate (ADR-004, ADR-009), and nothing here goes near a Zerodha client ID.
+
+**Idempotent by the archive's rules rather than by a check.** Running the seed
+twice adds nothing and does not move the original `recorded_at` — a rerun
+tomorrow must not make every replay believe DHRUVA learned everything on the
+day of the last run. There is no "updated" count in the report because nothing
+is updated: revisions are append-only and effective-dated, so a changed fact
+arrives beside the old one. Two accounts share instrument identities and get
+their own memberships, which is what ADR-004 means in practice.
+
+**Found while testing.** My own guard against broker imports tripped on the
+module docstring, which says "no credential" — the same shape of problem as
+the digest disclaimer containing the word "recommendation". Rewritten to
+assert over what the module *imports* rather than over its text: a guard that
+can be tripped by its own denial eventually gets silenced instead of obeyed.
+Separately, `ConfigureReferenceUniverse` was not on the reference context's
+public API, so the command would have had to reach past the boundary; it is
+exported now.
+
+**Validated.** Ruff lint and format clean; strict mypy clean; import-linter 4
+contracts kept; boundary checker and ADR guard OK; **23 unit tests** for the
+command, the account rule and the committed configuration, including the exact
+twenty approved symbols pinned with their punctuation. The dry run was
+executed against the real configuration and reports 21 definitions, 20 on the
+watchlist, with Nifty 50 named as a reference identity rather than silently
+absent. The 10 new PostgreSQL integration tests collect but could not run
+here.
+
+**Next.** Owner-side validation, then the daily workflow — which is now
+unblocked for its news phases, though its market-context phase will report
+NO_DATA for every instrument until daily bars have a wired ingestion path.
+That still needs a Zerodha session and remains untouched.

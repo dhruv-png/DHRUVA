@@ -196,9 +196,14 @@ def test_the_help_text_says_this_is_not_advice() -> None:
 
 
 def test_an_unparseable_account_is_refused() -> None:
-    """A message and a status, not a traceback."""
+    """A message and a status, not a traceback.
+
+    The input has to fail *both* accepted forms. ``not-an-account`` no longer
+    does: it is a perfectly good stable label, which is the point of the label
+    form and a reminder that "looks wrong to a human" is not the rule.
+    """
     with pytest.raises(ValidationError, match="account identifier"):
-        parse_account("not-an-account")
+        parse_account("Not An Account")
 
 
 def test_an_unparseable_cutoff_is_refused() -> None:
