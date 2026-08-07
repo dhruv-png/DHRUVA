@@ -633,6 +633,41 @@ grouping function, a read-only query, a renderer and a CLI, with no schema
 change, no new dependency and no new statement. No budget adjusted, nothing
 optimised. All remain unverified on the authoritative Linux environment.
 
+## E2 — canonical measurement (2026-08-07T13:43:54Z, commit `4ef9c82`)
+
+Evidence: `docs/evidence/s04-20260807T134354Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` the only failure, informational under ADR-060 §2. Host
+port **55632** via `-ContainerPort`.
+
+Suite result: **5 failed, 22 passed, 2,612 deselected, 2 xfailed**.
+
+### Seven runs, and two budgets missed by a rounding error
+
+| Benchmark | Budget | 12:33Z 08-07 | 13:13Z 08-07 | **13:43Z 08-07** |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.772 ✓ | 1.007 ✓ | **1.456 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 4.669 ✗ | 2.859 ✓ | **3.029 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 6.128 ✗ | 28.661 ✗ | **5.031 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 108.8 ✓ | 72.3 ✓ | **72.6 ms** ✓ |
+| `money add` | 0.500 µs | 0.929 ✗ | 0.564 ✗ | **0.573 µs** ✗ |
+| `money mul` | 0.500 µs | 0.969 ✗ | 0.585 ✗ | **0.608 µs** ✗ |
+| 2000-day iteration | < 1000 µs | 1734.5 ✗ | passed ✓ | **1038.1 µs** ✗ |
+
+The read missed its budget by **29 microseconds** and the write by **31**, or
+about 1% and 0.6%. Thirty minutes earlier the same write measured 28.661 ms —
+5.7× budget — and the read passed at 2.859 ms. A quantity that lands within 1% of
+a threshold on one run and 470% past it on the next is not measuring the code
+under test.
+
+The range iteration failed at 1038.1 µs having passed thirty minutes before,
+its fifth verdict change in seven runs, this time missing by 3.8%.
+
+Nothing in the commit under test touches these paths: market context adds a pure
+summary over bars the repository already returns, a read-only use case and a
+renderer, with no schema change, no new dependency and no new statement. No
+budget adjusted, nothing optimised. All remain unverified on the authoritative
+Linux environment, which is where ADR-060 §1 says the question is settled.
+
 ---
 
 ## How to append

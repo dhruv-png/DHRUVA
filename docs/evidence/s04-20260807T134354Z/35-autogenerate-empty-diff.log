@@ -1,0 +1,16 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:731 char:9
++         uv run alembic revision --autogenerate -m "drift check" --rev ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlImpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.ddl.postgresql] Detected sequence named 'outbox_sequence_seq' as owned by integer column 'outbox(sequence)', 
+assuming SERIAL and omitting
+Generating C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260807_1346_drift_check.py ...  done
+Running post write hook 'ruff_format' ...
+1 file reformatted
+  done
+exit_code: 0
+--- generated migration body was empty: no schema drift ---

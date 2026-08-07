@@ -1154,3 +1154,46 @@ tests collect but could not run here.
 
 **Next.** Owner-side validation, then a deterministic attributed research-
 snapshot export.
+
+---
+
+## 2026-08-07 — market context validated on Windows
+
+**Done.** Commit `4ef9c82` validated and pushed. Evidence:
+`docs/evidence/s04-20260807T134354Z/`, captured against that commit on `mvp-
+personal-swing-assistant`, host port 55632 supplied via `-ContainerPort` and
+recorded as such in both `01-environment.log` and `02-database-target.log`.
+
+Every gating stage passed. Ruff check clean and Ruff format **396 files
+already formatted**; strict mypy **no issues found in 377 source files**;
+import-linter **4 contracts kept, 0 broken**; boundaries and ADR guard OK;
+unit suite **2,606 passed, 5 skipped, 29 deselected, 1 XPASS in 82.82s**;
+every migration stage green with empty autogenerate drift; integration suite
+**286 passed, 2,354 deselected, 1 non-strict XPASS in 66.70s**. `GATING:
+PASS`, shell exit status 0.
+
+The owner separately reported the focused market-context PostgreSQL suite at
+**15 integration tests passed, exit 0**, the focused marketdata/workers unit
+suite passing with exit 0, and strict mypy passing with exit 0.
+
+**Market-context behaviour is now owner-validated against real PostgreSQL**,
+not only against fakes: the one-day close change, the bounded multi-session
+return, the volume comparison against the mean of the preceding sessions, the
+stale flag computed independently of history sufficiency, the explicit
+insufficient-history and no-data states, the cutoff applying to the news read
+and the bar read alike, a bar recorded after the cutoff staying invisible even
+when its trading date is earlier, and the digest read path performing no write
+and no network call.
+
+**Benchmarks failed and stay informational** under ADR-060 §2. This run
+produced the most useful evidence yet about what they measure: the end-to-end
+read missed its budget by **29 microseconds** and the write by **31** — about
+1% and 0.6%. Thirty minutes earlier the same write measured 28.661 ms, 5.7×
+budget, while the read passed at 2.859 ms. A quantity that lands within 1% of
+a threshold on one run and 470% past it on the next is not measuring the code
+under test. The 2000-day range iteration failed at 1038.1 µs having passed
+thirty minutes before, its fifth verdict change in seven runs. Nothing
+optimised, no budget adjusted; figures in `docs/PERFORMANCE_BASELINE.md`.
+
+**Next.** A deterministic attributed research-snapshot export over the same
+read path.
