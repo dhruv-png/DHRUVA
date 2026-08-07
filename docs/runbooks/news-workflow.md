@@ -41,6 +41,11 @@ the original `recorded_at`. The report distinguishes what was written from
 what was already there. There is no "updated" count, because nothing is
 updated: a changed fact arrives as a new revision beside the old one.
 
+**Validated against PostgreSQL.** A real seed writes 21 reference definitions
+and 20 watchlist memberships, a repeated seed adds nothing, and `dhruva-digest`
+then reads the populated watchlist. The account label in use for this
+environment is `owner-family`.
+
 ### `--account`: use the same value everywhere
 
 There is no canonical owner account baked into the product, so `--account` is
@@ -58,8 +63,12 @@ wrong than a UUID you have to keep somewhere. Anything that is neither form is
 refused rather than turned into a new account, because silently minting one for
 a typo would create a second, empty watchlist and hide the mistake.
 
-A DHRUVA account identifier is **not** a broker account or a Zerodha client ID.
-It is an internal surrogate (ADR-004, ADR-009).
+A DHRUVA account identifier is **not** a broker account or a Zerodha client ID,
+and it never becomes one. It is an internal surrogate (ADR-004, ADR-009); broker
+credentials are enrolled separately and are bound to it rather than derived from
+it. Reuse the same `--account` value across **every** command — seed, news,
+digest, market data, export and broker enrolment — because each resolves it
+identically, and a mismatch produces an empty result rather than an error.
 
 ### What gets written
 

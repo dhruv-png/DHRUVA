@@ -1369,3 +1369,29 @@ here.
 unblocked for its news phases, though its market-context phase will report
 NO_DATA for every instrument until daily bars have a wired ingestion path.
 That still needs a Zerodha session and remains untouched.
+
+---
+
+## 2026-08-07 — watchlist seeding validated on Windows
+
+**Validated.** Owner-side Windows/PostgreSQL validation of `d4587ac` passed:
+the reference-seed integration suite, the credential-free dry run, a real seed
+into PostgreSQL, a repeated seed proving idempotency, and `dhruva-digest`
+reading the seeded account. No test failure occurred. No canonical evidence
+directory was produced for this slice, so no stage totals are recorded here --
+the owner reported the outcome directly and there is nothing in the repository
+to quote.
+
+**The real seed produced the intended universe:** 21 reference definitions, 20
+instruments on the watchlist, and NIFTY 50 retained as a reference identity
+without a watchlist membership. `dhruva-digest` now reads a populated
+watchlist instead of reporting an empty one, which is the first time the read
+path has run against rows that were not inserted by a test.
+
+**The account for this environment is `owner-family`.** It is an internal
+DHRUVA account label, from which the surrogate `AccountId` is derived
+deterministically. It is **not** a Zerodha client ID and has no relationship
+to any broker account; ADR-004 and ADR-009 keep internal identity separate
+from provider identifiers. The same value must be reused across every command
+-- seed, news, digest, market data and export -- because each resolves it the
+same way, and a mismatch produces an empty result rather than an error.
