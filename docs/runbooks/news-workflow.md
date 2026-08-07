@@ -327,3 +327,85 @@ are different facts.
 Exit `0` on success, including a completely quiet window — a runbook that
 treated a quiet day as a failure would be red more often than not. Exit `2` for
 input the command refuses.
+
+---
+
+## The research snapshot (`dhruva-export`)
+
+```powershell
+uv run --project backend dhruva-export `
+  --account acct_<uuid> --output snapshot-2026-08-06.json `
+  --as-of 2026-08-06T14:20:00+00:00 --days 7
+```
+
+A sibling of `dhruva-digest` reading exactly the same path — same watchlist,
+same news archive, same daily bars, same cutoff. What differs is only where the
+answer goes. Read-only against PostgreSQL and against the network.
+
+It answers, in a file that outlives the database: **what did DHRUVA know about
+my watchlist at this exact cutoff, and what evidence supported it?**
+
+### It will not overwrite
+
+An existing output file is **refused** unless `--force` is given. A snapshot is
+the thing somebody keeps in order to be able to say what they knew; a command
+that silently replaced yesterday's would destroy the only copy of a fact at the
+moment it became inconvenient. A missing parent directory is refused too, before
+the database is read.
+
+### The determinism contract
+
+The file has two parts, and the split is the contract:
+
+| Part | Stable? | Contains |
+|---|---|---|
+| `body` | **yes** — byte-for-byte | everything that is a function of database state, account, cutoff and schema version |
+| `envelope` | no | `generated_at`, plus `body_sha256`, the schema version, the notice and the disclaimer |
+
+Two exports of the same cutoff over unchanged data have **identical bodies and
+identical fingerprints**, and differ in exactly one field. That is what makes a
+diff between two snapshots meaningful rather than noise.
+
+`body_sha256` is computed over the same canonical JSON the file is written in —
+sorted keys, compact separators, UTF-8 — so a reader can recompute it from the
+file alone and detect an edit without the database or this code.
+
+### What a snapshot contains
+
+Per instrument, in the digest's own significance order: identity, whether it had
+news, the event categories and sentiment tally, the bounded list of items, and
+the market context. Per item: the title, the publisher's URL, the source and its
+attribution link, both timestamps, the content revision, the event category, the
+sentiment, the deduplication verdict and every linked instrument with its
+matched text. Plus the revision string of every ruleset that reached a verdict,
+so "which classifier said that?" is answerable six months later.
+
+Exact values — closes, percentages, ratios — are exported as **strings**. JSON's
+only number is binary floating point, and a close of `143.50` that round-tripped
+as `143.49999999999997` would make a snapshot disagree with the database it came
+from. Parse them with a decimal type.
+
+### What a snapshot deliberately does not contain
+
+No raw provider payload, no article body, no credential, no machine-local path,
+no account secret. The account appears as its stable surrogate identifier, which
+identifies without revealing. A snapshot is a file somebody may email to
+themselves; it should contain nothing they would mind having sent.
+
+### Gaps stay explicit
+
+`requested: false` means market context was switched off with `--no-market`;
+`availability: NO_DATA` means it was looked for and the archive was empty. The
+two are never collapsed, because a news-only snapshot must not read as evidence
+that no prices existed. `items_withheld` reports truncation, so a bounded
+section cannot be mistaken for a complete one.
+
+### Options
+
+Same selection flags as `dhruva-digest` — `--as-of`, `--days`, `--symbol`,
+`--sessions`, `--max-items`, `--no-market` — plus:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--output` | required | File to write |
+| `--force` | off | Replace the output file if it already exists |

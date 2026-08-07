@@ -62,6 +62,14 @@ from dhruva.contexts.marketdata.domain.market_context import (
 from dhruva.shared.errors import ValidationError
 from dhruva.shared.identity import AccountId, InstrumentId
 from dhruva.workers import digest as cli
+from dhruva.workers.cli_arguments import (
+    parse_account,
+    parse_cutoff,
+    parse_max_items,
+    parse_sessions,
+    parse_window,
+    select_instruments,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -190,59 +198,59 @@ def test_the_help_text_says_this_is_not_advice() -> None:
 def test_an_unparseable_account_is_refused() -> None:
     """A message and a status, not a traceback."""
     with pytest.raises(ValidationError, match="account identifier"):
-        cli._account("not-an-account")
+        parse_account("not-an-account")
 
 
 def test_an_unparseable_cutoff_is_refused() -> None:
     """A silently defaulted cutoff answers a different question."""
     with pytest.raises(ValidationError, match="ISO-8601"):
-        cli._instant("last tuesday")
+        parse_cutoff("last tuesday")
 
 
 def test_a_cutoff_in_another_zone_is_converted() -> None:
     """Every stored instant is UTC (ADR-006)."""
-    assert cli._instant("2026-08-06T19:50:00+05:30") == OBSERVED
+    assert parse_cutoff("2026-08-06T19:50:00+05:30") == OBSERVED
 
 
 @pytest.mark.parametrize("days", [0, -3])
 def test_a_non_positive_window_is_refused(days: int) -> None:
     """A window of no days cannot contain an answer."""
     with pytest.raises(ValidationError, match="positive number of days"):
-        cli._window(days, fallback=7)
+        parse_window(days, fallback=7)
 
 
 def test_an_omitted_window_falls_back_to_configuration() -> None:
     """One default, defined in the configuration boundary."""
-    assert cli._window(None, fallback=9) == timedelta(days=9)
+    assert parse_window(None, fallback=9) == timedelta(days=9)
 
 
 @pytest.mark.parametrize("requested", [0, -1, 51, 10_000])
 def test_an_out_of_range_item_bound_is_refused(requested: int) -> None:
     """A digest is something a person reads; past a point it is a dump."""
     with pytest.raises(ValidationError, match="max-items"):
-        cli._max_items(requested)
+        parse_max_items(requested)
 
 
 def test_an_unknown_symbol_is_refused_rather_than_silently_empty() -> None:
     """A typo would otherwise produce a confident, empty, truthful-looking report."""
     with pytest.raises(ValidationError, match="not on the approved watchlist"):
-        cli._select(UNIVERSE, ["SBIN", "NOTLISTED"])
+        select_instruments(UNIVERSE, ["SBIN", "NOTLISTED"])
 
 
 def test_the_refusal_lists_what_is_available() -> None:
     """Being told the answer is wrong is less useful than being told the options."""
     with pytest.raises(ValidationError, match="HAL"):
-        cli._select(UNIVERSE, ["NOTLISTED"])
+        select_instruments(UNIVERSE, ["NOTLISTED"])
 
 
 def test_selecting_a_subset_preserves_the_universe_order() -> None:
     """Selection narrows; it must not reorder."""
-    assert cli._select(UNIVERSE, ["hal", "sbin"]) == UNIVERSE
+    assert select_instruments(UNIVERSE, ["hal", "sbin"]) == UNIVERSE
 
 
 def test_no_symbols_means_the_whole_watchlist() -> None:
     """The default is the product question, not a special case."""
-    assert cli._select(UNIVERSE, None) == UNIVERSE
+    assert select_instruments(UNIVERSE, None) == UNIVERSE
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +470,7 @@ def test_the_rendered_market_lines_contain_no_advice() -> None:
 def test_an_out_of_range_session_count_is_refused(sessions: int) -> None:
     """An unbounded multi-day window is an unbounded read."""
     with pytest.raises(ValidationError, match="sessions"):
-        cli._sessions(sessions)
+        parse_sessions(sessions)
 
 
 def test_the_session_count_defaults_to_the_documented_one() -> None:
@@ -470,7 +478,7 @@ def test_the_session_count_defaults_to_the_documented_one() -> None:
     args = cli.build_parser().parse_args(["--account", str(ACCOUNT)])
 
     assert args.sessions == DEFAULT_MULTI_DAY_SESSIONS
-    assert cli._sessions(args.sessions) == DEFAULT_MULTI_DAY_SESSIONS
+    assert parse_sessions(args.sessions) == DEFAULT_MULTI_DAY_SESSIONS
 
 
 def test_market_context_can_be_switched_off_from_the_command_line() -> None:

@@ -91,6 +91,8 @@ dhruva-news = "dhruva.workers.news:main"
 # Read-only, and the only operator command that reaches no network at all: the
 # digest is composed entirely from what earlier polls already stored.
 dhruva-digest = "dhruva.workers.digest:main"
+# Read-only sibling of dhruva-digest: same read path, JSON instead of a terminal.
+dhruva-export = "dhruva.workers.export_snapshot:main"
 
 [dependency-groups]
 dev = [

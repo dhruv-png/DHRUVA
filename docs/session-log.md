@@ -1197,3 +1197,64 @@ optimised, no budget adjusted; figures in `docs/PERFORMANCE_BASELINE.md`.
 
 **Next.** A deterministic attributed research-snapshot export over the same
 read path.
+
+---
+
+## 2026-08-07 — a deterministic research snapshot
+
+**Done.** `dhruva-export` writes a deterministic, self-describing JSON
+snapshot of the digest and its market context. Same read path as `dhruva-
+digest`, same cutoff, same argument rules — only the destination differs.
+Read-only against PostgreSQL and against the network, no migration, no new
+dependency.
+
+**Decided: the determinism contract is a structural split, not a promise.**
+The body holds everything that is a function of database state, account,
+cutoff and schema version, and is byte-for-byte identical across runs. The
+envelope holds the one thing that cannot be — the instant of writing — plus a
+SHA-256 of the canonical body. So two snapshots of one cutoff differ in
+exactly one field and can be diffed meaningfully, and `body_sha256` names a
+state of knowledge rather than a moment of writing. A reader can recompute it
+from the file alone, without the database or this code, and detect an edit.
+
+**Exact values are exported as strings.** JSON's only number is binary
+floating point. A close of 143.50 that round-tripped as 143.49999999999997
+would make a snapshot disagree with the database it was taken from, which is
+precisely the failure an audit artefact must not have.
+
+**It will not overwrite.** An existing file is refused unless `--force` is
+given, and a missing parent directory is refused before the database is read.
+A snapshot is what somebody keeps in order to be able to say what they knew;
+silently replacing yesterday's would destroy the only copy of a fact at the
+moment it became inconvenient. `--force` permits replacing a file, never
+removing a directory.
+
+**Shared argument rules were extracted rather than copied.** The export needs
+the same account, cutoff, window, bound and symbol-selection rules the digest
+uses, so those moved into `workers/cli_arguments.py` and both commands import
+them. Two copies would agree until one was fixed, and then a snapshot would
+describe a different instant from the digest it was supposed to be a record
+of. The first draft imported the digest's private helpers directly, which
+worked and was wrong.
+
+**Gaps stay explicit.** `requested: false` means market context was switched
+off; `NO_DATA` means it was looked for and the archive was empty. Collapsing
+the two would let a news-only snapshot read as evidence that no prices
+existed. `items_withheld` reports truncation so a bounded section cannot be
+mistaken for a complete one.
+
+**Nothing sensitive leaves.** No raw provider payload, no article body, no
+credential, no machine-local path. The account appears as its surrogate
+identifier. Tests assert the absence of each, because a snapshot is a file
+somebody may email to themselves.
+
+**Validated.** Ruff lint and format clean; strict mypy clean on every new and
+changed module and test file; import-linter 4 contracts kept; boundary checker
+and ADR guard OK; **555 focused tests pass** — 27 for the snapshot
+serialisation, 18 for the export command, the rest unchanged. The two
+`test_zerodha_history.py` failures remain the known Python 3.10
+`fromisoformat` limitation in this sandbox's shim, in a file this slice does
+not touch. The 15 new PostgreSQL integration tests collect but could not run
+here.
+
+**Next.** Owner-side validation of the export slice.

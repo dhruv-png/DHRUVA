@@ -1,25 +1,18 @@
-"""``dhruva-digest`` -- what changed for the watchlist, as of one instant.
+"""``dhruva-export`` -- write the digest and its market context to a JSON file.
 
-A composition root and an operator tool. It is strictly read-only: it opens one
-transaction, reads, prints and exits. There is no network call on this path at
-all -- the digest is composed from what earlier polls already stored, so it works
-with the provider unreachable, rate-limited, or deliberately not run today.
+A sibling of ``dhruva-digest`` reading exactly the same path: the same watchlist,
+the same news archive, the same daily bars, the same cutoff. What differs is only
+where the answer goes. If the two ever disagreed about what was knowable at an
+instant, one of them would be wrong, so neither has its own read.
 
-That separation is the point. `dhruva-news poll` is the only thing that talks to
-a provider and the only thing that writes; this reads. A morning question about
-the watchlist should not be able to trigger a fetch, and an unavailable provider
-should not be able to make yesterday's evidence unreadable.
+Read-only against PostgreSQL and against the network, which here means the
+network is not contacted at all. A snapshot is evidence about what was already
+stored; going to fetch something first would make it evidence about now.
 
-It reports and it does not advise. Nothing here produces a signal, a score, a
-target or a recommendation, and the deterministic verdicts it prints were
-decided at ingestion by rulesets whose revisions are stored beside them.
-
-Two archives are read at one cutoff: the news archive for what was written, and
-the daily-bar archive for what the closes did. Both reads take the same
-``known_at``, so a section cannot pair yesterday's headline with tomorrow's
-price -- and both go through their own context's application boundary, because a
-report assembling raw rows from two schemas is how the point-in-time rule ends
-up implemented twice and enforced once.
+**It will not overwrite.** An existing file is refused unless ``--force`` is
+given. A snapshot is the thing somebody keeps in order to be able to say what
+they knew, and a command that silently replaced yesterday's would destroy the
+only copy of a fact at the moment it became inconvenient.
 """
 
 from __future__ import annotations
@@ -27,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dhruva.contexts.intelligence.application.universe import linkable_universe
@@ -38,7 +32,11 @@ from dhruva.contexts.intelligence.domain.digest import MAX_ITEMS_PER_INSTRUMENT
 from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import (
     SqlAlchemyIntelligenceUnitOfWork,
 )
-from dhruva.contexts.intelligence.interfaces.digest_presentation import render_digest
+from dhruva.contexts.intelligence.interfaces.digest_export import (
+    EXPORT_SCHEMA_VERSION,
+    build_snapshot,
+    serialise_snapshot,
+)
 from dhruva.contexts.marketdata.api import (
     DEFAULT_MULTI_DAY_SESSIONS,
     GetMarketContext,
@@ -56,6 +54,8 @@ from dhruva.contexts.reference.api import GetSharedWatchlist
 from dhruva.contexts.reference.infrastructure import SqlAlchemyReferenceUnitOfWork
 from dhruva.shared.config.settings import load_settings
 from dhruva.shared.errors import DhruvaError, ValidationError
+from dhruva.shared.identity import AccountId
+from dhruva.shared.time.clock import SystemClock
 from dhruva.workers.cli_arguments import (
     parse_account,
     parse_cutoff,
@@ -70,33 +70,30 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-
 __all__ = ["build_parser", "main"]
 
-#: Nothing was stored for any instrument in the window. Zero, because it is a
-#: complete and correct answer -- and a runbook that treated a quiet day as a
-#: failure would be red more often than not.
 _EXIT_OK = 0
-#: Input or configuration the command will not act on.
 _EXIT_REFUSED = 2
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="dhruva-digest",
+        prog="dhruva-export",
         description=(
-            "Summarise what DHRUVA had archived about the approved watchlist at "
-            "an explicit instant. Read-only: no network call, no write, no "
+            "Write a deterministic, self-describing JSON snapshot of what DHRUVA "
+            "had archived about the approved watchlist at an explicit instant. "
+            "Read-only: no network call, no write to the database, no "
             "recommendation."
         ),
         epilog=(
-            "Reports stored facts, not advice. Sentiment is a deterministic "
-            "lexical baseline and cannot on its own support a trading decision. "
-        )
-        + "NSE filings are not an input; automated NSE ingestion is deferred.",
+            f"Schema {EXPORT_SCHEMA_VERSION}. The body is byte-for-byte stable "
+            "for a given database state and cutoff; only the envelope's "
+            "generated_at varies. NSE filings are not an input."
+        ),
     )
     parser.add_argument("--account", required=True, help="account the read is attributed to")
+    parser.add_argument("--output", required=True, type=Path, help="file to write")
     parser.add_argument(
         "--as-of",
         default=None,
@@ -113,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-market",
         action="store_true",
-        help="omit market context and report archived news only",
+        help="omit market context and export archived news only",
     )
     parser.add_argument(
         "--sessions",
@@ -125,19 +122,47 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-items",
         type=int,
         default=MAX_ITEMS_PER_INSTRUMENT,
-        help=f"items shown per instrument (default {MAX_ITEMS_PER_INSTRUMENT})",
+        help=f"items exported per instrument (default {MAX_ITEMS_PER_INSTRUMENT})",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite the output file if it already exists",
     )
     return parser
 
 
+def _destination(output: Path, *, force: bool) -> Path:
+    """Return the path to write, refusing to destroy an existing snapshot.
+
+    Fail-closed. A snapshot is what somebody keeps in order to say what they
+    knew at a point in time; overwriting one silently would remove the only copy
+    of a fact at the moment it became inconvenient, and the cost of being wrong
+    in the other direction is retyping the command with ``--force``.
+    """
+    if output.exists() and not force:
+        raise ValidationError(
+            f"{output} already exists. Pass --force to replace it, or choose "
+            "another path; a snapshot is not overwritten by accident."
+        )
+    if output.exists() and not output.is_file():
+        raise ValidationError(f"{output} exists and is not a regular file")
+    parent = output.parent
+    if not parent.exists():
+        raise ValidationError(f"the directory {parent} does not exist")
+    return output
+
+
 async def run(argv: Sequence[str] | None = None) -> int:
-    """Read the archive once and print the digest."""
+    """Read the archives once at the cutoff and write the snapshot."""
     args = build_parser().parse_args(argv)
     settings = load_settings()
-    account_id = parse_account(args.account)
+    account_id: AccountId = parse_account(args.account)
     as_of = parse_cutoff(args.as_of)
     window = parse_window(args.days, settings.news.lookback_days)
     max_items = parse_max_items(args.max_items)
+    sessions = parse_sessions(args.sessions)
+    destination = _destination(args.output, force=args.force)
 
     engine = build_engine(settings.db)
     session_factory: async_sessionmaker[AsyncSession] = build_session_factory(engine)
@@ -160,7 +185,7 @@ async def run(argv: Sequence[str] | None = None) -> int:
             )
         )
         contexts = (
-            {}
+            None
             if args.no_market
             else contexts_by_instrument(
                 await GetMarketContext(
@@ -172,7 +197,7 @@ async def run(argv: Sequence[str] | None = None) -> int:
                         account_id=account_id,
                         instrument_ids=tuple(entry.instrument_id for entry in universe),
                         known_at=as_of,
-                        sessions=parse_sessions(args.sessions),
+                        sessions=sessions,
                     )
                 )
             )
@@ -180,7 +205,22 @@ async def run(argv: Sequence[str] | None = None) -> int:
     finally:
         await engine.dispose()
 
-    sys.stdout.write(render_digest(digest, None if args.no_market else contexts) + "\n")
+    snapshot = build_snapshot(
+        digest,
+        contexts,
+        account_id=account_id,
+        generated_at=SystemClock().now(),
+    )
+    destination.write_text(serialise_snapshot(snapshot), encoding="utf-8")
+
+    sys.stdout.write(
+        f"wrote {destination}\n"
+        f"  schema     : {EXPORT_SCHEMA_VERSION}\n"
+        f"  as of      : {as_of.isoformat()}\n"
+        f"  instruments: {len(digest.sections)}\n"
+        f"  items      : {digest.items_reported}\n"
+        f"  body sha256: {snapshot['envelope']['body_sha256']}\n"
+    )
     return _EXIT_OK
 
 
