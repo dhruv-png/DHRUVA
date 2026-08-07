@@ -592,6 +592,47 @@ optimised on the strength of these numbers. They remain unverified on the
 authoritative Linux environment, which is where ADR-060 §1 says the question
 gets settled.
 
+## E2 — canonical measurement (2026-08-07T13:13:04Z, commit `3524752`)
+
+Evidence: `docs/evidence/s04-20260807T131304Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` the only failure, informational under ADR-060 §2. Run
+on host port **55632** via `-ContainerPort`, the first canonical run to use the
+supported parameter rather than an edited copy of the script.
+
+Suite result: **3 failed, 24 passed, 2,557 deselected, 2 xfailed** — one fewer
+failure than either run three-quarters of an hour earlier.
+
+### Six runs
+
+| Benchmark | Budget | 15:42Z 08-06 | 12:24Z 08-07 | 12:33Z 08-07 | **13:13Z 08-07** |
+|---|---|---|---|---|---|
+| Database query p95 | < 3 ms | 0.929 ✓ | 1.007 ✓ | 1.772 ✓ | **1.007 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 8.167 ✗ | 3.746 ✗ | 4.669 ✗ | **2.859 ms** ✓ |
+| End-to-end write p95 | < 5 ms | 23.517 ✗ | 5.345 ✗ | 6.128 ✗ | **28.661 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 84.6 ✓ | 72.3 ✓ | 108.8 ✓ | **72.3 ms** ✓ |
+| `money add` | 0.500 µs | 0.560 ✗ | 0.570 ✗ | 0.929 ✗ | **0.564 µs** ✗ |
+| `money mul` | 0.500 µs | 0.594 ✗ | 0.601 ✗ | 0.969 ✗ | **0.585 µs** ✗ |
+| 2000-day iteration | < 1000 µs | passed ✓ | 1014.1 ✗ | 1734.5 ✗ | **passed** ✓ |
+
+The read **came back inside budget** at 2.859 ms, its best figure recorded, in
+the same run the write reached **28.661 ms — its worst, and 5.7× its budget**.
+Those two exercise the same connection pool against the same container. One
+improving to a pass while the other sets a record in the opposite direction, in
+a single run, is not a statement about either code path.
+
+The range iteration passed here, having failed in both runs forty minutes
+earlier. That is its fourth verdict change across six runs with no code touching
+it.
+
+`money add` and `money mul` returned to 0.564 and 0.585 µs after the 0.929 and
+0.969 µs excursion in the previous run — a 39% swing on a pure-Python `Decimal`
+addition, recovered without anybody changing anything.
+
+Nothing in the commit under test touches these paths: the digest adds a pure
+grouping function, a read-only query, a renderer and a CLI, with no schema
+change, no new dependency and no new statement. No budget adjusted, nothing
+optimised. All remain unverified on the authoritative Linux environment.
+
 ---
 
 ## How to append

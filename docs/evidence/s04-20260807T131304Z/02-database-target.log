@@ -1,0 +1,9 @@
+﻿provisioned_by:           this script (container dhruva-canonical-20260807T131304Z)
+DHRUVA_TEST_DATABASE_URL: postgresql+asyncpg://dhruva_test:<redacted>@localhost:55632/dhruva_test
+DHRUVA_DB__HOST:          localhost
+DHRUVA_DB__PORT:          55632
+DHRUVA_DB__NAME:          dhruva_test
+DHRUVA_DB__USER:          dhruva_test
+DHRUVA_DB__PASSWORD:      <set, not logged>
+DHRUVA_REQUIRE_DATABASE:  1
+container_port:           55632 (supplied via -ContainerPort)

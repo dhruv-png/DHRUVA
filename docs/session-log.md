@@ -1057,3 +1057,42 @@ orderings. The 8 new PostgreSQL integration tests collect but could not run —
 no container runtime here, so the database-backed evidence needs a Windows run.
 
 **Next.** Owner-side canonical validation of the digest slice.
+
+---
+
+## 2026-08-07 — digest validated on Windows
+
+**Done.** Commit `3524752` validated and pushed. Evidence:
+`docs/evidence/s04-20260807T131304Z/`, captured against that commit on
+`mvp-personal-swing-assistant`.
+
+Every gating stage passed. Strict mypy **no issues found in 373 source files**;
+Ruff check clean and Ruff format **392 files already formatted**; import-linter
+**4 contracts kept, 0 broken**; boundaries and ADR guard OK; unit suite **2,551
+passed, 5 skipped, 29 deselected, 1 XPASS in 83.30s**; every migration stage and
+the empty autogenerate drift green; integration suite **271 passed, 2,314
+deselected, 1 non-strict XPASS in 62.25s**. `GATING: PASS`, shell exit status 0.
+
+The owner separately reported the focused digest integration suite at **8
+passed, exit 0**, and the focused intelligence/workers suite and strict mypy
+both passing with exit 0.
+
+**The port parameter did its job.** This is the first canonical run to use
+`-ContainerPort 55632` rather than a hand-edited copy of the script, and the
+evidence says so in both places: `01-environment.log` records `container_port:
+55632 (supplied via -ContainerPort)` and `02-database-target.log` agrees, with
+`DHRUVA_DB__PORT: 55632` and a matching URL. The committed script is the script
+that ran, which was the entire point of the repair.
+
+**Benchmarks failed and stay informational** under ADR-060 §2 — three failures
+this time rather than five. The end-to-end read came back *inside* budget at
+2.859 ms, its best recorded figure, in the very same run the write reached
+28.661 ms, its worst and 5.7× budget. Those two share a connection pool and a
+container. `money add` and `money mul` returned to 0.564 and 0.585 µs after a
+0.929/0.969 µs excursion forty minutes earlier — a 39% swing on a pure-Python
+`Decimal` addition, recovered without anybody touching anything. The 2000-day
+range iteration passed, its fourth verdict change in six runs. Nothing
+optimised, no budget adjusted; figures in `docs/PERFORMANCE_BASELINE.md`.
+
+**Next.** Point-in-time market context inside the digest, from the existing
+daily bars.
