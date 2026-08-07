@@ -906,3 +906,88 @@ behaviour is asserted structurally, and a real run on Windows is still required.
 
 **Next.** Owner-side canonical validation, ideally once with `-ContainerPort
 55632` and once with no arguments, so both paths are exercised.
+
+---
+
+## 2026-08-07 — both port paths validated, and 55432 worked
+
+**Done.** Commit `3ab4224` validated on Windows twice, once per port path. Both
+runs are committed in full.
+
+| Run | Evidence | Port | Result |
+|---|---|---|---|
+| Explicit | `docs/evidence/s04-20260807T122441Z/` | 55632 via `-ContainerPort` | `GATING: PASS`, exit 0 |
+| Default | `docs/evidence/s04-20260807T123309Z/` | 55432, default | `GATING: PASS`, exit 0 |
+
+Every gating stage passed in both. `50-benchmarks` was the only failure in
+either, informational under ADR-060 §2. Identical totals across the two runs:
+strict mypy **no issues found in 366 source files**, Ruff format **385 files
+already formatted**, import-linter **4 contracts kept, 0 broken**, unit suite
+**2,490 passed, 5 skipped, 29 deselected, 1 XPASS**, integration suite **263
+passed, 2,261 deselected, 1 XPASS**.
+
+**The port propagated cleanly, and that was checked rather than assumed.** In
+the 55632 run every port reference in every log is 55632; in the 55432 run every
+one is 55432. Neither run contains a single reference to the other's port, so
+the value reached Docker, the connection URL, the `DHRUVA_DB__*` variables
+alembic reads, the migration stages and the test session without anything
+falling back to a hard-coded default. `01-environment.log` records
+`container_port: 55632 (supplied via -ContainerPort)` and `55432 (default)`
+respectively, and `02-database-target.log` agrees with each.
+
+**55432 worked this time, and that is not a retraction.** Yesterday the default
+port could not be bound, and today it could. Both observations are true and
+neither generalises. Windows reserves TCP ranges for Hyper-V and WinNAT, those
+reservations are allocated dynamically, and they move across reboots and as
+other services claim and release ports. So:
+
+- an earlier Windows state placed 55432 inside an excluded range and prevented
+  binding;
+- this session bound 55432 successfully;
+- excluded-port state therefore varies across sessions, reboots and system
+  state;
+- **no permanent conclusion should be drawn** in either direction. 55432 is not
+  known-safe and it is not known-reserved.
+
+That is exactly why `-ContainerPort` is worth having. It is not a workaround for
+a defect that has now gone away; it is the reproducible recovery path for a
+condition that comes and goes and that nothing in this repository controls.
+
+**Reviewed against the real run.** Range validation, no automatic port
+selection, consistent propagation to Docker and the URL, selected-or-default
+status recorded in both evidence logs, the `-DatabaseUrl` conflict refusal, the
+pre-flight running before container startup, and diagnostics naming both the
+port and the remedy — all present, and the two runs exercise the propagation
+end to end. No PowerShell parse error occurred in either run, the first live
+confirmation that the two string traps the tests guard were in fact avoided.
+
+**The Docker pull warning is not a defect.** The default run logged a Docker Hub
+authentication/network timeout while fetching an anonymous token, then started
+the container from the locally cached image and completed successfully.
+
+The script does not check `docker pull`'s exit status, and that is correct
+rather than an oversight. The pull is an optimisation; `docker run` is the gate.
+If the image is cached, a failed pull costs nothing and the run proceeds on the
+image that is present. If it is not cached, `docker run` attempts its own pull,
+fails, returns non-zero, and the script throws. There is no path on which an
+unusable image is silently tolerated, so there is nothing to repair, and making
+a failed pull fatal would turn a transient registry hiccup into a failed
+validation run on a machine that had everything it needed. **No change was
+made.**
+
+One observation left for the owner rather than acted on: `docker pull` writes to
+the console, not to an evidence log, so a run that used a cached image is
+indistinguishable in the committed evidence from one that pulled fresh.
+Recording the resolved image digest would close that, and it is a decision about
+what evidence should contain — not a bug fix, and not something to fold into a
+run that was asked to change nothing.
+
+**Benchmarks.** The two runs are nine minutes apart on the same commit with no
+code between them, and every one of the seven figures got worse in the second:
+the database query by 76%, bulk append by 50%, `money add` by 63%, the 2000-day
+range iteration by 71%. `money add` adds two Decimal-backed values in pure
+Python and touches nothing external; it cannot legitimately move 63% in nine
+minutes. Treated as informational, nothing optimised, no budget touched. Figures
+in `docs/PERFORMANCE_BASELINE.md`.
+
+**Next.** A read-only point-in-time watchlist digest over the archive.

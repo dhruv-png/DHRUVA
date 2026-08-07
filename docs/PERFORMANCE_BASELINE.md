@@ -547,6 +547,51 @@ and a CLI; it adds no schema change, no migration, no dependency and no query.
 No budget adjusted, no Money or benchmark code touched. All six remain
 unverified on the authoritative Linux environment.
 
+## E2 — canonical measurement (2026-08-07, commit `3ab4224`, both port paths)
+
+Two runs of the same commit, minutes apart, differing only in which host port
+the container was published on. That makes them the closest thing this project
+has to a controlled repeat, and the result is the clearest evidence yet that
+these six numbers measure the machine.
+
+| Run | Evidence | Port |
+|---|---|---|
+| Explicit | `docs/evidence/s04-20260807T122441Z/` | 55632, `-ContainerPort` |
+| Default | `docs/evidence/s04-20260807T123309Z/` | 55432, default |
+
+Both: `GATING: PASS`, shell exit status 0, `50-benchmarks` the only failure,
+informational under ADR-060 §2. Both suites identical — unit **2,490 passed, 5
+skipped, 29 deselected, 1 XPASS**; integration **263 passed, 2,261 deselected, 1
+XPASS**; benchmarks **5 failed, 22 passed, 2,496 deselected, 2 xfailed**.
+
+### The same commit, measured twice
+
+| Benchmark | Budget | 15:42Z 08-06 | **12:24Z 08-07 (55632)** | **12:33Z 08-07 (55432)** |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | 0.929 ✓ | **1.007 ms** ✓ | **1.772 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 8.167 ✗ | **3.746 ms** ✗ | **4.669 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 23.517 ✗ | **5.345 ms** ✗ | **6.128 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 84.6 ✓ | **72.3 ms** ✓ | **108.8 ms** ✓ |
+| `money add` | 0.500 µs | 0.560 ✗ | **0.570 µs** ✗ | **0.929 µs** ✗ |
+| `money mul` | 0.500 µs | 0.594 ✗ | **0.601 µs** ✗ | **0.969 µs** ✗ |
+| 2000-day iteration | < 1000 µs | passed ✓ | **1014.1 µs** ✗ | **1734.5 µs** ✗ |
+
+Nine minutes apart, same commit, same machine, same Python 3.12.13, no code
+between them. Every single figure got worse in the second run: the query by 76%,
+bulk append by 50%, `money add` by 63%, and the range iteration by 71%. `money
+add` is a pure-Python addition of two `Decimal`-backed values — it touches no
+database, no disk and no network, and it cannot legitimately vary by 63% in nine
+minutes. Whatever moved, it was not the code.
+
+That also settles the read and write: 8.167 → 3.746 → 4.669 ms across three runs
+of two commits, against a 3 ms budget. The range iteration has now returned
+three different verdicts in three runs without a code change.
+
+No budget adjusted, no Money or benchmark code touched, and nothing was
+optimised on the strength of these numbers. They remain unverified on the
+authoritative Linux environment, which is where ADR-060 §1 says the question
+gets settled.
+
 ---
 
 ## How to append

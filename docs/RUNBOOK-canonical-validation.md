@@ -122,6 +122,15 @@ Hyper-V and WinNAT reserve blocks of TCP ports, and **the blocks move between
 reboots**. When 55432 lands inside one, Docker cannot publish it and the run
 cannot start. Nothing about your setup changed; the reservation did.
 
+This has been observed both ways on the same machine. On 2026-08-06 the default
+port could not be bound and two canonical runs needed a manual workaround; on
+2026-08-07 it bound without incident
+(`docs/evidence/s04-20260807T123309Z/`). **Neither observation generalises** —
+55432 is not known-safe and it is not known-reserved, because the allocation is
+dynamic and nothing in this repository controls it. Treat a binding failure as a
+condition to recover from with `-ContainerPort`, not as a permanent property of
+the port or a defect in the script.
+
 The script checks this before pulling the image and refuses with the reserved
 range named, so the failure costs a second rather than a multi-minute download
 followed by an opaque `permission denied`. To see the current reservations:
