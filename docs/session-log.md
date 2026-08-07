@@ -1096,3 +1096,61 @@ optimised, no budget adjusted; figures in `docs/PERFORMANCE_BASELINE.md`.
 
 **Next.** Point-in-time market context inside the digest, from the existing
 daily bars.
+
+---
+
+## 2026-08-07 — market context in the digest
+
+**Done.** `dhruva-digest` now shows what the stored daily bars did beside what
+was written. One close-to-close change, one bounded multi-day return, one
+volume ratio, per instrument, at the same cutoff the news is read at. No
+migration, no new provider, no network call on the read path, no indicator.
+
+**Decided: the reasoning lives in `marketdata`, not in the digest.** What a
+close-to-close change means is market-data knowledge, so
+`summarise_recent_bars` and `MarketContext` sit in that context's domain and
+reach the digest through `marketdata.api`. The intelligence digest is
+unchanged and still knows nothing about prices; the composition root reads
+both archives and the renderer places them side by side. That keeps the two
+contexts genuinely decoupled and keeps every boundary rule trivially satisfied
+rather than argued about.
+
+**Deliberately no indicators.** A moving average or an oscillator would look
+more sophisticated and would be a judgement this system has not earned the
+right to make inside something that claims only to report. Every figure shown
+is a subtraction or a ratio a reader can check by hand against the bars it
+came from.
+
+**Nothing is computed from a bar that is not there.** A five-session return
+needs six bars; where they do not exist the value is absent and the reason is
+recorded. Substituting a shorter window would produce a number whose label
+lies, and a reader comparing two instruments would be comparing different
+periods without being told.
+
+**Found by writing it.** Staleness and history were originally one enum, and
+rendering a real digest showed the consequence: a single bar thirty-three days
+old came back as `INSUFFICIENT_HISTORY` and silently *not* stale, because one
+value had won. They are independent facts — a series can be both too short to
+compare and too old to trust — so availability now means how much history and
+`is_stale` is computed from the dates. A test pins the case that exposed it. A
+second, smaller defect surfaced the same way: the invariant requiring an
+absent series to explain itself accepted an empty string, which renders as "no
+data -- " and is exactly the silent gap the type exists to prevent.
+
+**The cutoff governs both archives.** The news read and the bar read take the
+same `known_at`, so a section cannot pair yesterday's headline with tomorrow's
+price. A bar retrieved after the cutoff stays invisible even when its trading
+date is earlier, and an integration test asserts precisely that against
+PostgreSQL — it is the property that makes a digest usable as backtest
+evidence rather than as a screenshot.
+
+**Validated.** Ruff lint and format clean; strict mypy clean on every new and
+changed module and test file; import-linter 4 contracts kept; boundary checker
+and ADR guard OK; **557 focused tests pass**. Two failures in
+`test_zerodha_history.py` are a Python 3.10 `fromisoformat` limitation in this
+sandbox's shim, in a file this slice does not touch — confirmed by stashing
+the work and reproducing them unchanged. The 15 new PostgreSQL integration
+tests collect but could not run here.
+
+**Next.** Owner-side validation, then a deterministic attributed research-
+snapshot export.

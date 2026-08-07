@@ -13,6 +13,13 @@ should not be able to make yesterday's evidence unreadable.
 It reports and it does not advise. Nothing here produces a signal, a score, a
 target or a recommendation, and the deterministic verdicts it prints were
 decided at ingestion by rulesets whose revisions are stored beside them.
+
+Two archives are read at one cutoff: the news archive for what was written, and
+the daily-bar archive for what the closes did. Both reads take the same
+``known_at``, so a section cannot pair yesterday's headline with tomorrow's
+price -- and both go through their own context's application boundary, because a
+report assembling raw rows from two schemas is how the point-in-time rule ends
+up implemented twice and enforced once.
 """
 
 from __future__ import annotations
@@ -34,6 +41,16 @@ from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import
     SqlAlchemyIntelligenceUnitOfWork,
 )
 from dhruva.contexts.intelligence.interfaces.digest_presentation import render_digest
+from dhruva.contexts.marketdata.api import (
+    DEFAULT_MULTI_DAY_SESSIONS,
+    MAX_MULTI_DAY_SESSIONS,
+    GetMarketContext,
+    GetMarketContextQuery,
+    contexts_by_instrument,
+)
+from dhruva.contexts.marketdata.infrastructure.persistence.unit_of_work import (
+    SqlAlchemyMarketDataUnitOfWork,
+)
 from dhruva.contexts.platform.infrastructure.database.engine import (
     build_engine,
     build_session_factory,
@@ -94,6 +111,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="restrict to this canonical symbol; repeatable (default: the whole watchlist)",
     )
     parser.add_argument(
+        "--no-market",
+        action="store_true",
+        help="omit market context and report archived news only",
+    )
+    parser.add_argument(
+        "--sessions",
+        type=int,
+        default=DEFAULT_MULTI_DAY_SESSIONS,
+        help=f"sessions in the multi-day return (default {DEFAULT_MULTI_DAY_SESSIONS})",
+    )
+    parser.add_argument(
         "--max-items",
         type=int,
         default=MAX_ITEMS_PER_INSTRUMENT,
@@ -127,6 +155,17 @@ def _window(days: int | None, fallback: int) -> timedelta:
     if chosen < 1:
         raise ValidationError("--days must be a positive number of days", days=chosen)
     return timedelta(days=chosen)
+
+
+def _sessions(requested: int) -> int:
+    """Bound the multi-day return, refusing a window nothing could support."""
+    if not 1 <= requested <= MAX_MULTI_DAY_SESSIONS:
+        raise ValidationError(
+            "--sessions must be between 1 and the multi-day ceiling",
+            requested=requested,
+            maximum=MAX_MULTI_DAY_SESSIONS,
+        )
+    return requested
 
 
 def _max_items(requested: int) -> int:
@@ -193,10 +232,28 @@ async def run(argv: Sequence[str] | None = None) -> int:
                 max_items=max_items,
             )
         )
+        contexts = (
+            {}
+            if args.no_market
+            else contexts_by_instrument(
+                await GetMarketContext(
+                    lambda account: SqlAlchemyMarketDataUnitOfWork(
+                        session_factory, account_id=account
+                    )
+                ).execute(
+                    GetMarketContextQuery(
+                        account_id=account_id,
+                        instrument_ids=tuple(entry.instrument_id for entry in universe),
+                        known_at=as_of,
+                        sessions=_sessions(args.sessions),
+                    )
+                )
+            )
+        )
     finally:
         await engine.dispose()
 
-    sys.stdout.write(render_digest(digest) + "\n")
+    sys.stdout.write(render_digest(digest, None if args.no_market else contexts) + "\n")
     return _EXIT_OK
 
 

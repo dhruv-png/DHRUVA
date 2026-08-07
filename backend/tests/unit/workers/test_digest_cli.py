@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Final
 
 import pytest
@@ -43,6 +44,20 @@ from dhruva.contexts.intelligence.interfaces.digest_presentation import (
     DIGEST_DISCLAIMER,
     render_digest,
     render_section,
+)
+from dhruva.contexts.marketdata.domain.daily_bars import (
+    AdjustmentStatus,
+    BarCompleteness,
+    DailyBarRevision,
+    DailyBarSeries,
+    DailyCandle,
+    MarketInstrumentKind,
+)
+from dhruva.contexts.marketdata.domain.market_context import (
+    DEFAULT_MULTI_DAY_SESSIONS,
+    MarketContext,
+    absent_context,
+    summarise_recent_bars,
 )
 from dhruva.shared.errors import ValidationError
 from dhruva.shared.identity import AccountId, InstrumentId
@@ -321,3 +336,146 @@ def test_a_section_states_its_categories_and_sentiment_tally() -> None:
 
     assert "FRAUD_GOVERNANCE" in rendered
     assert "sentiment:" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# Market context beside the news
+# --------------------------------------------------------------------------- #
+
+
+def _bar(trading_date: date, close: str, volume: int = 1_000) -> DailyBarRevision:
+    price = Decimal(close)
+    return DailyBarRevision(
+        instrument_id=SBIN.instrument_id,
+        instrument_kind=MarketInstrumentKind.CASH_EQUITY,
+        source="kite",
+        source_instrument_id=1,
+        candle=DailyCandle(
+            trading_date=trading_date,
+            open=price,
+            high=price + 1,
+            low=price - 1,
+            close=price,
+            volume=volume,
+            open_interest=None,
+        ),
+        retrieved_at=datetime(2026, 8, 3, 12, tzinfo=UTC),
+        adjustment_status=AdjustmentStatus.RAW,
+        completeness=BarCompleteness.COMPLETE,
+        source_revision="a" * 64,
+        batch_sha256="b" * 64,
+        quality_revision="daily-bar-quality-v1",
+    )
+
+
+def _context(closes: list[str], *, last: date = date(2026, 8, 3)) -> MarketContext:
+    count = len(closes)
+    series = DailyBarSeries(
+        bars=tuple(
+            _bar(last - timedelta(days=count - 1 - index), close)
+            for index, close in enumerate(closes)
+        )
+    )
+    return summarise_recent_bars(series, as_of=date(2026, 8, 3))
+
+
+def test_market_context_is_rendered_beside_the_news() -> None:
+    """Two kinds of fact, side by side, neither presented as explaining the other."""
+    digest = _digest(FRAUD)
+    rendered = render_digest(digest, {SBIN.instrument_id: _context(["100", "110"])})
+
+    assert "close 110" in rendered
+    assert "+10.00%" in rendered
+    assert "FRAUD_GOVERNANCE" in rendered
+
+
+def test_a_fall_is_signed_so_it_cannot_read_as_a_rise() -> None:
+    """An unsigned "10.00%" next to a governance finding invites a misreading."""
+    rendered = render_digest(_digest(FRAUD), {SBIN.instrument_id: _context(["110", "99"])})
+
+    assert "-10.00%" in rendered
+
+
+def test_an_instrument_with_no_bars_says_so_rather_than_showing_nothing() -> None:
+    """A blank where a price belongs reads as zero, which is a different claim."""
+    absent = absent_context(HAL.instrument_id, as_of=date(2026, 8, 3), reason="nothing stored")
+    rendered = render_digest(_digest(FRAUD), {HAL.instrument_id: absent})
+
+    assert "no data -- nothing stored" in rendered
+
+
+def test_a_stale_series_is_marked_in_the_line_a_reader_scans() -> None:
+    """Presenting last month's close as today's is the worst failure available."""
+    stale = _context(["100", "110"], last=date(2026, 7, 1))
+    rendered = render_digest(_digest(FRAUD), {SBIN.instrument_id: stale})
+
+    assert "[STALE]" in rendered
+    assert "before cutoff" in rendered
+
+
+def test_a_short_history_names_the_figure_it_could_not_compute() -> None:
+    """A reason accompanies every n/a; a zero never stands in for a baseline."""
+    rendered = render_digest(_digest(FRAUD), {SBIN.instrument_id: _context(["100", "110"])})
+
+    assert "multi-day n/a" in rendered
+    assert "5-session return needs" in rendered
+
+
+def test_a_quiet_instrument_still_shows_its_market_context() -> None:
+    """A quiet instrument that fell 4% is a different morning from one that did not move."""
+    rendered = render_digest(_digest(), {SBIN.instrument_id: _context(["100", "110"])})
+
+    assert "close 110" in rendered
+    assert "nothing archived in this window" in rendered
+
+
+def test_market_context_can_be_omitted_entirely() -> None:
+    """--no-market reports archived news only, and says the field was not requested."""
+    rendered = render_digest(_digest(FRAUD), None)
+
+    assert "not requested" in rendered
+    assert "close" not in rendered.split(DIGEST_DISCLAIMER)[-1].split("events")[0]
+
+
+def test_an_instrument_missing_from_the_mapping_is_not_silently_blank() -> None:
+    """A gap in the mapping is a different fact from an empty archive."""
+    rendered = render_digest(_digest(FRAUD), {})
+
+    assert "not requested" in rendered
+
+
+def test_the_disclaimer_covers_the_market_figures_too() -> None:
+    """Percentages beside headlines are the easiest thing to read as advice."""
+    assert "not a view on value" in DIGEST_DISCLAIMER
+
+
+def test_the_rendered_market_lines_contain_no_advice() -> None:
+    """The same rule the news side is held to."""
+    rendered = render_digest(_digest(), {SBIN.instrument_id: _context(["100", "110"])})
+    framing = rendered.replace(DIGEST_DISCLAIMER, "").lower()
+
+    for verb in _ADVICE:
+        assert verb not in framing, f"the digest must not say {verb!r}"
+
+
+@pytest.mark.parametrize("sessions", [0, -1, 1000])
+def test_an_out_of_range_session_count_is_refused(sessions: int) -> None:
+    """An unbounded multi-day window is an unbounded read."""
+    with pytest.raises(ValidationError, match="sessions"):
+        cli._sessions(sessions)
+
+
+def test_the_session_count_defaults_to_the_documented_one() -> None:
+    """One trading week, decided in the marketdata domain and used here."""
+    args = cli.build_parser().parse_args(["--account", str(ACCOUNT)])
+
+    assert args.sessions == DEFAULT_MULTI_DAY_SESSIONS
+    assert cli._sessions(args.sessions) == DEFAULT_MULTI_DAY_SESSIONS
+
+
+def test_market_context_can_be_switched_off_from_the_command_line() -> None:
+    """An operator reading only the news should not pay for the bar read."""
+    parser = cli.build_parser()
+
+    assert parser.parse_args(["--account", str(ACCOUNT)]).no_market is False
+    assert parser.parse_args(["--account", str(ACCOUNT), "--no-market"]).no_market is True

@@ -263,6 +263,55 @@ An unknown `--symbol` is refused with the list of approved symbols, because a
 typo would otherwise produce a confident, empty and entirely truthful-looking
 report about an instrument DHRUVA does not follow.
 
+### Market context
+
+Each section also shows what the stored daily bars did, when any are knowable at
+the cutoff:
+
+```
+SBIN  --  State Bank of India
+    market   : close 143.5 on 2026-07-30, 4d before cutoff
+               1d +1.06%   5d +5.51%   [AVAILABLE, 30 bars]
+               volume 3,000,000   3.00x the mean of the prior 20 sessions
+    events   : FRAUD_GOVERNANCE
+```
+
+**It is arithmetic, not analysis.** A one-day close-to-close change, a bounded
+multi-day return, a volume ratio against the mean of the preceding sessions.
+Every figure can be checked by hand against the bars it came from. There are
+deliberately **no indicators** — a moving average or an oscillator would look
+more sophisticated and would be a judgement DHRUVA has not earned the right to
+make inside something that claims only to report.
+
+**Nothing is computed from a bar that is not there.** A one-day change needs two
+closes; a five-session return needs six bars. Where the history is short the
+figure reads `n/a` and the section carries a note saying why. A five-day return
+computed over three days would be a number whose label lies, so it is refused
+rather than shortened.
+
+**Staleness and history are separate facts.** `[STALE]` means the newest stored
+bar is more than four days before the cutoff — a holiday, a halt, or an
+ingestion that stopped running. `INSUFFICIENT_HISTORY` means there are fewer
+than two bars. A series can be both, and both are reported: a single month-old
+bar is stale *and* uncomparable.
+
+| State | Meaning |
+|---|---|
+| `AVAILABLE` | Two or more bars; comparisons are possible |
+| `INSUFFICIENT_HISTORY` | Exactly one bar; a close and nothing to compare it to |
+| `NO_DATA` | Nothing knowable at this cutoff — not zero, not flat, absent |
+| `[STALE]` | Newest bar older than the staleness bound, independent of the above |
+
+**The cutoff governs both archives.** The news read and the bar read take the
+same `--as-of`, so a section cannot pair yesterday's headline with tomorrow's
+price. A bar *retrieved* after the cutoff is invisible even when its trading
+date is earlier, which is what makes a digest usable as backtest evidence.
+
+`--no-market` omits the market read entirely and reports archived news only.
+When it is off but an instrument is absent from the result, the line reads
+`not requested` rather than blank — a gap in the data and a gap in the request
+are different facts.
+
 ### Options
 
 | Flag | Default | Meaning |
@@ -272,6 +321,8 @@ report about an instrument DHRUVA does not follow.
 | `--days` | `DHRUVA_NEWS__LOOKBACK_DAYS` (7) | Publication window before the cutoff |
 | `--symbol` | whole watchlist | Canonical symbol; repeatable |
 | `--max-items` | 5 | Items shown per instrument, 1–50 |
+| `--sessions` | 5 | Sessions in the multi-day return, 1–60 |
+| `--no-market` | off | Report archived news only; skip the daily-bar read |
 
 Exit `0` on success, including a completely quiet window — a runbook that
 treated a quiet day as a failure would be red more often than not. Exit `2` for
