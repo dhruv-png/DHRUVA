@@ -458,3 +458,83 @@ async def test_the_exported_file_carries_no_credentials_or_local_paths(
 
     for forbidden in ("password", "secret", "api_key", "access_token", "c:\\", "/home/"):
         assert forbidden not in text
+
+
+# --------------------------------------------------------------------------- #
+# Regressions
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_closes_read_from_postgresql_render_canonically(
+    migrated: AsyncEngine,
+) -> None:
+    """NUMERIC returns a column-scaled decimal; the snapshot renders the value.
+
+    Serialising with ``str`` produced "100.00000000" here and "100" from an
+    in-memory value, so the exported text depended on whether a number had been
+    through the database -- which the determinism claim cannot tolerate.
+    """
+    await _store_bars(
+        migrated,
+        _bar(SBIN, CUTOFF_DAY - timedelta(days=1), "100"),
+        _bar(SBIN, CUTOFF_DAY, "110"),
+    )
+
+    market = _instrument(await _snapshot(migrated), "SBIN")["market"]
+
+    assert market["latest_close"] == "110"
+    assert market["previous_close"] == "100"
+    assert market["one_day_change_percent"] == "10"
+
+
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_no_decimal_in_a_snapshot_keeps_its_storage_scale(
+    migrated: AsyncEngine,
+) -> None:
+    """A blanket check, so a new field cannot reintroduce the defect quietly."""
+    await _ingest(migrated, "sbi-audit", FRAUD)
+    await _store_bars(
+        migrated,
+        _bar(SBIN, CUTOFF_DAY - timedelta(days=1), "100"),
+        _bar(SBIN, CUTOFF_DAY, "110"),
+    )
+
+    text = serialise_snapshot(await _snapshot(migrated))
+
+    assert "00000000" not in text
+
+
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_a_corrected_article_is_analysed_rather_than_filed_as_a_repeat(
+    migrated: AsyncEngine,
+) -> None:
+    """The defect: a correction was stored and never analysed, so nothing showed it.
+
+    Same provider identifier and same URL, changed wording. The deduplication
+    ledger called that a duplicate, ingestion therefore skipped the rulesets, and
+    the digest -- which only reports items carrying an analysis -- dropped it. The
+    archive held the correction and no report could ever read it.
+    """
+    await _ingest(migrated, "sbi-audit", FRAUD)
+    await _ingest(
+        migrated, "sbi-audit", CORRECTED, first_seen_at=LATE_SEEN, analysed_at=LATE_ANALYSED
+    )
+
+    later = _instrument(await _snapshot(migrated, known_at=LATER), "SBIN")
+
+    assert later["has_news"] is True
+    assert later["news"][0]["title"] == CORRECTED
+    assert later["news"][0]["duplicate"]["is_duplicate"] is False
+
+
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_an_identical_repoll_is_still_a_duplicate(migrated: AsyncEngine) -> None:
+    """The narrowing must not cost idempotency: the same wording twice adds nothing."""
+    await _ingest(migrated, "sbi-audit", FRAUD)
+    await _ingest(migrated, "sbi-audit", FRAUD)
+
+    section = _instrument(await _snapshot(migrated), "SBIN")
+
+    assert section["items_shown"] == 1
+    assert section["news"][0]["title"] == FRAUD

@@ -19,6 +19,13 @@ That split is the whole determinism contract, and it is checkable: the digest
 recomputes the hash of the body it was handed, so a snapshot whose body was
 edited after export no longer matches the fingerprint it carries.
 
+**Exact values leave as canonical decimal strings**, never as JSON numbers.
+JSON's only numeric type is binary floating point, so a close of ``143.50``
+could round-trip as ``143.49999999999997``. The canonical form also drops the
+storage scale a ``NUMERIC`` column returns, so a value is rendered the same
+whether it came from memory or from PostgreSQL -- without which the determinism
+claim above would hold only until a value came through the ORM.
+
 **What is deliberately absent.** No raw provider payload, no article body, no
 credential, no machine-local path, no account secret. The account appears as its
 stable surrogate identifier, which identifies without revealing. A snapshot is a
@@ -40,6 +47,7 @@ from dhruva.contexts.intelligence.domain.sentiment import SENTIMENT_RULESET_REVI
 from dhruva.contexts.intelligence.interfaces.digest_presentation import DIGEST_DISCLAIMER
 from dhruva.contexts.intelligence.interfaces.news_presentation import NSE_UNAVAILABLE_NOTICE
 from dhruva.contexts.marketdata.api import MARKET_CONTEXT_REVISION
+from dhruva.shared.decimals import canonical_decimal_or_none
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -184,13 +192,13 @@ def _market(context: MarketContext | None) -> dict[str, Any]:
         "availability": str(context.availability),
         "as_of": context.as_of.isoformat(),
         "latest_date": None if context.latest_date is None else context.latest_date.isoformat(),
-        "latest_close": _number(context.latest_close),
-        "previous_close": _number(context.previous_close),
-        "one_day_change_percent": _number(context.one_day_change_percent),
-        "multi_day_change_percent": _number(context.multi_day_change_percent),
+        "latest_close": canonical_decimal_or_none(context.latest_close),
+        "previous_close": canonical_decimal_or_none(context.previous_close),
+        "one_day_change_percent": canonical_decimal_or_none(context.one_day_change_percent),
+        "multi_day_change_percent": canonical_decimal_or_none(context.multi_day_change_percent),
         "multi_day_sessions": context.multi_day_sessions,
         "latest_volume": context.latest_volume,
-        "volume_ratio": _number(context.volume_ratio),
+        "volume_ratio": canonical_decimal_or_none(context.volume_ratio),
         "volume_baseline_sessions": context.volume_baseline_sessions,
         "staleness_days": context.staleness_days,
         "stale_after_days": context.stale_after_days,
@@ -249,18 +257,7 @@ def _links(entry: DigestEntry) -> list[dict[str, Any]]:
             "match_kind": str(match.kind),
             "match_state": str(state),
             "matched_text": match.matched_text,
-            "relevance": _number(match.relevance),
+            "relevance": canonical_decimal_or_none(match.relevance),
         }
         for match, state in analysis.linked
     ]
-
-
-def _number(value: object) -> str | None:
-    """Render an exact decimal as a string, never as a float.
-
-    JSON has one numeric type and it is binary floating point. A close of
-    ``143.50`` that round-trips as ``143.49999999999997`` would make a snapshot
-    disagree with the database it was taken from, so exact values leave as
-    strings and a consumer parses them with a decimal type.
-    """
-    return None if value is None else str(value)

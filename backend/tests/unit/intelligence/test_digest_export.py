@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Final
@@ -158,6 +159,33 @@ def _series(instrument: LinkableInstrument, count: int, *, last: date = CUTOFF_D
             )
         )
     return DailyBarSeries(bars=tuple(bars))
+
+
+def _scaled_series(instrument: LinkableInstrument, count: int, *, scale: int) -> Any:
+    """Build the same bars a NUMERIC column would return: values at fixed scale.
+
+    ``Decimal("101").quantize(Decimal("1E-8"))`` is what asyncpg hands back for a
+    close written as ``101`` into ``NUMERIC(_, 8)``. Identical number, different
+    text -- which is exactly the case the unit suite previously never saw,
+    because it only ever built values in memory.
+    """
+    quantum = Decimal(1).scaleb(-scale)
+    original = _series(instrument, count)
+    return DailyBarSeries(
+        bars=tuple(
+            replace(
+                bar,
+                candle=replace(
+                    bar.candle,
+                    open=bar.candle.open.quantize(quantum),
+                    high=bar.candle.high.quantize(quantum),
+                    low=bar.candle.low.quantize(quantum),
+                    close=bar.candle.close.quantize(quantum),
+                ),
+            )
+            for bar in original.bars
+        )
+    )
 
 
 def _digest(*items: ArchivedNewsItem) -> Any:
@@ -491,3 +519,74 @@ def test_an_empty_watchlist_exports_a_valid_snapshot() -> None:
 
     assert snapshot["body"]["instruments"] == []
     assert json.loads(serialise_snapshot(snapshot))["body"]["totals"]["instruments"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Regressions
+# --------------------------------------------------------------------------- #
+
+
+def test_a_close_carrying_database_scale_renders_canonically() -> None:
+    """The defect: NUMERIC(_, 8) returns "100.00000000" for a close of 100.
+
+    Serialising with ``str`` made the output depend on whether a value had been
+    through PostgreSQL, which is the one thing a determinism claim cannot
+    tolerate. Both spellings must now produce identical JSON.
+    """
+    from_memory = summarise_recent_bars(_series(SBIN, 2), as_of=CUTOFF_DAY)
+    from_database = summarise_recent_bars(_scaled_series(SBIN, 2, scale=8), as_of=CUTOFF_DAY)
+
+    memory_market: Any = _instrument(
+        _snapshot(
+            _archived("https://p.test/sbi", FRAUD), contexts={SBIN.instrument_id: from_memory}
+        ),
+        "SBIN",
+    )["market"]
+    database_market: Any = _instrument(
+        _snapshot(
+            _archived("https://p.test/sbi", FRAUD),
+            contexts={SBIN.instrument_id: from_database},
+        ),
+        "SBIN",
+    )["market"]
+
+    assert memory_market["latest_close"] == database_market["latest_close"] == "101"
+    assert memory_market == database_market
+
+
+def test_a_scaled_close_produces_the_same_body_fingerprint() -> None:
+    """The fingerprint is the determinism claim in one value; it must agree too."""
+    plain = _snapshot(
+        _archived("https://p.test/sbi", FRAUD),
+        contexts={SBIN.instrument_id: summarise_recent_bars(_series(SBIN, 2), as_of=CUTOFF_DAY)},
+    )
+    scaled = _snapshot(
+        _archived("https://p.test/sbi", FRAUD),
+        contexts={
+            SBIN.instrument_id: summarise_recent_bars(
+                _scaled_series(SBIN, 2, scale=8), as_of=CUTOFF_DAY
+            )
+        },
+    )
+
+    assert plain["envelope"]["body_sha256"] == scaled["envelope"]["body_sha256"]
+
+
+def test_no_exported_decimal_carries_trailing_zeros() -> None:
+    """A snapshot full of "100.00000000" is exact and unreadable in equal measure."""
+    market: Any = _instrument(
+        _snapshot(
+            _archived("https://p.test/sbi", FRAUD),
+            contexts={
+                SBIN.instrument_id: summarise_recent_bars(
+                    _scaled_series(SBIN, 10, scale=8), as_of=CUTOFF_DAY
+                )
+            },
+        ),
+        "SBIN",
+    )["market"]
+
+    for key in ("latest_close", "previous_close", "one_day_change_percent"):
+        value = market[key]
+        assert value is not None
+        assert not (value.endswith("0") and "." in value), f"{key} kept its storage scale"

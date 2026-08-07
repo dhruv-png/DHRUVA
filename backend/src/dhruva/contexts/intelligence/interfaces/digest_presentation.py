@@ -26,6 +26,7 @@ from dhruva.contexts.intelligence.interfaces.news_presentation import NSE_UNAVAI
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from decimal import Decimal
 
     from dhruva.contexts.intelligence.domain.digest import (
         DigestEntry,
@@ -127,9 +128,17 @@ def _volume_line(context: MarketContext) -> str:
     )
 
 
-def _signed(value: object) -> str:
-    """Render a percentage with an explicit sign, so a fall cannot read as a rise."""
-    return f"+{value}" if not str(value).startswith("-") else str(value)
+def _signed(value: Decimal) -> str:
+    """Render a percentage with an explicit sign, so a fall cannot read as a rise.
+
+    Deliberately *not* canonicalised. A percentage is computed here and arrives
+    already quantised to two places, so it carries no storage scale to strip,
+    and two decimal places is how a reader expects to scan a column of them.
+    The close is different -- it comes out of a ``NUMERIC`` column wearing eight
+    zeros -- and that one is canonicalised.
+    """
+    text = str(value)
+    return text if text.startswith("-") else f"+{text}"
 
 
 def render_section(

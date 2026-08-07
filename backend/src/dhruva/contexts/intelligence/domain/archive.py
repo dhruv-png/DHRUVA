@@ -15,7 +15,6 @@ Nothing is ever reinterpreted in place.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from datetime import timedelta
@@ -29,9 +28,9 @@ from dhruva.contexts.intelligence.domain.entity_linking import (
 )
 from dhruva.contexts.intelligence.domain.events import EventClassification
 from dhruva.contexts.intelligence.domain.news import (
-    NEWS_IDENTITY_REVISION,
     DeduplicationDecision,
     NewsItem,
+    content_fingerprint,
 )
 from dhruva.contexts.intelligence.domain.sentiment import SentimentResult
 from dhruva.shared.invariants import invariant
@@ -59,22 +58,18 @@ def _utc(value: datetime, *, field: str) -> None:
 def content_revision(item: NewsItem) -> str:
     """Hash the stored content of one item so a correction is a new revision.
 
-    Covers exactly what is persisted and could change: the link, the headline,
-    the snippet and the claimed publication time. It deliberately excludes
-    ``first_seen_at`` -- observing the same wording twice must produce the same
-    revision, or every poll would look like a correction.
+    Delegates to :func:`content_fingerprint`, which lives beside the
+    deduplication ledger because that ledger needs the same value: without it,
+    an edited article keeps its identifier and its link and is filed as a repeat
+    of itself. One implementation, so the row identity and the duplicate verdict
+    can never disagree about whether content changed.
     """
-    return hashlib.sha256(
-        "\x1f".join(
-            (
-                NEWS_IDENTITY_REVISION,
-                item.identity.url,
-                item.text.title,
-                item.text.snippet or "",
-                item.published_at.isoformat(),
-            )
-        ).encode()
-    ).hexdigest()
+    return content_fingerprint(
+        url=item.identity.url,
+        title=item.text.title,
+        snippet=item.text.snippet,
+        published_at=item.published_at,
+    )
 
 
 @dataclass(frozen=True, slots=True)

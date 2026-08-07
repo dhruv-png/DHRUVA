@@ -45,6 +45,7 @@ __all__ = [
     "NewsSourceTier",
     "PermittedText",
     "canonical_url",
+    "content_fingerprint",
     "normalise_headline",
     "significant_tokens",
 ]
@@ -289,7 +290,44 @@ class NewsFingerprints:
     url: str
     headline: str
     rewrite: str | None
+    #: Digest of the stored wording. It is what separates "this item again" from
+    #: "this item, corrected": a publisher editing an article in place keeps its
+    #: identifier, so only this key moves. Named for what it is -- the domain
+    #: holds no article content, and a field called ``content`` is how one
+    #: eventually arrives.
+    content_hash: str = ""
     revision: str = NEWS_IDENTITY_REVISION
+
+
+def content_fingerprint(
+    *,
+    url: str,
+    title: str,
+    snippet: str | None,
+    published_at: datetime,
+) -> str:
+    """Hash the stored content of one item so a correction is a new revision.
+
+    Covers exactly what is persisted and could change: the link, the headline,
+    the snippet and the claimed publication time. It deliberately excludes
+    ``first_seen_at`` -- observing the same wording twice must produce the same
+    revision, or every poll would look like a correction.
+
+    Defined here rather than beside the archive because deduplication needs it:
+    without a content key the ledger cannot tell a re-poll from an edit, and it
+    calls both a duplicate.
+    """
+    return hashlib.sha256(
+        "\x1f".join(
+            (
+                NEWS_IDENTITY_REVISION,
+                url,
+                title,
+                snippet or "",
+                published_at.isoformat(),
+            )
+        ).encode()
+    ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +375,12 @@ class NewsItem:
                 if len(tokens) >= MIN_REWRITE_TOKENS
                 else None
             ),
+            content_hash=content_fingerprint(
+                url=self.identity.url,
+                title=self.text.title,
+                snippet=self.text.snippet,
+                published_at=self.published_at,
+            ),
         )
 
 
@@ -377,8 +421,8 @@ class DeduplicationLedger:
 
     def __init__(self) -> None:
         """Start an empty ledger."""
-        self._by_identity: dict[str, NewsItemIdentity] = {}
-        self._by_url: dict[str, NewsItemIdentity] = {}
+        self._by_identity: dict[str, tuple[NewsItemIdentity, str]] = {}
+        self._by_url: dict[str, tuple[NewsItemIdentity, str]] = {}
         self._by_headline: dict[str, NewsItemIdentity] = {}
         self._by_rewrite: dict[str, NewsItemIdentity] = {}
         self._filings: dict[tuple[str, str], NewsItemIdentity] = {}
@@ -398,43 +442,77 @@ class DeduplicationLedger:
     def classify(self, item: NewsItem) -> DeduplicationDecision:
         """Decide whether an item repeats one already observed, without recording it."""
         keys = item.fingerprints
-        filing_key = (item.identity.source_key, keys.headline)
+        about_this_item = self._verdict_for_a_known_item(keys)
+        if about_this_item is not None:
+            return about_this_item
+        return self._verdict_from_text(item, keys)
 
-        original = self._by_identity.get(keys.identity)
-        if original is not None:
+    def _verdict_for_a_known_item(self, keys: NewsFingerprints) -> DeduplicationDecision | None:
+        """Answer for an item whose provider identifier has been seen before.
+
+        The identifier names the article, so the same identifier carrying
+        different wording is the publisher revising it. Calling that a duplicate
+        stores the correction and never analyses it, which leaves it in the
+        archive and invisible to every report -- the archive goes to the trouble
+        of keeping a correction as its own revision precisely so that it can be
+        read back at the right cutoff.
+
+        A correction returns here rather than falling through, because the link
+        rule below would otherwise catch it: the corrected article is of course
+        still at the same URL, and that rule exists to find the *same* story
+        published somewhere else.
+        """
+        seen = self._by_identity.get(keys.identity)
+        if seen is None:
+            return None
+        original, content_hash = seen
+        if content_hash == keys.content_hash:
             return _duplicate(
                 DeduplicationRule.PROVIDER_ITEM_ID,
                 original,
-                "the source has already delivered this item identifier",
+                "the source has already delivered this item identifier and wording",
             )
-        original = self._by_url.get(keys.url)
-        if original is not None:
+        return DeduplicationDecision(
+            is_duplicate=False,
+            rule=None,
+            original=None,
+            reason="a known identifier carrying changed wording is a correction, not a repeat",
+        )
+
+    def _verdict_from_text(
+        self,
+        item: NewsItem,
+        keys: NewsFingerprints,
+    ) -> DeduplicationDecision:
+        """Answer for an unknown item that may repeat somebody else's story."""
+        at_this_link = self._by_url.get(keys.url)
+        if at_this_link is not None:
             return _duplicate(
                 DeduplicationRule.CANONICAL_URL,
-                original,
+                at_this_link[0],
                 "the canonical link is already held",
             )
         if item.source.tier is NewsSourceTier.OFFICIAL_FILING:
-            original = self._filings.get(filing_key)
-            if original is not None:
+            filed = self._filings.get((item.identity.source_key, keys.headline))
+            if filed is not None:
                 return _duplicate(
                     DeduplicationRule.REPEATED_FILING,
-                    original,
+                    filed,
                     "the same filing headline was already published by this source today",
                 )
-        original = self._by_headline.get(keys.headline)
-        if original is not None:
+        headlined = self._by_headline.get(keys.headline)
+        if headlined is not None:
             return _duplicate(
                 DeduplicationRule.SYNDICATED_HEADLINE,
-                original,
+                headlined,
                 "an identical headline was published elsewhere on the same day",
             )
         if keys.rewrite is not None:
-            original = self._by_rewrite.get(keys.rewrite)
-            if original is not None:
+            rewritten = self._by_rewrite.get(keys.rewrite)
+            if rewritten is not None:
                 return _duplicate(
                     DeduplicationRule.REWRITTEN_HEADLINE,
-                    original,
+                    rewritten,
                     "the same significant words were published on the same day",
                 )
         return DeduplicationDecision(
@@ -447,8 +525,8 @@ class DeduplicationLedger:
     def _remember(self, item: NewsItem) -> None:
         """Index one new item under every key a later item may repeat."""
         keys = item.fingerprints
-        self._by_identity[keys.identity] = item.identity
-        self._by_url[keys.url] = item.identity
+        self._by_identity[keys.identity] = (item.identity, keys.content_hash)
+        self._by_url[keys.url] = (item.identity, keys.content_hash)
         self._by_headline.setdefault(keys.headline, item.identity)
         if item.source.tier is NewsSourceTier.OFFICIAL_FILING:
             self._filings.setdefault((item.identity.source_key, keys.headline), item.identity)
@@ -473,8 +551,8 @@ class DeduplicationLedger:
         for identity, keys in stored:
             if keys.revision != NEWS_IDENTITY_REVISION:
                 continue
-            self._by_identity.setdefault(keys.identity, identity)
-            self._by_url.setdefault(keys.url, identity)
+            self._by_identity.setdefault(keys.identity, (identity, keys.content_hash))
+            self._by_url.setdefault(keys.url, (identity, keys.content_hash))
             self._by_headline.setdefault(keys.headline, identity)
             self._filings.setdefault((identity.source_key, keys.headline), identity)
             if keys.rewrite is not None:

@@ -337,6 +337,7 @@ class NewsRepository:
                     url=model.fingerprint_url,
                     headline=model.fingerprint_headline,
                     rewrite=model.fingerprint_rewrite,
+                    content_hash=model.content_revision,
                     revision=model.identity_revision,
                 ),
             )

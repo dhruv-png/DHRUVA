@@ -30,6 +30,7 @@ pytestmark = pytest.mark.unit
 PUBLISHED = datetime(2026, 8, 3, 5, 30, tzinfo=UTC)
 NEXT_DAY = datetime(2026, 8, 4, 5, 30, tzinfo=UTC)
 ORDER_HEADLINE = "Hindustan Aeronautics bags order worth Rs 5,000 crore from Ministry"
+CORRECTED_ORDER_HEADLINE = "Hindustan Aeronautics bags order worth Rs 4,200 crore from Ministry"
 
 FILINGS = NewsSource(
     key="nse-announcements",
@@ -236,19 +237,84 @@ def test_a_headline_too_short_to_compare_declines_the_rewrite_key() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_same_provider_item_identifier_is_a_retry() -> None:
+def test_the_same_provider_item_identifier_and_wording_is_a_retry() -> None:
     """A polled feed redelivers; ingestion has to be safe to run as often as it likes."""
     ledger = DeduplicationLedger()
     first = _item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE)
 
     assert ledger.observe(first).is_duplicate is False
-    decision = ledger.observe(
-        _item(WIRE, "1", "https://wire-a.example/other", "A completely unrelated headline here")
-    )
+    decision = ledger.observe(_item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE))
 
     assert decision.is_duplicate
     assert decision.rule is DeduplicationRule.PROVIDER_ITEM_ID
     assert decision.original == first.identity
+
+
+def test_a_known_identifier_carrying_new_wording_is_a_correction() -> None:
+    """A publisher editing an article in place must not be filed as a repeat.
+
+    This narrows an earlier rule that treated *any* item bearing a seen
+    identifier as a duplicate. That rule made the archive incoherent: a
+    correction was stored as its own revision -- which is the whole point of
+    keeping revisions -- and simultaneously marked duplicate, so it was never
+    analysed and could never appear in a digest, an export or a backtest. The
+    correction was in the database and invisible to everything that reads it.
+
+    Narrowed rather than removed: an identical redelivery is still a duplicate,
+    which is what keeps a re-poll idempotent.
+    """
+    ledger = DeduplicationLedger()
+    original = _item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE)
+    ledger.observe(original)
+
+    corrected = ledger.observe(
+        _item(WIRE, "1", "https://wire-a.example/1", CORRECTED_ORDER_HEADLINE)
+    )
+
+    assert corrected.is_duplicate is False
+    assert corrected.rule is None
+    assert "correction" in corrected.reason
+
+
+def test_a_correction_is_not_then_caught_by_the_link_rule() -> None:
+    """The corrected article is of course still at the same URL.
+
+    The link rule exists to find the *same* story published somewhere else, so
+    letting a correction fall through to it would undo the narrowing above.
+    """
+    ledger = DeduplicationLedger()
+    ledger.observe(_item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE))
+
+    corrected = ledger.observe(
+        _item(WIRE, "1", "https://wire-a.example/1", CORRECTED_ORDER_HEADLINE)
+    )
+
+    assert corrected.rule is not DeduplicationRule.CANONICAL_URL
+    assert corrected.is_duplicate is False
+
+
+def test_a_second_provider_item_at_one_link_is_still_a_duplicate() -> None:
+    """One press release delivered twice under two identifiers is one article."""
+    ledger = DeduplicationLedger()
+    first = _item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE)
+    ledger.observe(first)
+
+    decision = ledger.observe(
+        _item(WIRE, "2", "https://wire-a.example/1", CORRECTED_ORDER_HEADLINE)
+    )
+
+    assert decision.is_duplicate
+    assert decision.rule is DeduplicationRule.CANONICAL_URL
+
+
+def test_the_content_hash_moves_only_when_the_stored_wording_moves() -> None:
+    """It is what tells a re-poll apart from an edit, so it must track wording."""
+    original = _item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE)
+    repolled = _item(WIRE, "1", "https://wire-a.example/1", ORDER_HEADLINE)
+    corrected = _item(WIRE, "1", "https://wire-a.example/1", CORRECTED_ORDER_HEADLINE)
+
+    assert original.fingerprints.content_hash == repolled.fingerprints.content_hash
+    assert original.fingerprints.content_hash != corrected.fingerprints.content_hash
 
 
 def test_the_same_canonical_link_is_one_article_shared_twice() -> None:
