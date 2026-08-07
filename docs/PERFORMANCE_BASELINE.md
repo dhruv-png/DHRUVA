@@ -668,6 +668,42 @@ renderer, with no schema change, no new dependency and no new statement. No
 budget adjusted, nothing optimised. All remain unverified on the authoritative
 Linux environment, which is where ADR-060 §1 says the question is settled.
 
+## E2 — canonical measurement (2026-08-07T14:54:19Z, commit `9efd37d`)
+
+Evidence: `docs/evidence/s04-20260807T145419Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` the only failure, informational under ADR-060 §2. Host
+port **55632** via `-ContainerPort`.
+
+Suite result: **4 failed, 23 passed, 2,710 deselected, 2 xfailed**.
+
+### Eight runs
+
+| Benchmark | Budget | 13:13Z 08-07 | 13:43Z 08-07 | **14:54Z 08-07** |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.007 ✓ | 1.456 ✓ | **0.867 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 2.859 ✓ | 3.029 ✗ | **4.030 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 28.661 ✗ | 5.031 ✗ | **5.329 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 72.3 ✓ | 72.6 ✓ | **74.0 ms** ✓ |
+| `money add` | 0.500 µs | 0.564 ✗ | 0.573 ✗ | **0.573 µs** ✗ |
+| `money mul` | 0.500 µs | 0.585 ✗ | 0.608 ✗ | **0.593 µs** ✗ |
+| 2000-day iteration | < 1000 µs | passed ✓ | 1038.1 ✗ | **passed** ✓ |
+
+The database query recorded its **best figure of the eight runs** at 0.867 ms in
+the same run the end-to-end read recorded one of its worst at 4.030 ms. Those
+two exercise the same pool against the same container, seconds apart.
+
+The range iteration passed, having failed at 1038.1 µs seventy minutes earlier —
+its sixth verdict change across eight runs, none of them following a code change
+that touches it.
+
+The write has now measured 5.031, 6.128, 28.661 and 5.329 ms across four runs of
+three commits, against a 5 ms budget. Two of those are within 7% of the
+threshold and one is 5.7× past it.
+
+Nothing in the commit under test touches these paths: the fix narrows a
+deduplication rule and adds a decimal formatter. No budget adjusted, nothing
+optimised, and all six remain unverified on the authoritative Linux environment.
+
 ---
 
 ## How to append

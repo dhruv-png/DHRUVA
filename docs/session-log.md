@@ -1258,3 +1258,48 @@ not touch. The 15 new PostgreSQL integration tests collect but could not run
 here.
 
 **Next.** Owner-side validation of the export slice.
+
+---
+
+## 2026-08-07 — snapshot correction fix validated
+
+**Done.** Commit `9efd37d` validated on Windows and pushed. Evidence:
+`docs/evidence/s04-20260807T145419Z/`, captured against that commit on `mvp-
+personal-swing-assistant`, host port 55632 supplied via `-ContainerPort` and
+recorded as such in both `01-environment.log` and `02-database-target.log`.
+
+Every gating stage passed. Ruff check clean and Ruff format **404 files
+already formatted**; strict mypy **no issues found in 385 source files**;
+import-linter **4 contracts kept, 0 broken**; boundaries and ADR guard OK;
+unit suite **2,704 passed, 5 skipped, 29 deselected, 1 XPASS in 104.41s**;
+every migration stage green with empty autogenerate drift; integration suite
+**305 passed, 2,433 deselected, 1 non-strict XPASS in 83.17s**. `GATING:
+PASS`, shell exit status 0.
+
+**Both defects are confirmed fixed against real PostgreSQL**, and the owner
+reports the research-snapshot, news-workflow and news-archive integration
+suites all passing — the last two mattering most, because the deduplication
+change sits on the ingestion path they cover. Specifically proven end to end:
+a correction is visible after its `first_seen_at`; an earlier cutoff still
+returns the prior revision; an identical redelivery is still idempotent; a
+same-link, changed-wording correction is no longer collapsed into a duplicate;
+decimal canonicalisation is exact and passes through no binary float; a
+database-scaled value and an equal in-memory value serialise identically; and
+the deterministic snapshot body and fingerprint contract survives all of it.
+
+That last pair is the point of the whole fix. Before it, a stored
+`100.00000000` and an in-memory `100` produced different JSON and therefore
+different fingerprints for the same state of knowledge, and a corrected
+headline was stored and then invisible to every reader. Neither was catchable
+by the unit suite, which only ever built values in memory and only ever
+ingested one version of an article.
+
+**Benchmarks failed and stay informational** under ADR-060 §2. The database
+query recorded its best figure of eight runs at 0.867 ms in the same run the
+end-to-end read recorded one of its worst at 4.030 ms, seconds apart against
+the same container. The 2000-day range iteration passed, having failed seventy
+minutes earlier — its sixth verdict change across eight runs. Nothing
+optimised, no budget adjusted; figures in `docs/PERFORMANCE_BASELINE.md`.
+
+**Next.** One operator command composing the pipeline into a daily workflow,
+after measuring whether stored daily-bar coverage can support it.

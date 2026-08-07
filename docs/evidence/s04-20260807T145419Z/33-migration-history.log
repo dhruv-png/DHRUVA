@@ -1,0 +1,803 @@
+﻿Rev: 0016_news_archive (head)
+Parent: 0015_daily_market_bars
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260803_1400_news_archive.py
+
+    Add the append-only point-in-time news archive.
+    
+    Revision ID: 0016_news_archive
+    Revises: 0015_daily_market_bars
+    Created: 2026-08-03
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0015_daily_market_bars` drops the three
+        news tables in dependency order. Export any collected news first: the
+        archive is prospective, so anything dropped cannot be re-fetched from a free
+        source later.
+    Irreversible operations: none
+    Expected runtime: sub-second on the initial empty tables.
+    Operational impact: three new empty global tables and their indexes are created.
+        No existing table is rewritten or locked.
+    
+    Design notes carried into the schema rather than left in a docstring:
+    
+      * Nothing here is ever updated. A correction arrives as a new row with a new
+        `content_revision` and its own `first_seen_at`, so a query asking what was
+        knowable at an earlier instant still reads the earlier wording (ADR-007).
+      * `first_seen_at >= published_at` is enforced by the database, because an item
+        observed before it was published is a clock defect, not a fact.
+      * The title and snippet length bounds are the licence control. A column that
+        cannot hold an article body will not be talked into holding one by an
+        adapter in a hurry, and enforcing it only in Python leaves it to whoever
+        writes the next script.
+      * The uniqueness of (source_key, provider_item_id, content_revision) is what
+        makes a re-poll idempotent: identical content computes an identical row and
+        is discarded, leaving the original observation timestamp in place.
+
+Rev: 0015_daily_market_bars
+Parent: 0014_instrument_archive
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_1300_daily_market_bars.py
+
+    Add point-in-time daily OHLCV revisions.
+    
+    Revision ID: 0015_daily_market_bars
+    Revises: 0014_instrument_archive
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0014_instrument_archive` removes the
+        daily bar revisions. Export any real history first if it has been collected.
+    Irreversible operations: none
+    Expected runtime: sub-second on the initial empty table.
+    Operational impact: one new empty global market-data table and two indexes are
+        created. Existing tables are not rewritten or locked. This append-only daily
+        table remains plain PostgreSQL; hypertable policies would add complexity
+        without value at the approved 50-symbol end-of-day scale.
+
+Rev: 0014_instrument_archive
+Parent: 0013_reference_watchlist
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_1200_instrument_master_archive.py
+
+    Archive daily instrument masters and resolved provider mappings.
+    
+    Revision ID: 0014_instrument_archive
+    Revises: 0013_reference_watchlist
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0013_reference_watchlist` removes only
+        archived provider snapshots, resolutions and contract mappings. Export any
+        real provider archives first if they have been collected.
+    Irreversible operations: none
+    Expected runtime: sub-second on the initial empty tables.
+    Operational impact: five new empty global reference tables and their indexes are
+        created. Existing tables are not rewritten. The archive is provider evidence,
+        not tenant-owned state, so no account RLS policy is added.
+
+Rev: 0013_reference_watchlist
+Parent: 0012_rls_scaffolding
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_1100_reference_watchlist.py
+
+    Add effective-dated instruments and the shared watchlist.
+    
+    Revision ID: 0013_reference_watchlist
+    Revises: 0012_rls_scaffolding
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0012_rls_scaffolding` removes the
+        watchlist membership, identity revisions and stable instrument identities.
+        Export owner configuration before rollback if rows beyond the committed
+        owner fixture have been entered.
+    Irreversible operations: none
+    Expected runtime: sub-second on the initial empty tables.
+    Operational impact: three new empty tables and their indexes are created. No
+        existing table is rewritten or locked. The account-owned membership table
+        receives the same permissive v1 RLS scaffold as other tenant tables.
+
+Rev: 0012_rls_scaffolding
+Parent: 0011_authorisation
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_1000_rls_scaffolding.py
+
+    Complete the permissive row-level-security scaffolding.
+    
+    Revision ID: 0012_rls_scaffolding
+    Revises: 0011_authorisation
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0011_authorisation` drops the
+        `daily_snapshot` policy and disables row-level security on that table. The
+        policy is permissive, so neither direction changes which rows deployed v1
+        application connections can observe.
+    Irreversible operations: none
+    Expected runtime: sub-second. Both statements are catalogue-only operations.
+    Operational impact: `ALTER TABLE` takes an ACCESS EXCLUSIVE lock briefly while
+        row-level security is enabled. No table rewrite or row lock occurs, and the
+        policy predicate remains `true` in the deployed v1 posture.
+    
+    Why only ``daily_snapshot`` changes here
+    ----------------------------------------
+    The S06 migrations already enrolled every tenant-owned identity, credential,
+    audit and authorisation table as each was created. ``daily_snapshot`` predates
+    ADR-074 and is the one non-null ``account_id`` table that remained unenrolled.
+    
+    ``outbox.account_id`` is deliberately not included. It is nullable provenance
+    on transport infrastructure, and system events are valid without an account.
+    Treating every nullable account reference as tenant ownership would make those
+    events unrepresentable and would contradict the envelope contract.
+
+Rev: 0011_authorisation
+Parent: 0010_principal
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_0900_authorisation.py
+
+    Roles, the permissions they grant, and which principal holds which (ADR-073).
+    
+    Revision ID: 0011_authorisation
+    Revises: 0010_principal
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0010_principal` drops the policies and the
+        three tables, children first. Every grant goes with them, so after a rollback
+        no principal holds any permission and -- because authorisation denies by
+        default -- every guarded operation refuses. That is the safe direction to
+        fail, but it is a total loss of authorisation state and every role must be
+        re-created and re-granted before anyone can place an order.
+    Irreversible operations: none structurally. The grant history above is lost with
+        the tables; the audit log records each grant and revoke as a configuration
+        change (ADR-071), so what was granted and by whom remains reconstructible
+        even though the live state does not.
+    Expected runtime: sub-second. Three CREATE TABLEs, all empty at creation, and no
+        lock on anything existing.
+    Operational impact: none on deployment. Nothing reads these tables until the
+        grant use cases are deployed against them. Note the direction of failure:
+        until a role is created and granted, every permission check answers no.
+    
+    Why three tables and not one
+    ---------------------------
+    ADR-073 fixes the vocabulary: authorisation is **role-based**, a role is a named
+    set of permissions, and a role acquires a permission "only by being granted it by
+    name". Each table is one of those nouns.
+    
+    `role` exists separately from `role_permission` so that **a role that grants
+    nothing is representable**. Collapsing the two -- inferring a role's existence
+    from having at least one permission -- would make the empty role unstorable, and
+    a deny-by-default system needs it: it is what a newly created operator holds
+    before anybody decides what they may do, and it is what a fully revoked operator
+    falls back to.
+    
+    `principal_role` carries `principal_id` as its **primary key**, which is how "one
+    role per principal" is enforced rather than merely intended. ADR-073's `Role` is
+    singular and carries one name; two rows per principal would make "which role does
+    this principal hold?" a question with two answers and no rule for combining them.
+    Widening that later is an additive migration; narrowing it after two rows exist
+    would mean choosing which grant to discard.
+    
+    Why `permission` is TEXT and not a PostgreSQL ENUM
+    --------------------------------------------------
+    The same reasoning `audit_log.action` records. The permission set will grow --
+    plan º15.1 names order placement and nothing else, and later subsystems add their
+    own -- and each growth would otherwise be an `ALTER TYPE`. The domain enum is the
+    authority on which values are permitted; a migration is not the place to also
+    enforce it, and a check constraint listing them would be a second list to keep in
+    step with the first.
+    
+    Why the foreign keys exist here when they do not elsewhere
+    -----------------------------------------------------------
+    `daily_snapshot`, `outbox`, `credential`, `audit_log` and `refresh_token` all
+    carry `account_id` as a bare UUID because there is no `account` table to point
+    at, and `refresh_token.principal_id` was left unconstrained to join that same
+    future sweep. These constraints are different: `role` exists, in this migration,
+    so an orphan `role_permission` is preventable now rather than later. A permission
+    granted to a role nobody defined is a grant no query would find and no revoke
+    would reach.
+    
+    `ON DELETE CASCADE` on both children, so deleting a role cannot leave grants
+    behind. Deleting a role is itself an audited configuration change; the cascade
+    makes it complete rather than partial.
+    
+    Why `granted_by` is stored on the grant
+    ----------------------------------------
+    The audit log records every grant (ADR-071, ADR-073), so this is the second copy.
+    It is kept because the two answer different questions: the audit log answers "what
+    happened, in order", and this column answers "who is responsible for the authority
+    this principal holds *right now*" -- which is the question asked while looking at
+    a live permission, without reconstructing history.
+    
+    Why a role is versioned, and an assignment binds principal plus tenant
+    -----------------------------------------------------------------------
+    Permissions are the mutable state of the role aggregate. ``version`` applies
+    ADR-057's optimistic-concurrency rule to that state, so two administrators
+    changing one role cannot silently overwrite each other.
+    
+    ``principal_role`` references both ``principal.id`` and
+    ``principal.account_id``. Referencing the id alone would prevent an orphan but
+    would still allow a principal from account A to be assigned a role from account
+    B by writing B into the assignment row. The composite key makes that
+    cross-tenant state unrepresentable, and ``ON DELETE CASCADE`` removes the live
+    assignment when its principal is removed.
+
+Rev: 0010_principal
+Parent: 0009_refresh_token
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260802_0800_principal.py
+
+    The authenticating principal: who logs in, and what proves it.
+    
+    Revision ID: 0010_principal
+    Revises: 0009_refresh_token
+    Created: 2026-08-02
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0009_refresh_token` drops the policy and
+        the table. Every operator's credentials and TOTP enrolment go with it, so
+        every principal must be re-created and re-enrolled before anyone can
+        authenticate again. Outstanding refresh tokens survive in their own table but
+        reference principals that no longer exist, so they should be revoked in the
+        same maintenance window.
+    Irreversible operations: none structurally. The credential loss above is a
+        consequence of the drop, and password hashes are one-way by construction --
+        they cannot be recovered from a backup of anything but this table.
+    Expected runtime: sub-second. CREATE TABLE takes no lock on anything existing,
+        and the table is empty at creation.
+    Operational impact: none on deployment. Nothing reads this table until the
+        authentication use case is deployed against it.
+    
+    Why a principal is not an account
+    ---------------------------------
+    `account_id` is a **tenant** (ADR-004); a principal is **who acted**. In a
+    single-operator deployment they are one-to-one, which is exactly why the
+    distinction has to be made in the schema now rather than discovered later: a
+    column that means "tenant" in seven tables and "human" in this one is not a
+    column anybody can query. ADR-072 already separates them -- `TokenClaims` carries
+    `subject` *and* `account_id` -- and this table is where that separation becomes
+    storage.
+    
+    `subject` is unique **globally**, not per account. Authentication is presented
+    with a subject and a password and nothing else; scoping uniqueness to an account
+    would make the lookup ambiguous at exactly the moment there is more than one.
+    
+    Why the password hash is a column and the TOTP secret is ciphertext
+    -------------------------------------------------------------------
+    They are different kinds of thing and the schema should not pretend otherwise.
+    
+    A password hash is **one-way**. Argon2's encoded form carries its own algorithm,
+    parameters and salt, and there is no operation that recovers the password from
+    it, so encrypting it would protect nothing that is not already protected and
+    would add a key-custody problem to a column that has none.
+    
+    A TOTP secret is **shared symmetric key material**: the server must be able to
+    recompute the same codes the operator's authenticator does, so it cannot be
+    hashed. That makes it exactly the kind of value ADR-070 exists for, and it is
+    stored the same way a broker credential is -- AES-256-GCM ciphertext plus a
+    wrapped data key, master key in process configuration, never in this table.
+    
+    The pair is constrained to be present or absent together. A row holding
+    ciphertext with no wrapped key is one whose TOTP secret can never be opened,
+    and it would be discovered at the worst moment: when somebody is trying to log
+    in.
+    
+    Why enrolment is derived rather than stored
+    -------------------------------------------
+    There is no `totp_enrolled` boolean. Enrolment *is* `totp_secret IS NOT NULL`,
+    and a second column asserting the same fact is a column that can disagree with
+    it. ADR-073 gates the order permission on enrolment, so the two disagreeing
+    would mean granting order placement to an account with no working second factor
+    -- which is the precise failure that ADR-073 exists to make structural.
+    
+    Why `version` and not append-only
+    ---------------------------------
+    Unlike `audit_log`, a principal is a mutable aggregate: passwords change, TOTP
+    gets enrolled, accounts get disabled. So ADR-057 applies in full, and the
+    `version` column is what lets two concurrent password changes fail loudly rather
+    than one silently overwriting the other.
+
+Rev: 0009_refresh_token
+Parent: 0008_audit_log
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260801_0700_refresh_token.py
+
+    Refresh tokens, stored as hashes and rotated on every use.
+    
+    Revision ID: 0009_refresh_token
+    Revises: 0008_audit_log
+    Created: 2026-08-01
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0008_audit_log` drops the policy and the
+        table. Every outstanding refresh token becomes unrecognisable, so every
+        session is effectively revoked and every operator re-authenticates. Access
+        tokens already issued keep working until they expire (ADR-072 makes them
+        stateless), so the window is bounded by their fifteen minutes.
+    Irreversible operations: none. The rows hold hashes, so there is nothing to
+        preserve that could be restored anyway.
+    Expected runtime: sub-second. CREATE TABLE takes no lock on anything existing.
+    Operational impact: none on deployment. Nothing reads or writes this table until
+        token issuance is deployed against it.
+    
+    Why the column is `token_hash` and never the token
+    --------------------------------------------------
+    ADR-033 forbids storing a presented secret recoverably, and a refresh token is
+    exactly that -- a bearer credential whose whole value is that holding it proves
+    identity. A stolen database of plaintext refresh tokens is a stolen set of
+    sessions. The table therefore stores a hash and compares hashes, which is why
+    `token_hash` is `BYTEA` rather than text: it holds a digest, not an encoding of
+    one, and nothing should be tempted to print it.
+    
+    Why rotation is a new row rather than an update
+    -----------------------------------------------
+    ADR-072: every successful refresh issues a new token and links the old row
+    through `replaced_by`. Updating the existing row in place would destroy the
+    evidence, and the evidence is the entire reuse-detection mechanism -- a token
+    that arrives already carrying `revoked_at` or `replaced_by` has been presented
+    twice, which means either a retry or a theft, and the system cannot tell which.
+    Treating it as theft is ADR-022's fail-closed posture applied to sessions.
+    
+    `parent_token_id` and `replaced_by` are deliberately both present, pointing in
+    opposite directions along the same chain. `replaced_by` answers "was this one
+    superseded?", which is the question reuse detection asks of the token in hand.
+    `parent_token_id` answers "what came before this?", which is what a forensic
+    reader walks after the fact.
+    
+    Why `lineage_id` exists as well
+    -------------------------------
+    Added when the token step was implemented, and the reason is worth stating
+    because the two link columns above look like they should already be enough.
+    
+    Once reuse is detected, ADR-072 requires the **entire lineage** to be revoked.
+    Derived from `parent_token_id` alone that is a recursive walk: up the chain to
+    find the root, then down again to catch every descendant. That query is at its
+    slowest exactly when it matters most -- a long-lived session that has rotated
+    hundreds of times is both the most valuable to a thief and the most expensive to
+    walk -- and it has to be correct while a second request may be rotating the same
+    chain. A column every token in a family carries makes revocation one statement
+    with one predicate against one index, and makes it idempotent under concurrency.
+    
+    The cost is one UUID per row and the obligation to carry it through rotation.
+    That is cheaper than a recursive CTE whose failure mode is a partially revoked
+    chain during an active compromise.
+    
+    Why `principal_id` as well as `account_id`
+    ------------------------------------------
+    `account_id` is the tenant (ADR-004); `principal_id` is **whose session this
+    is**. A refresh token naming only the account cannot answer "log this operator
+    out" in any deployment with two operators, and rotation would have no way to
+    check that the token being presented belongs to the principal it claims to.
+    Migration 0010 creates the table it refers to.
+    
+    Why no foreign keys
+    -------------------
+    There is no `account` table, and `daily_snapshot`, `outbox`, `credential` and
+    `audit_log` all carry `account_id` as a bare UUID for that reason. When accounts
+    are modelled, one migration adds the constraint to all of them together.
+    `principal_id` is left unconstrained in the same migration for consistency with
+    that sweep rather than being the single column that gets a foreign key early.
+    
+    Why `expires_at` is stored rather than derived
+    ----------------------------------------------
+    The refresh lifetime is configuration, and configuration changes. A row that
+    derived its expiry from the current setting would silently extend or shorten
+    every outstanding session the moment that setting moved. Storing it fixes each
+    token's lifetime at the moment it was issued.
+
+Rev: 0008_audit_log
+Parent: 0007_credential
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260801_0600_audit_log.py
+
+    The append-only audit log, with mutation refused by the database.
+    
+    Revision ID: 0008_audit_log
+    Revises: 0007_credential
+    Created: 2026-08-01
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0007_credential` drops the triggers, the
+        trigger function, the policy and the table, in that order. The audit history
+        goes with it -- and an audit trail that a rollback can erase is exactly the
+        property ADR-071 exists to deny, so this rollback is an incident in its own
+        right. Export the table before running it.
+    Irreversible operations: none structurally. The history loss above is a
+        consequence of the drop.
+    Expected runtime: sub-second. CREATE TABLE and CREATE TRIGGER take no lock on
+        anything existing, and the table is empty at creation.
+    Operational impact: none on deployment. Nothing writes to this table until the
+        audit recorder is deployed against it. Note that once it does, `UPDATE`,
+        `DELETE` and `TRUNCATE` will fail for every role including the owner -- that
+        is the point, but it means a correction is a compensating row, never an
+        edit, and that no cleanup job can ever empty this table.
+    
+    Why the columns are what they are
+    ---------------------------------
+    They are the fields ADR-071 names, and they match
+    `dhruva.contexts.platform.domain.audit.AuditRecord` one for one. This revision
+    was first written with a different shape -- `actor_id UUID`, a
+    `resource_type`/`resource_id` pair, a `metadata JSONB` catch-all, a nullable
+    `account_id`, and no correlation id at all -- which disagreed with both the ADR
+    and the domain object in four ways at once. It is corrected here in place rather
+    than by a follow-up expand migration: this revision has never been applied
+    outside a test container, so there is no data the expand/contract discipline of
+    ADR-055 would be protecting, and shipping the wrong table plus a correction
+    would leave four columns nothing writes to and which ADR-071 then forbids
+    dropping.
+    
+    Two of those differences were not cosmetic. `correlation_id` is required by
+    ADR-071 and is what joins an audit entry to the log lines and outbox rows of the
+    same request -- without it the log answers "what happened" but never "what else
+    happened at the same time". And `metadata JSONB` was a free-form field in the
+    one table that must never hold a secret: the domain module argues the case at
+    length, ADR-037's redaction strategies cannot help a value that was deliberately
+    stored, and a column that exists will eventually be filled.
+    
+    `account_id` is NOT NULL because ADR-004 says every domain table carries one and
+    ADR-071 repeats it. A platform-level action with no tenant is recorded against
+    the account it was performed under; if a future action genuinely has none, that
+    is a plan-level question about what an untenanted action even is, not a nullable
+    column added quietly.
+    
+    Why a trigger rather than revoked grants
+    ----------------------------------------
+    ADR-071 requires that the *database* enforce append-only, not the application.
+    Revoking `UPDATE` and `DELETE` from the application role would leave the table
+    owner and any superuser able to rewrite history, and the owner is who the
+    application connects as today. A `BEFORE` trigger refuses the operation
+    regardless of role, which is the only form of the guarantee that survives
+    someone connecting with psql at 09:20 to "just fix one row".
+    
+    The trigger raises rather than returning NULL. Returning NULL from a `BEFORE`
+    trigger silently skips the row, which would make an attempted deletion look like
+    a successful one -- the same class of failure as an empty `downgrade()`.
+    
+    Why `TRUNCATE` is guarded too
+    -----------------------------
+    ADR-071 names `UPDATE` and `DELETE`, and row-level triggers do not fire on
+    `TRUNCATE` -- so a table guarded against only those two can still be emptied in
+    one statement by anyone who can reach it. That is the same erasure the ADR
+    forbids, reached by a different verb, and "indefinite and immutable" retention
+    (plan º12) does not survive it. A statement-level `BEFORE TRUNCATE` trigger
+    closes it, using the same function so the three refusals cannot drift apart.
+    
+    The consequence is real and accepted: this table can never be emptied, including
+    by a test harness. Integration tests against it therefore run inside the
+    rolled-back `session` fixture rather than `committed_session`, and `audit_log`
+    is deliberately absent from the harness's TRUNCATE list.
+    
+    Why `recorded_at` is separate from `occurred_at`
+    ------------------------------------------------
+    `occurred_at` is when the action happened; `recorded_at` is when this row was
+    written. They differ whenever recording is deferred or replayed, and a log that
+    conflates them cannot answer "was this backdated?". ADR-006: both are timezone
+    aware, and nothing in this schema accepts a naive timestamp. The check
+    constraint re-asserts the domain's ordering invariant at the database, so a row
+    arriving by any other route -- a repair script, a bulk load -- is still refused.
+    
+    Why there is no `version` column
+    --------------------------------
+    Every other table carries one for optimistic concurrency (ADR-057). This one
+    cannot use it: a version column exists to make `UPDATE ... WHERE version = ?`
+    detect a lost update, and there is no `UPDATE` here to protect. Adding one would
+    imply an update path that the triggers above make impossible.
+    
+    Why the four indexes
+    --------------------
+    `account_id` because every tenant-scoped read filters on it and RLS will too;
+    `occurred_at` because the log is read as a time range far more often than by id;
+    `action` because "every CREDENTIAL_READ this week" is the question this table
+    exists to answer; `correlation_id` because joining an audit entry to the request
+    that caused it is the reason that column is carried at all. No composite index
+    yet -- adding one is cheap and guessing the leading column before there is a
+    query plan is not.
+
+Rev: 0007_credential
+Parent: 0006_processed_event
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260801_0500_credential.py
+
+    The encrypted broker credential store.
+    
+    Revision ID: 0007_credential
+    Revises: 0006_processed_event
+    Created: 2026-08-01
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0006_processed_event` drops the policy,
+        then the table. Every stored broker credential goes with it, and because the
+        plaintexts exist nowhere else (ADR-070), they are gone -- re-authenticating
+        against each broker is the only recovery. This is a rollback to perform with
+        the trading session stopped and the credentials re-enterable.
+    Irreversible operations: none structurally. The data loss above is a
+        consequence of the drop, not of an unreversible DDL step.
+    Expected runtime: sub-second. CREATE TABLE takes no lock on anything existing,
+        and the table is empty at creation.
+    Operational impact: none on deployment. Nothing reads or writes this table until
+        the credential store is deployed against it. Enabling row-level security
+        changes no behaviour today -- see the note below on why.
+    
+    Why `(account_id, broker)` is unique rather than a named slot
+    -------------------------------------------------------------
+    One credential per broker per account, decided at Design Review. A named-slot
+    model -- several credentials per broker distinguished by a label -- is the
+    shape needed for key rotation with overlap, and for a second API key used by a
+    different strategy. Neither exists in v1, and the constraint is the cheaper
+    thing to relax later: dropping a unique constraint is a migration that cannot
+    lose data, whereas discovering that two rows silently collided is not.
+    
+    Why `account_id` carries no foreign key
+    ---------------------------------------
+    There is no `account` table in this database. `daily_snapshot` and `outbox`
+    already carry `account_id` as a bare UUID for the same reason, and this follows
+    that precedent rather than introducing an accounts table that no subsystem owns
+    yet. When accounts are modelled, one migration adds the constraint to all of
+    them together. Recorded because "FK" was the instruction and this is a
+    deliberate departure from it, not an oversight.
+    
+    Why `key_version` exists before anything rotates
+    ------------------------------------------------
+    ADR-070 makes master-key rotation a re-wrap of N data keys rather than a rewrite
+    of N ciphertexts, and TD-S06-4 defers the rotation job itself to S42. The job
+    needs to know which rows are still wrapped under the previous master key, and a
+    column added later would need a backfill over rows whose correct value nobody
+    can reconstruct. Cheap now, impossible later.
+    
+    Why `version` exists, and why it is not `key_version`
+    -----------------------------------------------------
+    ADR-057: *every aggregate carries a `version` column*, and updates execute
+    `UPDATE ... WHERE id = :id AND version = :loaded_version` so that a lost update
+    raises rather than being overwritten. A credential is an aggregate -- it is
+    loaded, its secret is re-sealed on rotation, and it is stored again -- so the
+    rule applies to it.
+    
+    The first draft of this migration omitted the column. That was a defect against
+    an accepted ADR rather than a deliberate exception: without it the repository's
+    `update()` cannot make the promise the `Repository` protocol publishes, and two
+    concurrent rotations would silently leave one credential wrapped under a key
+    nobody recorded. Corrected here rather than in a follow-up migration because
+    this one has not been committed, let alone released -- ADR-051 fixes release
+    tags, not unmerged revisions.
+    
+    `key_version` is a different counter and the two are deliberately not merged.
+    `key_version` records *which master key* wrapped this row's data key, and S42's
+    rotation job is what moves it. `version` records *how many times this row has
+    been written*, and any writer moves it. A rotation bumps both; an ordinary
+    secret update bumps only `version`.
+    
+    Why row-level security changes nothing yet
+    ------------------------------------------
+    ADR-074: policies are authored for every table carrying `account_id`, and stay
+    **permissive in v1** exactly as ADR-004 says. The policy below admits every row.
+    It exists so that activation is a policy replacement rather than a schema
+    change, and so the restrictive form can be exercised against real PostgreSQL
+    before anyone depends on it.
+    
+    Two things make this genuinely inert today. The policy predicate is `true`, and
+    the application connects as the table's owner -- and an owner bypasses RLS
+    unless the table is set to `FORCE ROW LEVEL SECURITY`, which it deliberately is
+    not. A test that proves the restrictive form bites must therefore both install
+    the restrictive predicate and force it, inside a transaction it rolls back.
+
+Rev: 0006_processed_event
+Parent: 0005_outbox_aggregate_type
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260731_0400_processed_event.py
+
+    The consumer idempotency ledger.
+    
+    Revision ID: 0006_processed_event
+    Revises: 0005_outbox_aggregate_type
+    Created: 2026-07-31
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0005_outbox_aggregate_type` drops the
+        table. Every consumer's record of what it has already processed goes with
+        it, so the first delivery after a rollback is treated as new -- consumers
+        would reprocess whatever the transport still holds. Stated rather than
+        assumed: this is a rollback to perform with the consumers stopped.
+    Irreversible operations: none structurally; see the note above on data.
+    Expected runtime: sub-second. CREATE TABLE takes no lock on anything existing.
+    Operational impact: none. Nothing reads or writes this table until a consumer
+        is deployed against it.
+    
+    Why the primary key is a triple
+    -------------------------------
+    ADR-065. `(consumer_group, event_id, run_id)`, and each element earns its place.
+    
+    `consumer_group`, because risk and reporting are separate consumers of the same
+    event and each must process it once. Keyed on `event_id` alone, whichever
+    consumer arrived first would silently suppress the other.
+    
+    `event_id`, because that is the identity the producer stamped once and every
+    redelivery carries unchanged (ADR-061).
+    
+    `run_id`, because of replay. Keyed only by `(consumer_group, event_id)`, a
+    backtest replaying the same history a second time would find every row already
+    present and process nothing -- reporting zero trades. A zero that looks like a
+    result is worse than an error, because nobody investigates it.
+    
+    Why there is no unique index instead
+    ------------------------------------
+    The primary key *is* the deduplication mechanism, not a guard on one. The
+    consumer inserts its ledger row inside the same transaction as its side effects,
+    so a duplicate raises a unique violation, the whole unit of work rolls back, and
+    the side effect does not happen twice. A check-then-insert would race; a
+    `ON CONFLICT DO NOTHING` would swallow the signal the consumer needs.
+    
+    Why `processed_at` is indexed
+    -----------------------------
+    Retention. ADR-065 prunes rows after thirty days, and a scheduled delete over an
+    unindexed timestamp on a table that grows with event volume is a sequential scan
+    that gets slower every day it runs.
+
+Rev: 0005_outbox_aggregate_type
+Parent: 0004_outbox_lease
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260729_0300_outbox_aggregate_type.py
+
+    Store the aggregate type on the outbox.
+    
+    Revision ID: 0005_outbox_aggregate_type
+    Revises: 0004_outbox_lease
+    Created: 2026-07-29
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0004_outbox_lease` drops the column. The
+        aggregate type of already-emitted events is then unrecoverable from this
+        table, which is stated rather than assumed -- it cannot be re-derived, and
+        that is precisely why the column exists.
+    Irreversible operations: none structurally; see the note above on data.
+    Expected runtime: sub-second. ADD COLUMN without NOT NULL does not rewrite the
+        table on PostgreSQL 11+.
+    Operational impact: brief ACCESS EXCLUSIVE for the catalogue update. Safe during
+        market hours.
+    
+    Why this column rather than a derivation
+    ----------------------------------------
+    ADR-061 puts `aggregate_type` on the envelope and ADR-062 makes it the routing
+    key: events are delivered per aggregate, and a stream is chosen by aggregate
+    type. The relay had no column to read it from, and the tempting fix was to derive
+    one from the event type's namespace.
+    
+    That would be wrong in a way that is expensive and quiet. A derived type routes
+    events to a stream named after a guess, so two aggregates whose event types
+    happen to share a prefix would interleave on one stream while a consumer believed
+    it was reading one aggregate's ordered history. Per-aggregate ordering would still
+    *appear* to hold in every test that used a single aggregate.
+    
+    A value that determines routing is a value the producer must state, not one the
+    infrastructure infers. Nullable during expand (ADR-055); the contract step making
+    it NOT NULL is TD-S05-7, alongside the three columns from migration 0003.
+
+Rev: 0004_outbox_lease
+Parent: 0003_outbox_envelope
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260729_0200_outbox_lease_columns.py
+
+    Lease and dead-letter columns for the outbox relay.
+    
+    Revision ID: 0004_outbox_lease
+    Revises: 0003_outbox_envelope
+    Created: 2026-07-29
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0003_outbox_envelope` drops the three
+        columns and the partial index. Any lease held at that moment is forgotten,
+        which is harmless: a lease is a short-lived reservation, not state anybody
+        depends on. A row that was dead-lettered becomes claimable again, which is
+        stated rather than assumed -- downgrade only where re-delivering
+        dead-lettered events is acceptable.
+    Irreversible operations: none structurally; see the note above on dead letters.
+    Expected runtime: sub-second. ADD COLUMN without NOT NULL does not rewrite the
+        table on PostgreSQL 11+, and the index is partial and on an empty predicate
+        for existing rows.
+    Operational impact: brief ACCESS EXCLUSIVE for the catalogue update. Safe during
+        market hours.
+    
+    Why leases rather than held locks
+    ---------------------------------
+    `FOR UPDATE SKIP LOCKED` stops two relays claiming one row, but holding that lock
+    across a publish would turn broker latency into lock contention -- a slow broker
+    would stall every other relay. So the claim transaction stamps `claimed_at` and
+    `claimed_by` and commits, reserving the row without anyone holding a database
+    lock while waiting on a network (ADR-063).
+    
+    The trade is a new failure mode, and it is deliberate: a relay that dies
+    mid-publish leaves rows invisible until the lease expires. That is a latency
+    cliff rather than a loss, and the lease is short.
+    
+    Why dead letters stay in this table
+    -----------------------------------
+    ADR-064 puts the dead-letter queue in PostgreSQL rather than Redis, because a
+    queue a FLUSHALL can erase is the worst possible home for exactly the events that
+    need a human. Keeping them here rather than in a second table means a
+    dead-lettered event keeps its identity, its attempt history and its last error in
+    one place, and `dead_lettered_at IS NOT NULL` is the whole query.
+
+Rev: 0003_outbox_envelope
+Parent: 0002_example_tick
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260729_0100_outbox_envelope_columns.py
+
+    Complete the ADR-002 envelope on the outbox table.
+    
+    Revision ID: 0003_outbox_envelope
+    Revises: 0002_example_tick
+    Created: 2026-07-29
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0002_example_tick` drops the three
+        columns. Any correlation or causation data recorded in them is destroyed,
+        which is stated rather than assumed: the rows themselves survive, but their
+        causal chain does not. Downgrade only where that loss is acceptable.
+    Irreversible operations: none structurally; see the note above on data.
+    Expected runtime: sub-second. `ADD COLUMN` with no default and no NOT NULL does
+        not rewrite the table on PostgreSQL 11+.
+    Operational impact: ACCESS EXCLUSIVE lock held only for the catalogue update, so
+        the pause is measured in milliseconds. Safe during market hours.
+    
+    Why this migration exists
+    -------------------------
+    ADR-002 fixed the event envelope in Phase 0 as nine fields. The table S04 created
+    carries six of them: `event_version`, `correlation_id` and `causation_id` were
+    never added. The outbox as built could not satisfy ADR-002, which means the
+    platform could not have produced a compliant envelope even once a relay existed.
+    
+    Why the columns are nullable here
+    ---------------------------------
+    Expand/contract (ADR-055). Existing rows have no value for any of the three and
+    inventing one would be fabricating provenance. New writers populate them; a later
+    contract migration adds NOT NULL once no writer omits them, and that step is
+    recorded as TD-S05-7 rather than left to memory.
+    
+    `event_version` takes a server default of 1 because every event already written
+    is, by definition, version 1 of its schema -- that is a statement of fact rather
+    than a guess. `correlation_id` and `causation_id` take no default: a fabricated
+    correlation is worse than an absent one, because it asserts a relationship that
+    was never observed.
+
+Rev: 0002_example_tick
+Parent: 0001_initial
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260729_0000_example_tick_timeseries.py
+
+    The append-only timeseries worked example (ADR-054).
+    
+    Revision ID: 0002_example_tick
+    Revises: 0001_initial
+    Created: 2026-07-29
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0001_initial` drops the table and its
+        index. The table is append-only and holds observations rather than records
+        of decisions, so destroying it destroys no state any aggregate depends on --
+        which is why this downgrade is complete rather than merely structural.
+    Irreversible operations: none
+    Expected runtime: sub-second. The table is created empty and nothing existing is
+        altered.
+    Operational impact: no locks on existing objects. Safe during market hours.
+    
+    Why a second migration rather than an edit to 0001
+    --------------------------------------------------
+    0001 has been applied. Editing an applied migration makes the schema a function
+    of when you happened to run it (ADR-055), so this arrives as its own expand-only
+    step.
+    
+    Why no hypertable here
+    ----------------------
+    `create_hypertable` requires the TimescaleDB extension, and making the DDL
+    conditional on its presence would make the schema differ between environments --
+    which the drift check would then report as drift on whichever environment lost
+    the coin toss. This table exists to exercise the ORM-bypass *write path*, which
+    is plain PostgreSQL. Hypertable DDL arrives with the real tick table in S10,
+    where the retention and compression policies that justify it are also decided.
+
+Rev: 0001_initial
+Parent: <base>
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260726_0000_initial_schema.py
+
+    Initial schema: the worked example table and the transactional outbox.
+    
+    Revision ID: 0001_initial
+    Revises:
+    Created: 2026-07-26
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade base` drops both tables. No data
+        migration is involved, so the downgrade is complete -- it destroys the rows
+        along with the tables, which is expected for an initial schema and is stated
+        here rather than assumed.
+    Irreversible operations: none
+    Expected runtime: sub-second on any data volume; both tables are created empty.
+    Operational impact: no locks on existing objects, since nothing exists yet. Safe
+        to run at any time, including during market hours.
+
+exit_code: 0
