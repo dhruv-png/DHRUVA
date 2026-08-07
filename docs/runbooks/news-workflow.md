@@ -1,8 +1,8 @@
-# Runbook — News Workflow (`dhruva-news`)
+# Runbook — News Workflow (`dhruva-news`, `dhruva-digest`)
 
 Covers: polling GDELT for news about the approved watchlist, reading the
-point-in-time archive back, the configuration both commands read, and what each
-exit status means.
+point-in-time archive back, the watchlist digest composed from it, the
+configuration these commands read, and what each exit status means.
 
 > **NSE filings and exchange announcements are not an input to DHRUVA.**
 > Automated NSE ingestion is deferred in full pending prior written permission
@@ -210,3 +210,69 @@ field handling rests on hand-constructed fixtures written against GDELT's
 published field names. `scripts/gdelt_smoke_test.py --save-fixture out.json`
 captures a real response when one gets through; sanitising it and replacing the
 synthetic fixtures is the outstanding work.
+
+---
+
+## The watchlist digest (`dhruva-digest`)
+
+```powershell
+# What changed for the whole watchlist, right now?
+uv run --project backend dhruva-digest --account acct_<uuid>
+
+# What did we know about two instruments at a specific instant?
+uv run --project backend dhruva-digest --account acct_<uuid> `
+  --symbol SBIN --symbol HAL --as-of 2026-08-06T14:20:00+00:00 --days 3
+```
+
+**It reaches no network at all.** The digest is composed entirely from what
+earlier `dhruva-news poll` runs already stored, so it works with the provider
+unreachable, rate-limited, or simply not run today. It is also read-only: it
+opens one transaction, reads, prints and exits.
+
+**It reports; it does not advise.** Nothing in the output is a signal, a score,
+a target or a recommendation, and the disclaimer at the top says so. The
+categories, sentiments and instrument links were all decided by deterministic
+rulesets at ingestion time and are printed back unchanged — the digest never
+re-reads a headline, so it cannot disagree with the archive it summarises.
+
+### How it is ordered
+
+Both orderings are borrowed from rules that already exist rather than invented
+here.
+
+- **Between instruments**: by the most significant event stored about each one,
+  using the event classifier's own rule order — "what a reader must not miss
+  comes before what merely describes". So a governance finding outranks an order
+  win. Instruments with nothing archived sort last, then alphabetically.
+- **Within an instrument**: the same precedence, then newest first.
+
+A `*` marks an entry the classifier gave a *specific* category.
+`GENERAL_COMMENTARY` and `UNKNOWN` are unmarked, because counting commentary as
+a finding would make every instrument look eventful.
+
+### What it will not hide
+
+Every watchlist instrument gets a section, including the silent ones — a missing
+section is indistinguishable from a lost one, and "nothing happened" is the
+usual answer. A section that has more items than it shows says how many it
+withheld. An ambiguous instrument link is shown and marked rather than dropped.
+Sentiment is **tallied, never averaged**: the mean of POSITIVE and NEGATIVE is
+NEUTRAL, which is the one thing a split verdict does not mean.
+
+An unknown `--symbol` is refused with the list of approved symbols, because a
+typo would otherwise produce a confident, empty and entirely truthful-looking
+report about an instrument DHRUVA does not follow.
+
+### Options
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--account` | required | Account the read is attributed to |
+| `--as-of` | now | ISO-8601 knowledge cutoff |
+| `--days` | `DHRUVA_NEWS__LOOKBACK_DAYS` (7) | Publication window before the cutoff |
+| `--symbol` | whole watchlist | Canonical symbol; repeatable |
+| `--max-items` | 5 | Items shown per instrument, 1–50 |
+
+Exit `0` on success, including a completely quiet window — a runbook that
+treated a quiet day as a failure would be red more often than not. Exit `2` for
+input the command refuses.

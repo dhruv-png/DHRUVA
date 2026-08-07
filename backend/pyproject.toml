@@ -88,6 +88,9 @@ dhruva-dlq = "dhruva.workers.dlq:main"
 # Also a composition root: it builds an engine and an HTTP client from settings.
 # Read-only against the provider, and it never fetches an article body.
 dhruva-news = "dhruva.workers.news:main"
+# Read-only, and the only operator command that reaches no network at all: the
+# digest is composed entirely from what earlier polls already stored.
+dhruva-digest = "dhruva.workers.digest:main"
 
 [dependency-groups]
 dev = [

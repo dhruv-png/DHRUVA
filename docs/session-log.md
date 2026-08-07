@@ -991,3 +991,69 @@ minutes. Treated as informational, nothing optimised, no budget touched. Figures
 in `docs/PERFORMANCE_BASELINE.md`.
 
 **Next.** A read-only point-in-time watchlist digest over the archive.
+
+---
+
+## 2026-08-07 — a read-only watchlist digest
+
+**Done.** `dhruva-digest` answers "what materially changed for my tracked
+instruments as of this timestamp?" from what earlier polls already stored. One
+section per watchlist instrument, an explicit cutoff, and **no network call on
+this path at all** — the digest works with the provider unreachable,
+rate-limited, or simply not run today. No migration, no new column, no new
+dependency, no scheduler, no dashboard.
+
+**Decided: it borrows both of its orderings rather than inventing one.** The
+event classifier's rule order is already a statement about significance — "what
+a reader must not miss comes before what merely describes" — so that order,
+exposed as `event_precedence`, ranks entries within an instrument and ranks
+instruments against each other. A governance finding outranks an order win
+because the classifier already said so. Writing a second importance scale here
+would eventually disagree with the first, and there would be no way to tell
+which one was wrong.
+
+**It recomputes nothing.** Every category, sentiment verdict and instrument link
+comes back exactly as some earlier ingestion wrote it. The digest never re-reads
+a headline, which is precisely what makes it incapable of disagreeing with the
+archive it claims to summarise.
+
+**One read, not twenty.** The archive is queried once over the whole window with
+no symbol filter and grouped in memory. Per-instrument queries would issue
+twenty statements to answer one question and — worse — let two instruments see
+different snapshots of a table that is still being appended to. The `limit` that
+exists on the underlying read is deliberately *not* used: truncating the window
+before grouping would make whichever instruments sorted last look quiet. The
+bound belongs on what each section shows, which is where the domain applies it.
+
+**What it refuses to hide.** Every instrument gets a section, including the
+silent ones, because a missing section is indistinguishable from a lost one
+and "nothing happened" is the usual answer. A truncated section reports how
+many items it withheld. An ambiguous instrument link is shown and marked.
+Sentiment is tallied and never averaged — the mean of POSITIVE and NEGATIVE is
+NEUTRAL, which is the one thing a split verdict does not mean. An unknown
+`--symbol` is refused with the list of approved symbols, because a typo would
+otherwise produce a confident, empty and entirely truthful-looking report
+about an instrument DHRUVA does not follow.
+
+**It reports and does not advise.** A tool that ranks instruments and highlights
+findings is one careless sentence from reading as a recommendation. The
+disclaimer states that the ordering is the classifier's precedence and not a
+view on the instruments, and a test scans DHRUVA's own framing for advice verbs.
+Quoted headlines are deliberately out of that scope: they are third-party text
+shown with attribution and a link, and censoring a publisher's words would
+misrepresent the source.
+
+**Tested against the real rulesets.** The digest tests run the actual event
+classifier, sentiment baseline and entity linker over real headlines rather than
+arranging verdicts by hand — hand-labelled fixtures would let the tests pass
+while the digest disagreed with the archive. The ordering assertions were
+checked against printed classifier output to confirm they are not vacuous:
+`FRAUD_GOVERNANCE` really does outrank `ORDER_WIN`.
+
+**Validated.** Ruff lint and format clean; strict mypy clean on all five new
+modules and all three new test files; import-linter 4 contracts kept; boundary
+checker and ADR guard OK; **439 focused tests pass**, stable across three random
+orderings. The 8 new PostgreSQL integration tests collect but could not run —
+no container runtime here, so the database-backed evidence needs a Windows run.
+
+**Next.** Owner-side canonical validation of the digest slice.

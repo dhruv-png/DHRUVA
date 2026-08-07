@@ -14,6 +14,14 @@ from dhruva.contexts.intelligence.domain.archive import (
     NewsRevision,
     content_revision,
 )
+from dhruva.contexts.intelligence.domain.digest import (
+    DIGEST_REVISION,
+    MAX_ITEMS_PER_INSTRUMENT,
+    DigestEntry,
+    DigestSection,
+    WatchlistDigest,
+    build_digest,
+)
 from dhruva.contexts.intelligence.domain.entity_linking import (
     ENTITY_LINKING_REVISION,
     FORMER_NAME_GRACE,
@@ -30,6 +38,7 @@ from dhruva.contexts.intelligence.domain.events import (
     EventCategory,
     EventClassification,
     classify_event,
+    event_precedence,
 )
 from dhruva.contexts.intelligence.domain.news import (
     NEWS_IDENTITY_REVISION,
@@ -78,10 +87,12 @@ from dhruva.contexts.intelligence.domain.sources import (
 
 __all__ = [
     "DEFAULT_BATCH_SIZE",
+    "DIGEST_REVISION",
     "ENTITY_LINKING_REVISION",
     "EVENT_CLASSIFICATION_REVISION",
     "FORMER_NAME_GRACE",
     "MAX_BATCH_SIZE",
+    "MAX_ITEMS_PER_INSTRUMENT",
     "MAX_PHRASES_PER_INSTRUMENT",
     "MAX_PHRASE_CHARACTERS",
     "MIN_BATCH_SIZE",
@@ -94,6 +105,8 @@ __all__ = [
     "DeduplicationDecision",
     "DeduplicationLedger",
     "DeduplicationRule",
+    "DigestEntry",
+    "DigestSection",
     "EntityLinkResult",
     "EntityMatch",
     "EventCategory",
@@ -124,10 +137,13 @@ __all__ = [
     "SourceHealth",
     "SourceStatus",
     "UnqueryableInstrument",
+    "WatchlistDigest",
+    "build_digest",
     "canonical_url",
     "classify_event",
     "content_revision",
     "evaluate_sentiment",
+    "event_precedence",
     "link_entities",
     "normalise_headline",
     "plan_search_phrases",

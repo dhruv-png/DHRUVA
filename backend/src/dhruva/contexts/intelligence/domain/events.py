@@ -24,6 +24,7 @@ __all__ = [
     "EventCategory",
     "EventClassification",
     "classify_event",
+    "event_precedence",
 ]
 
 #: Ruleset identity recorded on every classification.
@@ -330,3 +331,23 @@ def classify_event(text: str) -> EventClassification:
         matched_phrase=None,
         reason="no bounded event phrase matched",
     )
+
+
+def event_precedence(category: EventCategory) -> int:
+    """Return how early this category is considered, lowest first.
+
+    The rule order above is already a statement about what matters: "what a
+    reader must not miss comes before what merely describes". Anything that
+    needs to rank events by importance reads that order rather than inventing a
+    second one, so a change of policy happens in one place and cannot leave two
+    parts of the system disagreeing about whether fraud outranks a product
+    launch.
+
+    Categories that no rule produces sort last, which is correct for both of
+    them: ``GENERAL_COMMENTARY`` is what the classifier says when nothing
+    specific matched, and ``UNKNOWN`` is what it says when it declined to look.
+    """
+    for position, (candidate, _) in enumerate(_RULES):
+        if candidate is category:
+            return position
+    return len(_RULES)

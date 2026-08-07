@@ -21,9 +21,15 @@ from dhruva.contexts.intelligence.application.news_polling import (
     PollNewsFeedsResult,
 )
 from dhruva.contexts.intelligence.application.universe import linkable_universe
+from dhruva.contexts.intelligence.application.watchlist_digest import (
+    BuildWatchlistDigest,
+    BuildWatchlistDigestQuery,
+)
 
 __all__ = [
     "BatchOutcome",
+    "BuildWatchlistDigest",
+    "BuildWatchlistDigestQuery",
     "GetArchivedNews",
     "GetArchivedNewsQuery",
     "IngestNewsItems",
