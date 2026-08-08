@@ -29,18 +29,31 @@ if TYPE_CHECKING:
     from dhruva.contexts.intelligence.domain.entity_linking import LinkableInstrument
 
 __all__ = [
+    "BRIEF_TOP_CEILING",
+    "BRIEF_TOP_DEFAULT",
     "MAX_ITEMS_CEILING",
     "parse_account",
     "parse_cutoff",
     "parse_max_items",
     "parse_sessions",
+    "parse_top",
     "parse_window",
     "select_instruments",
+    "validate_brief_options",
 ]
 
 #: Items one section may show. A digest is something a person reads; past this
 #: it is a dump, and a dump is what the export exists for.
 MAX_ITEMS_CEILING = 50
+
+#: Instruments a brief shows by default. Small enough to read in one glance;
+#: an owner who wants more says so explicitly with --top.
+BRIEF_TOP_DEFAULT = 5
+
+#: The largest --top a brief accepts. A brief exists to be short; past this
+#: many entries it is the digest again, and --ranked already reports all of
+#: them.
+BRIEF_TOP_CEILING = 20
 
 #: A stable label an account may be named by. Bounded and lowercase so that two
 #: spellings of one intent cannot become two accounts, which is the failure this
@@ -130,6 +143,33 @@ def parse_max_items(requested: int) -> int:
             maximum=MAX_ITEMS_CEILING,
         )
     return requested
+
+
+def parse_top(requested: int) -> int:
+    """Bound how many instruments a brief may show, refusing an unreadable one."""
+    if not 1 <= requested <= BRIEF_TOP_CEILING:
+        raise ValidationError(
+            "--top must be between 1 and the ceiling",
+            requested=requested,
+            maximum=BRIEF_TOP_CEILING,
+        )
+    return requested
+
+
+def validate_brief_options(*, brief: bool, ranked: bool, top: int | None) -> None:
+    """Refuse an option combination --brief and --ranked cannot both satisfy.
+
+    ``--top`` bounds a brief's own selection; asking for it without ``--brief``
+    would silently do nothing rather than the "past a point it is a dump"
+    ceiling it looks like. ``--brief`` and ``--ranked`` render two different,
+    incompatible shapes of the same ranking -- one full digest with the
+    ranking ahead of it, one compact substitute for the digest entirely -- so
+    combining them is refused rather than picking one silently.
+    """
+    if top is not None and not brief:
+        raise ValidationError("--top is only meaningful together with --brief")
+    if brief and ranked:
+        raise ValidationError("--brief and --ranked are mutually exclusive")
 
 
 def select_instruments(

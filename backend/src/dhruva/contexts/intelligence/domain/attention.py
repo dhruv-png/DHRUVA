@@ -68,6 +68,7 @@ __all__ = [
     "ResearchAttention",
     "band_for_score",
     "move_points",
+    "top_attention",
     "volume_points",
 ]
 
@@ -214,3 +215,23 @@ def volume_points(ratio: Decimal, baseline_sessions: int) -> tuple[int, str | No
     else:
         points = _VOLUME_POINTS[0]
     return points, f"volume {ratio}x prior-{baseline_sessions}-session mean"
+
+
+def top_attention(
+    ranked: tuple[ResearchAttention, ...],
+    *,
+    limit: int,
+) -> tuple[ResearchAttention, ...]:
+    """Return the leading noteworthy entries of an already-ranked sequence.
+
+    Score-zero entries are dropped rather than used to pad the result out to
+    ``limit``. A brief that filled empty slots with "nothing observed" would
+    say nothing at greater length, and a reader could no longer tell a quiet
+    watchlist from one DHRUVA had not actually looked at.
+
+    ``ranked`` is assumed already sorted (:func:`rank_watchlist`'s own
+    contract), so this performs no sorting of its own -- only a filter and a
+    slice.
+    """
+    invariant(limit >= 1, "a brief must ask for at least one instrument")
+    return tuple(entry for entry in ranked if entry.score > 0)[:limit]

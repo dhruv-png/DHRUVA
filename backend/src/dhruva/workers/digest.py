@@ -34,6 +34,7 @@ from dhruva.contexts.intelligence.application.watchlist_digest import (
     BuildWatchlistDigest,
     BuildWatchlistDigestQuery,
 )
+from dhruva.contexts.intelligence.domain.attention import top_attention
 from dhruva.contexts.intelligence.domain.digest import MAX_ITEMS_PER_INSTRUMENT
 from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import (
     SqlAlchemyIntelligenceUnitOfWork,
@@ -41,6 +42,7 @@ from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import
 from dhruva.contexts.intelligence.interfaces.attention_presentation import (
     rank_watchlist,
     render_attention,
+    render_brief,
 )
 from dhruva.contexts.intelligence.interfaces.digest_presentation import render_digest
 from dhruva.contexts.marketdata.api import (
@@ -61,12 +63,15 @@ from dhruva.contexts.reference.infrastructure import SqlAlchemyReferenceUnitOfWo
 from dhruva.shared.config.settings import load_settings
 from dhruva.shared.errors import DhruvaError, ValidationError
 from dhruva.workers.cli_arguments import (
+    BRIEF_TOP_DEFAULT,
     parse_account,
     parse_cutoff,
     parse_max_items,
     parse_sessions,
+    parse_top,
     parse_window,
     select_instruments,
+    validate_brief_options,
 )
 
 if TYPE_CHECKING:
@@ -139,12 +144,30 @@ def build_parser() -> argparse.ArgumentParser:
             "price/volume/news magnitude only, never a recommendation"
         ),
     )
+    parser.add_argument(
+        "--brief",
+        action="store_true",
+        help=(
+            "print a compact top-N research brief instead of the full digest -- "
+            "attention verdict plus a small amount of market and news detail, "
+            "never a recommendation; mutually exclusive with --ranked"
+        ),
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"instruments shown by --brief (default {BRIEF_TOP_DEFAULT}); requires --brief",
+    )
     return parser
 
 
 async def run(argv: Sequence[str] | None = None) -> int:
     """Read the archive once and print the digest."""
     args = build_parser().parse_args(argv)
+    validate_brief_options(brief=args.brief, ranked=args.ranked, top=args.top)
+    top_n = parse_top(args.top) if args.top is not None else BRIEF_TOP_DEFAULT
     settings = load_settings()
     account_id = parse_account(args.account)
     as_of = parse_cutoff(args.as_of)
@@ -193,10 +216,17 @@ async def run(argv: Sequence[str] | None = None) -> int:
         await engine.dispose()
 
     market_contexts = None if args.no_market else contexts
-    output = render_digest(digest, market_contexts)
-    if args.ranked:
+    if args.brief:
         ranked = rank_watchlist(digest, market_contexts)
-        output = f"{render_attention(ranked)}\n\n{output}"
+        selected = top_attention(ranked, limit=top_n)
+        output = render_brief(
+            selected, digest=digest, contexts=market_contexts, total_ranked=len(ranked)
+        )
+    else:
+        output = render_digest(digest, market_contexts)
+        if args.ranked:
+            ranked = rank_watchlist(digest, market_contexts)
+            output = f"{render_attention(ranked)}\n\n{output}"
     sys.stdout.write(output + "\n")
     return _EXIT_OK
 

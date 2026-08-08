@@ -26,6 +26,7 @@ from dhruva.contexts.intelligence.domain.attention import (
     MAX_ATTENTION_SCORE,
     AttentionBand,
     ResearchAttention,
+    top_attention,
 )
 from dhruva.contexts.intelligence.domain.digest import build_digest
 from dhruva.contexts.intelligence.domain.entity_linking import LinkableInstrument, link_entities
@@ -515,3 +516,73 @@ def test_an_empty_watchlist_produces_an_empty_ranking() -> None:
     )
 
     assert rank_watchlist(empty_digest, {}) == ()
+
+
+# --------------------------------------------------------------------------- #
+# top_attention: the brief's selection policy
+# --------------------------------------------------------------------------- #
+
+
+def test_top_attention_keeps_the_leading_entries_in_rank_order() -> None:
+    """A brief shows the same order the ranking already decided."""
+    digest = _digest()
+    ranked = rank_watchlist(
+        digest,
+        {
+            SBIN.instrument_id: _context(SBIN, one_day="8.50"),
+            HAL.instrument_id: _context(HAL, one_day="2.10"),
+            COCHINSHIP.instrument_id: _context(COCHINSHIP, one_day="0.50"),
+        },
+    )
+
+    top = top_attention(ranked, limit=2)
+
+    assert [entry.canonical_symbol for entry in top] == ["SBIN", "HAL"]
+
+
+def test_top_attention_excludes_score_zero_rather_than_padding() -> None:
+    """Fewer than the limit is the honest answer when only one entry is noteworthy.
+
+    A brief that padded out to ``limit`` with zero-score instruments would say
+    "nothing observed" at greater length; excluding them lets the reader tell
+    a quiet watchlist apart from one nothing was noteworthy about.
+    """
+    digest = _digest()
+    ranked = rank_watchlist(digest, {SBIN.instrument_id: _context(SBIN, one_day="8.50")})
+
+    top = top_attention(ranked, limit=10)
+
+    assert [entry.canonical_symbol for entry in top] == ["SBIN"]
+
+
+def test_top_attention_returns_nothing_when_every_score_is_zero() -> None:
+    """A watchlist with nothing noteworthy yields an empty brief, not a padded one."""
+    digest = _digest()
+    ranked = rank_watchlist(digest, {})
+
+    assert top_attention(ranked, limit=5) == ()
+
+
+def test_top_attention_at_the_maximum_available_shows_every_noteworthy_entry() -> None:
+    """The boundary case: limit equal to the count of noteworthy entries."""
+    digest = _digest()
+    ranked = rank_watchlist(
+        digest,
+        {
+            SBIN.instrument_id: _context(SBIN, one_day="8.50"),
+            HAL.instrument_id: _context(HAL, one_day="2.10"),
+        },
+    )
+
+    top = top_attention(ranked, limit=2)
+
+    assert len(top) == 2
+
+
+def test_top_attention_refuses_a_non_positive_limit() -> None:
+    """A brief of zero or fewer instruments is not a request this can answer."""
+    digest = _digest()
+    ranked = rank_watchlist(digest, {SBIN.instrument_id: _context(SBIN, one_day="8.50")})
+
+    with pytest.raises(InvariantViolation, match="at least one"):
+        top_attention(ranked, limit=0)

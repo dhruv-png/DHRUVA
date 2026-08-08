@@ -24,6 +24,7 @@ from dhruva.contexts.intelligence.domain.archive import (
     NewsRevision,
     content_revision,
 )
+from dhruva.contexts.intelligence.domain.attention import top_attention
 from dhruva.contexts.intelligence.domain.digest import build_digest
 from dhruva.contexts.intelligence.domain.entity_linking import (
     LinkableInstrument,
@@ -44,6 +45,7 @@ from dhruva.contexts.intelligence.interfaces.attention_presentation import (
     ATTENTION_DISCLAIMER,
     rank_watchlist,
     render_attention,
+    render_brief,
 )
 from dhruva.contexts.intelligence.interfaces.digest_presentation import (
     DIGEST_DISCLAIMER,
@@ -68,12 +70,15 @@ from dhruva.shared.errors import ValidationError
 from dhruva.shared.identity import AccountId, InstrumentId
 from dhruva.workers import digest as cli
 from dhruva.workers.cli_arguments import (
+    BRIEF_TOP_DEFAULT,
     parse_account,
     parse_cutoff,
     parse_max_items,
     parse_sessions,
+    parse_top,
     parse_window,
     select_instruments,
+    validate_brief_options,
 )
 
 pytestmark = pytest.mark.unit
@@ -239,6 +244,19 @@ def test_an_out_of_range_item_bound_is_refused(requested: int) -> None:
     """A digest is something a person reads; past a point it is a dump."""
     with pytest.raises(ValidationError, match="max-items"):
         parse_max_items(requested)
+
+
+@pytest.mark.parametrize("requested", [0, -1, 21, 10_000])
+def test_an_out_of_range_top_is_refused(requested: int) -> None:
+    """A brief is something a person reads in one glance; past a point it is not."""
+    with pytest.raises(ValidationError, match="--top"):
+        parse_top(requested)
+
+
+@pytest.mark.parametrize("requested", [1, 20])
+def test_top_within_bounds_is_accepted(requested: int) -> None:
+    """Both ends of the accepted range are usable, not just the interior."""
+    assert parse_top(requested) == requested
 
 
 def test_an_unknown_symbol_is_refused_rather_than_silently_empty() -> None:
@@ -552,5 +570,68 @@ def test_ranked_with_no_market_treats_every_instrument_as_unavailable() -> None:
     ranked = rank_watchlist(_digest(FRAUD), None)
 
     assert all(entry.market_context_available is False for entry in ranked)
+
+
+# --------------------------------------------------------------------------- #
+# --brief: a compact substitute for the digest, not an addition to it
+# --------------------------------------------------------------------------- #
+
+
+def test_brief_and_top_default_to_off() -> None:
+    """The digest is the existing product; a brief is an addition, not a default."""
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["--account", str(ACCOUNT)])
+    assert (args.brief, args.top) == (False, None)
+
+    assert parser.parse_args(["--account", str(ACCOUNT), "--brief"]).brief is True
+    assert parser.parse_args(["--account", str(ACCOUNT), "--brief", "--top", "3"]).top == 3
+
+
+def test_brief_help_text_does_not_promise_a_recommendation() -> None:
+    """Somebody reading --help must not come away thinking this is a signal."""
+    parser = cli.build_parser()
+    brief_action = next(action for action in parser._actions if "--brief" in action.option_strings)
+
+    assert "recommendation" in (brief_action.help or "")
+
+
+def test_top_without_brief_is_refused() -> None:
+    """--top bounds a brief's own selection; without --brief it would do nothing."""
+    with pytest.raises(ValidationError, match="--top is only meaningful together with --brief"):
+        validate_brief_options(brief=False, ranked=False, top=3)
+
+
+def test_brief_and_ranked_together_are_refused() -> None:
+    """Two incompatible shapes of the same ranking; neither is silently chosen."""
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        validate_brief_options(brief=True, ranked=True, top=None)
+
+
+def test_brief_alone_or_with_a_valid_top_is_accepted() -> None:
+    """The combinations a runbook actually uses must not be refused."""
+    validate_brief_options(brief=True, ranked=False, top=None)
+    validate_brief_options(brief=True, ranked=False, top=3)
+    validate_brief_options(brief=False, ranked=False, top=None)
+    validate_brief_options(brief=False, ranked=True, top=None)
+
+
+def test_brief_output_is_exactly_render_brief_of_the_top_selection() -> None:
+    """Exactly what run() assembles: top_attention feeding render_brief.
+
+    ``run()`` never renders the full digest when ``--brief`` is given -- a
+    brief is a substitute for it, not an addition -- so this reproduces only
+    that path, without a database.
+    """
+    digest = _digest(FRAUD)
+    contexts = {SBIN.instrument_id: _context(["100", "110"])}
+
+    ranked = rank_watchlist(digest, contexts)
+    selected = top_attention(ranked, limit=BRIEF_TOP_DEFAULT)
+    expected = render_brief(selected, digest=digest, contexts=contexts, total_ranked=len(ranked))
+
+    assert "Research brief" in expected
+    assert DIGEST_DISCLAIMER not in expected
+    assert "SBIN" in expected
     rendered = render_attention(ranked)
     assert "market context unavailable" in rendered
