@@ -211,9 +211,33 @@ def test_one_feed_is_built_per_planned_query_in_order() -> None:
         GdeltQuery(query='"Canara Bank"', timespan="1d", max_records=5),
     )
 
-    feeds = cli._feeds(_Client(), queries)  # type: ignore[arg-type]  # nothing is polled
+    feeds = cli._feeds(
+        _Client(),  # type: ignore[arg-type] # nothing is polled
+        queries,
+        min_interval_seconds=0.0,
+    )
 
     assert len(feeds) == len(queries)
+
+
+def test_every_built_feed_shares_one_pacing_gate() -> None:
+    """A fresh gate per feed would only ever pace a batch against its own retries."""
+
+    class _Client:
+        """Stands in for the HTTP client; never used, because nothing is polled."""
+
+    queries = (
+        GdeltQuery(query='"Adani Power"', timespan="1d", max_records=5),
+        GdeltQuery(query='"Canara Bank"', timespan="1d", max_records=5),
+    )
+
+    feeds = cli._feeds(
+        _Client(),  # type: ignore[arg-type] # nothing is polled
+        queries,
+        min_interval_seconds=1.0,
+    )
+
+    assert feeds[0]._timing is feeds[1]._timing
 
 
 def test_planned_queries_follow_the_plan(monkeypatch: pytest.MonkeyPatch) -> None:

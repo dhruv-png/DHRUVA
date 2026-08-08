@@ -42,7 +42,11 @@ from dhruva.contexts.intelligence.application.news_polling import (
 )
 from dhruva.contexts.intelligence.application.universe import linkable_universe
 from dhruva.contexts.intelligence.domain.search import SearchPlan, plan_search_phrases
-from dhruva.contexts.intelligence.infrastructure.gdelt.feed import GdeltDocFeed, GdeltQuery
+from dhruva.contexts.intelligence.infrastructure.gdelt.feed import (
+    GdeltDocFeed,
+    GdeltQuery,
+    GdeltRequestTiming,
+)
 from dhruva.contexts.intelligence.infrastructure.gdelt.mapper import GDELT_ATTRIBUTION_URL
 from dhruva.contexts.intelligence.infrastructure.gdelt.queries import gdelt_query_for
 from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import (
@@ -159,10 +163,18 @@ async def _universe(
 def _feeds(
     client: httpx2.AsyncClient,
     queries: Sequence[GdeltQuery],
+    *,
+    min_interval_seconds: float,
 ) -> tuple[GdeltDocFeed, ...]:
-    """Build one bounded transport per planned query, in the planned order."""
+    """Build one bounded transport per planned query, sharing one pacing gate.
+
+    One :class:`GdeltRequestTiming` for the whole tuple, not one per feed: the
+    floor it enforces has to hold across batches, and a fresh gate per feed
+    would only ever pace a batch against its own retries.
+    """
     clock = SystemClock()
-    return tuple(GdeltDocFeed(client, clock, query) for query in queries)
+    timing = GdeltRequestTiming(min_interval_seconds=min_interval_seconds)
+    return tuple(GdeltDocFeed(client, clock, query, timing=timing) for query in queries)
 
 
 def _planned_queries(
@@ -220,8 +232,9 @@ async def _poll(
         return 0
 
     async with httpx2.AsyncClient(timeout=news.timeout_seconds, follow_redirects=True) as client:
+        feeds = _feeds(client, queries, min_interval_seconds=news.min_request_interval_seconds)
         result = await PollNewsFeeds(
-            _feeds(client, queries),
+            feeds,
             lambda account: SqlAlchemyIntelligenceUnitOfWork(session_factory, account_id=account),
         ).execute(PollNewsFeedsCommand(account_id=account_id, universe=universe, analysed_at=now))
 

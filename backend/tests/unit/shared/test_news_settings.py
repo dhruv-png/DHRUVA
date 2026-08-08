@@ -203,3 +203,33 @@ def test_the_timeout_is_bounded_at_both_ends() -> None:
         NewsSettings(timeout_seconds=0.0)
     with pytest.raises(ValueError, match="less than or equal"):
         NewsSettings(timeout_seconds=600.0)
+
+
+def test_the_minimum_request_interval_defaults_to_one_conservative_second() -> None:
+    """A courteous default for an anonymous free service with no published limit."""
+    assert NewsSettings().min_request_interval_seconds == 1.0
+
+
+def test_a_zero_request_interval_is_the_documented_no_pacing_escape_hatch() -> None:
+    """A caller that wants no pacing at all -- such as a test -- may ask for it."""
+    assert NewsSettings(min_request_interval_seconds=0.0).min_request_interval_seconds == 0.0
+
+
+def test_the_minimum_request_interval_is_bounded_at_both_ends() -> None:
+    """Negative is meaningless and an unbounded ceiling could hang a four-batch pass."""
+    with pytest.raises(ValueError, match="greater than or equal"):
+        NewsSettings(min_request_interval_seconds=-0.1)
+    with pytest.raises(ValueError, match="less than or equal"):
+        NewsSettings(min_request_interval_seconds=10.1)
+    assert NewsSettings(min_request_interval_seconds=10.0).min_request_interval_seconds == 10.0
+
+
+def test_the_request_interval_loads_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The group is wired into process configuration, not just defined."""
+    monkeypatch.setenv("DHRUVA_NEWS__MIN_REQUEST_INTERVAL_SECONDS", "2.5")
+
+    settings = load_settings()
+
+    assert settings.news.min_request_interval_seconds == 2.5

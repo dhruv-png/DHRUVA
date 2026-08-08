@@ -281,6 +281,16 @@ class NewsSettings(_Group):
     #: How many days back from the cutoff a read command looks by default.
     lookback_days: int = Field(default=7, ge=1, le=365)
 
+    #: Minimum seconds between successive GDELT requests within one poll pass,
+    #: enforced across every batch the pass issues, not merely within one.
+    #: GDELT publishes no rate-limit policy (session-log, 2026-08-06), so this
+    #: is a conservative default for an anonymous free-tier consumer rather
+    #: than a documented provider threshold. Bounded above so a
+    #: misconfiguration cannot turn a four-batch pass into a multi-minute
+    #: hang; ``0`` is permitted for a caller (such as a test) that wants no
+    #: pacing at all.
+    min_request_interval_seconds: float = Field(default=1.0, ge=0.0, le=10.0)
+
     @property
     def watchlist_queries_enabled(self) -> bool:
         """Return whether the pass builds its queries from the watchlist."""
