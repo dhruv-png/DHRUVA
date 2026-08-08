@@ -33,6 +33,20 @@ the whole construction would be unverifiable. ADR-009 already makes a minted
 UUID the normal way to identify an entity here, so this is the ordinary case and
 the worked example is the exception.
 
+Why purpose is an enum while broker is not
+-------------------------------------------
+``broker`` is deliberately open: ADR-003 makes the platform provider-agnostic and
+no accepted decision enumerates the brokers v1 supports, so a string is the
+honest representation of *not yet decided*.
+
+``purpose`` is the opposite case and gets the opposite treatment. ADR-077 fixes
+exactly two meanings -- the long-lived material an owner enrols, and the
+short-lived material a broker session produces -- and the whole point of the
+distinction is that those two lifecycles never blur. An open string would let a
+third meaning appear without a decision, and would let two spellings of one
+meaning produce two bindings, which is the failure the broker alphabet below
+exists to prevent.
+
 Why `broker` is a plain string
 -------------------------------
 ADR-003 makes the platform provider-agnostic, and no accepted decision
@@ -46,6 +60,7 @@ so that it is still safe to bind cryptographically.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
 from dhruva.shared.invariants import invariant
@@ -57,7 +72,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BROKER_MAX_LENGTH",
+    "CREDENTIAL_PURPOSE_MAX_LENGTH",
     "Credential",
+    "CredentialPurpose",
     "EncryptedSecret",
     "credential_associated_data",
 ]
@@ -66,6 +83,11 @@ __all__ = [
 #: migration because a value that fits the domain and not the column would fail
 #: at the driver, which is the least informative place to learn it.
 BROKER_MAX_LENGTH: Final = 32
+
+#: Matches ``credential.purpose VARCHAR(16)``. Declared here for the same reason
+#: :data:`BROKER_MAX_LENGTH` is: a value that fits the domain and not the column
+#: would fail at the driver, which is the least informative place to learn it.
+CREDENTIAL_PURPOSE_MAX_LENGTH: Final = 16
 
 #: Field separator for the associated data below. ASCII unit separator, chosen
 #: because :func:`_valid_broker` forbids it in a broker name and neither the
@@ -78,7 +100,15 @@ _SEPARATOR: Final = b"\x1f"
 #: existing ciphertext must fail to open rather than open under a binding that
 #: means something different -- and a tag is what makes that failure certain
 #: instead of accidental.
-_AAD_SCHEME: Final = b"dhruva.credential.aad.v1"
+#: Version tag on the associated data.
+#:
+#: Bumped to v2 by ADR-077, which added ``purpose`` to the binding. The bump is
+#: the load-bearing part: every ciphertext sealed under v1 now fails to open
+#: rather than opening under a binding that no longer means what it did. A
+#: silent widening would have left old ciphertext readable under a construction
+#: that had stopped distinguishing enrolment material from session material,
+#: which is precisely the confusion the purpose exists to prevent.
+_AAD_SCHEME: Final = b"dhruva.credential.aad.v2"
 
 #: Every character a broker name may contain, written out.
 #:
@@ -93,6 +123,29 @@ _AAD_SCHEME: Final = b"dhruva.credential.aad.v1"
 #: A literal alphabet cannot drift from what the docstring claims, and a reader
 #: can check it in one glance rather than reasoning about Unicode categories.
 _BROKER_ALPHABET: Final = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_")
+
+
+class CredentialPurpose(StrEnum):
+    """Which lifecycle a stored broker secret belongs to (ADR-077).
+
+    Closed, and deliberately generic. These are properties of *secrets*, not of
+    Zerodha: any broker with an application credential and a login session has
+    both, and naming them after one provider would put a vendor into the shared
+    identity domain.
+
+    The two differ in every way that matters operationally. Enrolment material
+    is issued by the broker to the owner, changes when the owner chooses, and
+    its rotation is a security event. Session material is minted by a login,
+    expires on the broker's schedule, and is replaced as a matter of routine.
+    Storing them in one row made "I rotated my secret" and "I logged in" the
+    same fact; storing them under one binding made them interchangeable to a
+    cipher.
+    """
+
+    #: Long-lived application material the owner enrols once and rotates rarely.
+    ENROLMENT = "ENROLMENT"
+    #: Short-lived material produced by an authenticated broker session.
+    SESSION = "SESSION"
 
 
 def _valid_broker(broker: str) -> bool:
@@ -124,7 +177,10 @@ class EncryptedSecret:
 
 
 def credential_associated_data(
-    credential_id: CredentialId, account_id: AccountId, broker: str
+    credential_id: CredentialId,
+    account_id: AccountId,
+    broker: str,
+    purpose: CredentialPurpose,
 ) -> bytes:
     """Return the AES-GCM associated data binding a ciphertext to its row.
 
@@ -136,11 +192,15 @@ def credential_associated_data(
 
     Parameters
     ----------
-    credential_id, account_id, broker
-        The three facts a credential is bound to. ``account_id`` is included
-        even though ``credential_id`` alone is unique, because ADR-004 makes the
+    credential_id, account_id, broker, purpose
+        The four facts a credential is bound to. ``account_id`` is included even
+        though ``credential_id`` alone is unique, because ADR-004 makes the
         tenant a property of every row and a credential re-parented to another
-        account is exactly the tampering worth refusing.
+        account is exactly the tampering worth refusing. ``purpose`` joined them
+        under ADR-077: one account now holds two credentials for one broker, and
+        without it a session ciphertext moved into the enrolment row would open
+        cleanly -- turning a short-lived token into something the system reads as
+        the owner's long-lived secret.
 
     Returns
     -------
@@ -169,7 +229,13 @@ def credential_associated_data(
         "broker must be lowercase alphanumeric with hyphen or underscore",
         broker=broker,
     )
-    parts = (_AAD_SCHEME, str(credential_id).encode(), str(account_id).encode(), broker.encode())
+    parts = (
+        _AAD_SCHEME,
+        str(credential_id).encode(),
+        str(account_id).encode(),
+        broker.encode(),
+        purpose.value.encode(),
+    )
     return _SEPARATOR.join(parts)
 
 
@@ -193,6 +259,9 @@ class Credential:
         broker per account, which the table enforces as a unique constraint.
     broker
         Which broker the secret authenticates against.
+    purpose
+        Which lifecycle the secret belongs to (ADR-077). One credential per
+        broker *per purpose* per account, which the table enforces.
     secret
         The sealed material. Ciphertext and wrapped data key, never a plaintext.
     key_version
@@ -213,6 +282,7 @@ class Credential:
     credential_id: CredentialId
     account_id: AccountId
     broker: str
+    purpose: CredentialPurpose
     secret: EncryptedSecret
     created_at: datetime
     updated_at: datetime
@@ -232,6 +302,15 @@ class Credential:
             "broker name is too long to store",
             broker=self.broker,
             maximum=BROKER_MAX_LENGTH,
+        )
+        # An enum member cannot be an unsupported value, but it can arrive as a
+        # bare string through a mapper that forgot to convert one. Checking the
+        # type is what makes that a refusal rather than a row whose purpose does
+        # not match the binding sealed over it.
+        invariant(
+            isinstance(self.purpose, CredentialPurpose),
+            "purpose must be a supported credential purpose",
+            purpose=repr(self.purpose),
         )
         # An empty ciphertext cannot have come from the envelope: every sealed
         # value carries a nonce and a tag even when the plaintext was empty.
@@ -266,11 +345,13 @@ class Credential:
     def associated_data(self) -> bytes:
         """Return the binding this credential's ciphertext was sealed under.
 
-        A property rather than a stored field, so it cannot drift from the three
+        A property rather than a stored field, so it cannot drift from the four
         facts it is derived from. A stored copy that disagreed with the row would
         be a binding that verifies nothing.
         """
-        return credential_associated_data(self.credential_id, self.account_id, self.broker)
+        return credential_associated_data(
+            self.credential_id, self.account_id, self.broker, self.purpose
+        )
 
     def resealed(
         self, secret: EncryptedSecret, *, at: datetime, key_version: int | None = None

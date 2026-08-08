@@ -41,24 +41,29 @@ from dhruva.shared.config.secret import SecretValue
 from dhruva.shared.errors import DataQualityError
 
 if TYPE_CHECKING:
-    from dhruva.contexts.platform.domain.identity.credentials import Credential, EncryptedSecret
+    from dhruva.contexts.platform.domain.identity.credentials import (
+        Credential,
+        CredentialPurpose,
+        EncryptedSecret,
+    )
     from dhruva.contexts.platform.domain.identity.keys import KeyProvider
     from dhruva.shared.identity import AccountId, CredentialId
 
 __all__ = ["open_credential", "seal_credential"]
 
 
-def seal_credential(
+def seal_credential(  # noqa: PLR0913 - four of these are the binding itself
     secret: SecretValue,
     key_provider: KeyProvider,
     *,
     credential_id: CredentialId,
     account_id: AccountId,
     broker: str,
+    purpose: CredentialPurpose,
 ) -> EncryptedSecret:
     """Seal ``secret`` bound to the record it will occupy (TD-S06-6).
 
-    The three binding facts are taken as keyword arguments rather than read off
+    The four binding facts are taken as keyword arguments rather than read off
     a :class:`~dhruva.contexts.platform.domain.identity.credentials.Credential`,
     because on the write path the credential does not exist yet -- it cannot be
     constructed until there is sealed material to put in it.
@@ -69,8 +74,10 @@ def seal_credential(
         The plaintext credential.
     key_provider
         Wraps the freshly generated data key (ADR-070).
-    credential_id, account_id, broker
-        The record this ciphertext may be opened from, and no other.
+    credential_id, account_id, broker, purpose
+        The record this ciphertext may be opened from, and no other. ``purpose``
+        joined the binding under ADR-077: without it, session material sealed
+        for one row would open in the enrolment row beside it.
 
     Returns
     -------
@@ -80,7 +87,7 @@ def seal_credential(
     return encrypt_secret(
         secret.reveal().encode(),
         key_provider,
-        associated_data=credential_associated_data(credential_id, account_id, broker),
+        associated_data=credential_associated_data(credential_id, account_id, broker, purpose),
     )
 
 

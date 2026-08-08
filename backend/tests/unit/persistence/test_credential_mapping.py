@@ -25,7 +25,11 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 import dhruva.contexts.platform.infrastructure.persistence.mappers as mapper_module
-from dhruva.contexts.platform.domain.identity.credentials import Credential, EncryptedSecret
+from dhruva.contexts.platform.domain.identity.credentials import (
+    Credential,
+    CredentialPurpose,
+    EncryptedSecret,
+)
 from dhruva.contexts.platform.infrastructure.persistence.factories import CredentialFactory
 from dhruva.contexts.platform.infrastructure.persistence.mappers import (
     to_credential_model_kwargs,
@@ -46,6 +50,7 @@ def _credential(**overrides: object) -> Credential:
         "credential_id": CredentialId.deterministic("credential", "one"),
         "account_id": AccountId.deterministic("primary"),
         "broker": "zerodha",
+        "purpose": CredentialPurpose.ENROLMENT,
         "secret": EncryptedSecret(ciphertext=b"sealed", wrapped_data_key=b"wrapped"),
         "created_at": CREATED,
         "updated_at": CREATED,
@@ -64,9 +69,16 @@ def _credential(**overrides: object) -> Credential:
     key_version=st.integers(min_value=1, max_value=10**6),
     version=st.integers(min_value=1, max_value=10**6),
     rotated=st.booleans(),
+    purpose=st.sampled_from(CredentialPurpose),
 )
-def test_domain_to_record_to_domain_is_lossless(
-    ciphertext: bytes, wrapped: bytes, key_version: int, version: int, rotated: bool
+def test_domain_to_record_to_domain_is_lossless(  # noqa: PLR0913 - one argument per varied field
+    *,
+    ciphertext: bytes,
+    wrapped: bytes,
+    key_version: int,
+    version: int,
+    rotated: bool,
+    purpose: CredentialPurpose,
 ) -> None:
     """Every field survives both directions, including the bytes.
 
@@ -80,6 +92,7 @@ def test_domain_to_record_to_domain_is_lossless(
         version=version,
         rotated_at=CREATED + timedelta(days=1) if rotated else None,
         updated_at=CREATED + timedelta(days=1) if rotated else CREATED,
+        purpose=purpose,
     )
 
     assert FACTORY.reconstruct(FACTORY.deconstruct(original)) == original
@@ -96,6 +109,37 @@ def test_the_binding_survives_the_round_trip() -> None:
 
     assert FACTORY.reconstruct(FACTORY.deconstruct(original)).associated_data == (
         original.associated_data
+    )
+
+
+def test_a_purpose_crosses_the_boundary_as_a_string_and_returns_as_an_enum() -> None:
+    """The record layer holds primitives; the domain holds the closed type.
+
+    Both directions are asserted because either half failing is silent. A record
+    holding the enum would let a domain type reach the driver; a reconstruction
+    returning the raw string would produce an aggregate whose purpose is not a
+    member, which the invariant refuses -- but only if the conversion is actually
+    here rather than assumed.
+    """
+    record = FACTORY.deconstruct(_credential(purpose=CredentialPurpose.SESSION))
+
+    assert record.purpose == "SESSION"
+    assert type(record.purpose) is str
+    assert FACTORY.reconstruct(record).purpose is CredentialPurpose.SESSION
+
+
+def test_the_purpose_participates_in_the_reconstructed_binding() -> None:
+    """A mapper that dropped the purpose would compute a binding that opens both.
+
+    Losing it in the mapping would be invisible until a stolen session ciphertext
+    opened as enrolment material, which is the failure ADR-077 exists to prevent.
+    """
+    enrolment = FACTORY.deconstruct(_credential(purpose=CredentialPurpose.ENROLMENT))
+    session = FACTORY.deconstruct(_credential(purpose=CredentialPurpose.SESSION))
+
+    assert (
+        FACTORY.reconstruct(enrolment).associated_data
+        != FACTORY.reconstruct(session).associated_data
     )
 
 

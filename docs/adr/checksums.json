@@ -74,5 +74,6 @@
   "ADR-073-authorisation-defaults-to-deny.md": "87510ca54663ebc9a96d725f6c00e3e4e2a6cff7af320db3c8e05750ca7d7818",
   "ADR-074-rls-policies-are-authored-and-exercised-from-the-start.md": "2a6466556c0c6c2d470be8f064e7b4a0dc0f06a4ade46e0dc218ba9dacc8e1b4",
   "ADR-075-reference-identity-and-watchlist-are-bitemporal-revisions.md": "c4f2de6d8873ea6feb6cd98dead26b6a6cfc00f31f880df64b4c4def9c7d8e95",
-  "ADR-076-kite-market-data-uses-a-narrow-direct-http-adapter.md": "526979637b094d5a8e1820e4f3d50c81d923ed00c780cca678291a346de3e0d2"
+  "ADR-076-kite-market-data-uses-a-narrow-direct-http-adapter.md": "526979637b094d5a8e1820e4f3d50c81d923ed00c780cca678291a346de3e0d2",
+  "ADR-077-credential-purpose-separates-secret-lifecycles.md": "ab11765b3f5ad06b29b572e41bdf883743c9f1c6781422c3779fc72b2be3e65c"
 }

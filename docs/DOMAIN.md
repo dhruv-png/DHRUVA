@@ -698,7 +698,34 @@ if bar.time in TimeRange(start, end):
 **Prevented by:** half-open `[start, end)` everywhere, asserted as a tiling
 property test.
 
-### 12.12 Currency mixed without noticing
+### 12.12 The secret that meant two things
+
+A broker gives you two secrets: an application credential you enrol once, and an
+access token a login mints every morning. Stored in one row they share a rotation
+history and a blast radius.
+
+```python
+# Elsewhere — one credential per broker
+store.put(broker="zerodha", secret=access_token)   # overwrites the API secret
+```
+
+The API secret is gone, `rotated_at` now records logins rather than rotations,
+and the loss is discovered the next time the owner needs to authenticate.
+
+```python
+# Here — the lifecycle is part of the key and part of the binding
+store.get(account_id, "zerodha", CredentialPurpose.SESSION)
+```
+
+A ciphertext moved between the two purposes fails to decrypt, so the separation
+is enforced by the cipher rather than by callers remembering it.
+
+**Prevented by:** ADR-077 (credential purpose participates in uniqueness and in
+the AES-GCM associated data), enforced by a `CHECK` constraint, a
+`(account_id, broker, purpose)` unique constraint, and cross-purpose theft tests
+against real PostgreSQL.
+
+### 12.13 Currency mixed without noticing
 
 Not yet possible — only INR exists — but the guard is in place, and equality
 already incorporates currency so that the day a second one appears, nothing

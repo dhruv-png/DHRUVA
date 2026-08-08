@@ -170,12 +170,16 @@ class CredentialRecord:
 
     ``id`` is the credential's domain identity here, not the anonymous surrogate
     the worked example uses. It is bound into the ciphertext's associated data,
-    so it has to survive the round trip exactly.
+    so it has to survive the round trip exactly. ``purpose`` is bound there too
+    (ADR-077) and is a plain string at this layer for the same reason every
+    other field is: a record has no invariants, and converting it to the closed
+    enum is the factory's job.
     """
 
     id: UUID
     account_id: UUID
     broker: str
+    purpose: str
     wrapped_data_key: bytes
     ciphertext: bytes
     key_version: int

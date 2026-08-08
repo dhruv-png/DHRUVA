@@ -38,8 +38,12 @@ from dhruva.contexts.platform.infrastructure.persistence.authorisation import (
     PostgresAuthorisationDirectory,
     RoleRepository,
 )
+from dhruva.contexts.platform.infrastructure.persistence.credentials import (
+    CredentialRepository,
+)
 from dhruva.contexts.platform.infrastructure.persistence.factories import (
     AuditFactory,
+    CredentialFactory,
     PrincipalFactory,
     RefreshTokenFactory,
     RoleFactory,
@@ -78,6 +82,7 @@ class SqlAlchemyIdentityUnitOfWork:
 
     __slots__ = (
         "_audit_factory",
+        "_credential_factory",
         "_inner",
         "_principal_factory",
         "_refresh_factory",
@@ -94,10 +99,11 @@ class SqlAlchemyIdentityUnitOfWork:
         refresh_factory: RefreshTokenFactory | None = None,
         role_factory: RoleFactory | None = None,
         audit_factory: AuditFactory | None = None,
+        credential_factory: CredentialFactory | None = None,
     ) -> None:
         """Create a Unit of Work over a session factory.
 
-        The three reconstruction factories are stateless and default to fresh
+        The reconstruction factories are stateless and default to fresh
         instances. They are still injectable, because a factory is where a domain
         service would be held if one were ever needed -- the worked example's
         calendar is exactly that -- and a constructor that could not accept one
@@ -112,6 +118,7 @@ class SqlAlchemyIdentityUnitOfWork:
         self._refresh_factory = refresh_factory or RefreshTokenFactory()
         self._role_factory = role_factory or RoleFactory()
         self._audit_factory = audit_factory or AuditFactory()
+        self._credential_factory = credential_factory or CredentialFactory()
 
     @property
     def session(self) -> AsyncSession:
@@ -126,6 +133,16 @@ class SqlAlchemyIdentityUnitOfWork:
     def principals(self) -> PrincipalRepository:
         """The principal store bound to this transaction."""
         return PrincipalRepository(self.session, self._principal_factory)
+
+    @property
+    def credentials(self) -> CredentialRepository:
+        """The sealed broker-credential store bound to this transaction.
+
+        Built with no ``KeyProvider``, like every other repository here. Sealing
+        and opening are the caller's explicit acts (ADR-070), so a transaction
+        cannot quietly acquire the ability to decrypt by holding a store.
+        """
+        return CredentialRepository(self.session, self._credential_factory)
 
     @property
     def refresh_tokens(self) -> RefreshTokenRepository:

@@ -23,7 +23,11 @@ from dhruva.contexts.platform.domain.identity.authorisation import (
     PermissionGrant,
     Role,
 )
-from dhruva.contexts.platform.domain.identity.credentials import Credential, EncryptedSecret
+from dhruva.contexts.platform.domain.identity.credentials import (
+    Credential,
+    CredentialPurpose,
+    EncryptedSecret,
+)
 from dhruva.contexts.platform.domain.identity.passwords import PasswordHash
 from dhruva.contexts.platform.domain.identity.principals import Principal
 from dhruva.contexts.platform.domain.identity.refresh import RefreshToken
@@ -465,6 +469,10 @@ class CredentialFactory:
             credential_id=CredentialId(record.id),
             account_id=AccountId(record.account_id),
             broker=record.broker,
+            # The stored string becomes the closed enum here. A value the enum
+            # does not know raises rather than reaching the aggregate, which is
+            # the read-path counterpart of the check constraint.
+            purpose=CredentialPurpose(record.purpose),
             secret=EncryptedSecret(
                 ciphertext=record.ciphertext,
                 wrapped_data_key=record.wrapped_data_key,
@@ -490,6 +498,7 @@ class CredentialFactory:
             id=aggregate.credential_id.value,
             account_id=aggregate.account_id.value,
             broker=aggregate.broker,
+            purpose=aggregate.purpose.value,
             wrapped_data_key=aggregate.secret.wrapped_data_key,
             ciphertext=aggregate.secret.ciphertext,
             key_version=aggregate.key_version,

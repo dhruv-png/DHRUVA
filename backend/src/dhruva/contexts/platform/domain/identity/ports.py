@@ -43,14 +43,22 @@ if TYPE_CHECKING:
 
     from dhruva.contexts.platform.domain.audit import AuditRecord
     from dhruva.contexts.platform.domain.identity.authorisation import Role
+    from dhruva.contexts.platform.domain.identity.credentials import (
+        Credential,
+        CredentialPurpose,
+        EncryptedSecret,
+    )
+    from dhruva.contexts.platform.domain.identity.keys import KeyProvider
     from dhruva.contexts.platform.domain.identity.principals import Principal
     from dhruva.contexts.platform.domain.identity.refresh import RefreshToken
     from dhruva.shared.config.secret import SecretValue
-    from dhruva.shared.identity import AccountId, PrincipalId
+    from dhruva.shared.identity import AccountId, CredentialId, PrincipalId
 
 __all__ = [
     "AuditSink",
     "AuthorisationDirectory",
+    "CredentialSealer",
+    "CredentialStore",
     "IdentityUnitOfWork",
     "MintedRefreshToken",
     "PrincipalStore",
@@ -167,6 +175,71 @@ class PrincipalStore(Protocol):
 
 
 @runtime_checkable
+class CredentialSealer(Protocol):
+    """Seals a plaintext secret against the record it will occupy (ADR-070).
+
+    A port because the application layer must be able to enrol a credential
+    without importing a cipher. The one implementation lives in
+    ``infrastructure.crypto``; the composition root injects it, exactly as it
+    injects a ``KeyProvider``.
+
+    There is deliberately no matching "open" port. Opening a credential is a
+    narrower, rarer act than storing one, and a use case that needed it would
+    take a ``KeyProvider`` visibly rather than acquiring the ability through a
+    collaborator it was handed for something else.
+    """
+
+    def __call__(  # noqa: PLR0913 - four of these are the binding itself
+        self,
+        secret: SecretValue,
+        key_provider: KeyProvider,
+        *,
+        credential_id: CredentialId,
+        account_id: AccountId,
+        broker: str,
+        purpose: CredentialPurpose,
+    ) -> EncryptedSecret:
+        """Return sealed material bound to these four facts."""
+        ...
+
+
+@runtime_checkable
+class CredentialStore(Protocol):
+    """Loads and stores :class:`Credential` aggregates. Never commits.
+
+    Deals exclusively in sealed material. There is no method returning a
+    plaintext and there cannot be one: this port takes no ``KeyProvider``, so
+    nothing behind it holds anything that could decrypt (ADR-070).
+    """
+
+    async def get(
+        self,
+        account_id: AccountId,
+        broker: str,
+        purpose: CredentialPurpose,
+    ) -> Credential | None:
+        """Return the credential for this account, broker and purpose.
+
+        Purpose is part of the lookup rather than an optional filter (ADR-077):
+        one account holds an enrolment credential and a session credential for
+        the same broker, and a query that omitted it would return whichever the
+        database reached first.
+        """
+        ...
+
+    async def get_by_id(self, credential_id: CredentialId) -> Credential | None:
+        """Return the credential with this identity, or ``None``."""
+        ...
+
+    async def add(self, aggregate: Credential) -> None:
+        """Stage a new credential for insertion."""
+        ...
+
+    async def update(self, aggregate: Credential) -> None:
+        """Stage changes, refusing the write if another writer got there first."""
+        ...
+
+
 class RefreshTokenStore(Protocol):
     """Loads and stores :class:`RefreshToken` aggregates. Never commits."""
 
@@ -288,6 +361,11 @@ class IdentityUnitOfWork(Protocol):
     @property
     def principals(self) -> PrincipalStore:
         """The principal store bound to this transaction."""
+        ...
+
+    @property
+    def credentials(self) -> CredentialStore:
+        """The sealed broker-credential store bound to this transaction."""
         ...
 
     @property

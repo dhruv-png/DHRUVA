@@ -47,7 +47,7 @@ from dhruva.shared.errors import ConflictError
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from dhruva.contexts.platform.domain.identity.credentials import Credential
+    from dhruva.contexts.platform.domain.identity.credentials import Credential, CredentialPurpose
     from dhruva.contexts.platform.infrastructure.persistence.factories import CredentialFactory
     from dhruva.shared.identity import AccountId, CredentialId
 
@@ -69,18 +69,29 @@ class CredentialRepository:
         self._session = session
         self._factory = factory
 
-    async def get(self, account_id: AccountId, broker: str) -> Credential | None:
-        """Return the credential for an account and broker, or ``None``.
+    async def get(
+        self,
+        account_id: AccountId,
+        broker: str,
+        purpose: CredentialPurpose,
+    ) -> Credential | None:
+        """Return one account's credential for a broker and purpose, or ``None``.
 
-        The natural key, and the one the table enforces as unique. ``None``
-        rather than raising: "this account has no credential for that broker" is
-        an ordinary answer, and a caller that requires one raises its own
-        :class:`~dhruva.shared.errors.NotFoundError` with context this layer does
-        not have.
+        The natural key, and the one the table enforces as unique. ``purpose``
+        joined it under ADR-077: an account now holds an enrolment credential and
+        a session credential for the same broker, and a lookup that omitted it
+        would return whichever row the database happened to reach first.
+
+        ``None`` rather than raising: "this account has no session for that
+        broker" is an ordinary answer -- it is what a fresh enrolment and an
+        expired login both look like -- and a caller that requires one raises its
+        own :class:`~dhruva.shared.errors.NotFoundError` with context this layer
+        does not have.
         """
         statement = select(CredentialModel).where(
             CredentialModel.account_id == account_id.value,
             CredentialModel.broker == broker,
+            CredentialModel.purpose == purpose.value,
         )
         model = (await self._session.execute(statement)).scalar_one_or_none()
         if model is None:

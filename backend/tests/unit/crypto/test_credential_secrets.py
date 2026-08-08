@@ -19,6 +19,7 @@ import pytest
 
 from dhruva.contexts.platform.domain.identity.credentials import (
     Credential,
+    CredentialPurpose,
     EncryptedSecret,
     credential_associated_data,
 )
@@ -40,6 +41,8 @@ FIRST: Final = CredentialId.deterministic("credential", "first")
 SECOND: Final = CredentialId.deterministic("credential", "second")
 ACCOUNT: Final = AccountId.deterministic("primary")
 BROKER: Final = "zerodha"
+ENROLMENT: Final = CredentialPurpose.ENROLMENT
+SESSION: Final = CredentialPurpose.SESSION
 
 
 @pytest.fixture
@@ -49,26 +52,37 @@ def provider() -> MasterKeyProvider:
     return MasterKeyProvider(key)
 
 
-def _credential(secret: EncryptedSecret, credential_id: CredentialId = FIRST) -> Credential:
+def _credential(
+    secret: EncryptedSecret,
+    credential_id: CredentialId = FIRST,
+    purpose: CredentialPurpose = ENROLMENT,
+) -> Credential:
     return Credential(
         credential_id=credential_id,
         account_id=ACCOUNT,
         broker=BROKER,
+        purpose=purpose,
         secret=secret,
         created_at=CREATED,
         updated_at=CREATED,
     )
 
 
-def _sealed(provider: MasterKeyProvider, plaintext: str, credential_id: CredentialId) -> Credential:
+def _sealed(
+    provider: MasterKeyProvider,
+    plaintext: str,
+    credential_id: CredentialId,
+    purpose: CredentialPurpose = ENROLMENT,
+) -> Credential:
     sealed = seal_credential(
         SecretValue(plaintext, register=False),
         provider,
         credential_id=credential_id,
         account_id=ACCOUNT,
         broker=BROKER,
+        purpose=purpose,
     )
-    return _credential(sealed, credential_id)
+    return _credential(sealed, credential_id, purpose)
 
 
 def test_a_credential_round_trips(provider: MasterKeyProvider) -> None:
@@ -130,6 +144,65 @@ def test_a_credential_relabelled_to_another_broker_will_not_open(
         open_credential(relabelled, provider)
 
 
+def test_a_session_ciphertext_presented_as_enrolment_material_will_not_open(
+    provider: MasterKeyProvider,
+) -> None:
+    """ADR-077's central claim, and the one worth testing hardest.
+
+    Same account, same broker, same key, same credential identity. Only the
+    purpose differs -- and without it in the binding this would decrypt cleanly,
+    so the system would read a token that expires tomorrow as the owner's
+    long-lived API secret.
+    """
+    session = _sealed(provider, "session-token-abc123", FIRST, SESSION)
+    presented_as_enrolment = dataclasses.replace(session, purpose=ENROLMENT)
+
+    with pytest.raises(SafetyError):
+        open_credential(presented_as_enrolment, provider)
+
+
+def test_an_enrolment_ciphertext_presented_as_a_session_will_not_open(
+    provider: MasterKeyProvider,
+) -> None:
+    """The same refusal in the other direction.
+
+    Asserted separately because the two failures have different consequences: a
+    session read as enrolment material is a secret that silently expires, and
+    enrolment material read as a session is a long-lived secret handed to a code
+    path that treats it as disposable.
+    """
+    enrolment = _sealed(provider, "kite-api-secret-abc123", FIRST, ENROLMENT)
+    presented_as_session = dataclasses.replace(enrolment, purpose=SESSION)
+
+    with pytest.raises(SafetyError):
+        open_credential(presented_as_session, provider)
+
+
+def test_two_purposes_seal_the_same_plaintext_to_different_ciphertexts(
+    provider: MasterKeyProvider,
+) -> None:
+    """Each opens only as itself, and neither is a copy of the other."""
+    plaintext = "identical-secret-material"
+    enrolment = _sealed(provider, plaintext, FIRST, ENROLMENT)
+    session = _sealed(provider, plaintext, SECOND, SESSION)
+
+    assert enrolment.secret.ciphertext != session.secret.ciphertext
+    assert open_credential(enrolment, provider).reveal() == plaintext
+    assert open_credential(session, provider).reveal() == plaintext
+
+
+def test_sealing_offers_no_way_to_omit_a_purpose() -> None:
+    """A default would let a caller seal material it never classified.
+
+    Whatever the default was, some caller would take it by accident, and the row
+    it wrote would be bound to a lifecycle nobody chose.
+    """
+    purpose = inspect.signature(seal_credential).parameters["purpose"]
+
+    assert purpose.default is inspect.Parameter.empty
+    assert purpose.kind is inspect.Parameter.KEYWORD_ONLY
+
+
 def test_another_master_key_cannot_open_a_credential(provider: MasterKeyProvider) -> None:
     """The binding is an addition to the key hierarchy, not a replacement for it."""
     credential = _sealed(provider, "kite-api-secret-abc123", FIRST)
@@ -177,7 +250,7 @@ def test_a_credential_that_is_not_utf8_is_a_data_quality_fault(
     sealed = encrypt_secret(
         b"\xff\xfe not utf-8",
         provider,
-        associated_data=credential_associated_data(FIRST, ACCOUNT, BROKER),
+        associated_data=credential_associated_data(FIRST, ACCOUNT, BROKER, ENROLMENT),
     )
 
     with pytest.raises(DataQualityError) as caught:

@@ -212,6 +212,45 @@ than a re-model.
 
 Transactions are the Unit of Work's (ADR-053); the repository never commits.
 
+### 5.1 One broker, two secret lifecycles (ADR-077)
+
+The store originally held **one credential per broker per account**, which was
+right until the first broker was wired. Kite Connect needs two secrets whose
+lifecycles have nothing in common: long-lived application material the owner
+enrols and rotates rarely, and a short-lived access token that a login mints and
+that expires on the broker's schedule.
+
+Credentials therefore carry a closed **purpose** — `ENROLMENT` or `SESSION` —
+and it participates in identity, uniqueness *and* the cryptographic binding:
+
+- uniqueness is `(account_id, broker, purpose)`;
+- `credential_associated_data` binds `(credential_id, account_id, broker,
+  purpose)`, so a session ciphertext moved into the enrolment row fails to open
+  rather than being read as the owner's API secret;
+- the scheme tag moved from `dhruva.credential.aad.v1` to `…v2`, so anything
+  sealed before the distinction existed fails closed;
+- `CredentialRepository.get` takes a purpose. There is no lookup that omits one.
+
+The purpose is generic rather than Zerodha-specific, for the reason ADR-003 gives
+about the rest of the platform: these are properties of secrets, and any broker
+with an application credential and a login has both.
+
+**Rotation and audit follow from the split.** A daily login re-seals only the
+session row, so `rotated_at` on the enrolment credential keeps answering "when
+did I last rotate my API secret" rather than "when did I last log in", and
+ADR-057's conflict detection no longer fires on routine logins. Audit records
+name a credential by `credential_id`, which remains unique; what changes is that
+two credentials for one broker are now distinguishable in the trail.
+
+**Session expiry is deliberately absent** from the credential aggregate. This
+decision separates lifecycles; designing the broker-session model — expiry,
+refresh, what counts as a live session — belongs with the login use case that
+will produce one.
+
+**What this does not do.** It stores no Zerodha material, opens no broker
+session, makes no network call and fetches no market data. It is the schema and
+domain foundation the enrolment and login slice needs, and nothing more.
+
 ---
 
 ## 6. Append-only audit log (proposed **ADR-071**)
@@ -407,7 +446,7 @@ and through registered-value interpolation.
 | TD-S06-3 | Master key from the environment, not a KMS | ADR-020 permits either; an adapter swap |
 | TD-S06-4 | No key-rotation job | The hierarchy makes rotation cheap; the job belongs to S42, which owns secret rotation |
 | TD-S06-5 | **No performance budget for token verification** | It sits on every authenticated request and needs one. ADR-060 A1's Linux figures were unavailable when this was written; set the budget from the first E4 run |
-| ~~TD-S06-6~~ | ~~**Envelope ciphertexts carry no associated data**~~ | **Closed at step 4**, as this row said it would be. `encrypt_secret`/`decrypt_secret` take `associated_data` as a required keyword argument, and `credential_associated_data` derives it from the credential's identity, account and broker. An integration test copies one row's ciphertext and wrapped key onto another with SQL and asserts the result no longer opens, while the victim row still does |
+| ~~TD-S06-6~~ | ~~**Envelope ciphertexts carry no associated data**~~ | **Closed at step 4**, as this row said it would be. `encrypt_secret`/`decrypt_secret` take `associated_data` as a required keyword argument, and `credential_associated_data` derives it from the credential's identity, account, broker and -- since ADR-077 -- purpose. An integration test copies one row's ciphertext and wrapped key onto another with SQL and asserts the result no longer opens, while the victim row still does |
 | TD-S06-7 | **Service principals are not modelled** | §14 question 2, answered at step 6: humans only for now. `TokenClaims.subject` and `AuditRecord.actor` stay `str` rather than becoming a sum of human and service identity, and the refresh lifetimes are human-shaped. Nothing in S01–S07 needs a service identity, and inventing the type ahead of a caller would be architecture nobody can validate. Revisit when the first non-human caller exists — the change is a domain type and a token lifetime, not a schema migration |
 | TD-S06-8 | **A mistyped password can land in `audit_log.actor`** | A failed login records the subject as presented, which is what lets the log distinguish a brute force against one account from a scan across many. If an operator types their password into the username field, that password becomes a permanent audit row on a table nothing may edit. The mitigation is not obvious: hashing the actor destroys the grouping the field exists for, and the platform cannot tell a mistyped password from an unusual username. Recorded rather than solved, and it belongs with S42's threat-model work |
 | TD-S06-9 | **Operator paths for principal administration, role assignment and bootstrap are deferred** | S06 stores and authenticates principals and administers role permissions, but deliberately does not create or assign principals outside tests. Registration, password reset, disablement, assignment and the idempotent first-authorised-principal bootstrap command have distinct authority and operational questions; they require their own approved slice rather than being inferred from permission grant/revoke |

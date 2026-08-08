@@ -1395,3 +1395,56 @@ to any broker account; ADR-004 and ADR-009 keep internal identity separate
 from provider identifiers. The same value must be reused across every command
 -- seed, news, digest, market data and export -- because each resolves it the
 same way, and a mismatch produces an empty result rather than an error.
+
+---
+
+## 2026-08-07 — one broker, two secret lifecycles (ADR-077)
+
+**The gap that stopped the previous slice.** Wiring Zerodha needs two secrets:
+long-lived application material the owner enrols, and an access token a login
+mints and the broker expires overnight. The `credential` table held one row per
+`(account_id, broker)` and the domain said so in as many words, so there was
+nowhere for the second to live. I stopped and reported the schema gap rather
+than choosing a workaround; the owner approved the explicit purpose column.
+
+**What was built.** `CredentialPurpose` is a closed domain enum with exactly two
+members, `ENROLMENT` and `SESSION`. It is generic on purpose -- these are
+properties of secrets, not of Zerodha, and a member named after a provider would
+put a vendor into the shared identity domain. Uniqueness becomes
+`(account_id, broker, purpose)`, and `CredentialRepository.get` takes a purpose:
+there is no lookup that omits one, because a query that did would return
+whichever lifecycle the database reached first.
+
+**The purpose is bound cryptographically, not just stored.** Without it in the
+AES-GCM associated data the separation would be cosmetic: a session ciphertext
+copied into the enrolment row would decrypt cleanly, and the system would read a
+token that expires tomorrow as the owner's long-lived secret. The scheme tag
+moved from `dhruva.credential.aad.v1` to `…v2` rather than being widened
+silently, so anything sealed before the distinction existed fails closed.
+
+**Existing rows: none, verified rather than assumed.** No composition root writes
+a credential -- no enrolment use case exists and no CLI reaches the store -- so
+every credential row that has ever existed lived inside a test transaction. The
+backfill is therefore unconditional and cannot misclassify anything, and the
+`server_default` is dropped immediately so a future insert must state its purpose
+rather than inherit one. Had ambiguous rows existed, the migration would have
+been the wrong place to resolve them: re-sealing under a new binding needs the
+master key, which a migration does not have and should not.
+
+**The downgrade refuses rather than guesses.** Collapsing the uniqueness back to
+`(account_id, broker)` is only possible when no account holds two purposes for
+one broker; the alternative is deleting a row whose ciphertext cannot be
+regenerated. It raises, names the conflict, and leaves the schema where it was.
+
+**Found while implementing.** The first version of the use case imported
+`seal_credential` from infrastructure, which the layer contract forbids and which
+import-linter would have caught later and less usefully. Fixed with a
+`CredentialSealer` port beside the existing `KeyProvider` port -- the real
+function satisfies it with no cast, which is the evidence that the port describes
+the function rather than the function having been bent to fit an invented port.
+
+**What this does not do.** It stores no Zerodha material, opens no broker
+session, makes no network call and fetches no market data. Session expiry is
+deliberately absent from the credential aggregate: this slice separates
+lifecycles, and designing the broker-session model belongs with the login use
+case that will produce one.

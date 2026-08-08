@@ -41,13 +41,18 @@ if TYPE_CHECKING:
 
     from dhruva.contexts.platform.domain.audit import AuditRecord
     from dhruva.contexts.platform.domain.identity.authorisation import Role
+    from dhruva.contexts.platform.domain.identity.credentials import (
+        Credential,
+        CredentialPurpose,
+    )
     from dhruva.contexts.platform.domain.identity.principals import Principal
     from dhruva.contexts.platform.domain.identity.refresh import RefreshToken
-    from dhruva.shared.identity import AccountId, PrincipalId
+    from dhruva.shared.identity import AccountId, CredentialId, PrincipalId
 
 __all__ = [
     "FakeAuditSink",
     "FakeAuthorisationDirectory",
+    "FakeCredentialStore",
     "FakeIdentityMetrics",
     "FakePasswordHasher",
     "FakePrincipalStore",
@@ -245,6 +250,67 @@ class FakeRoleStore:
         self.by_key[(role.account_id.value, role.name)] = role
 
 
+class FakeCredentialStore:
+    """A credential store keyed the way the table is: account, broker, purpose.
+
+    Two behaviours are copied from the real repository rather than simplified,
+    for the reason the module docstring gives.
+
+    The key includes the purpose, so a fake lookup cannot find a credential the
+    real ``WHERE purpose = :purpose`` would not. A fake keyed on account and
+    broker alone would let a use case that forgot the purpose pass here and
+    return the wrong lifecycle's secret in production.
+
+    :meth:`update` raises ``ConflictError`` on a stale version, mirroring
+    ADR-057's conditional UPDATE, so a lost update is detectable without a
+    database.
+    """
+
+    def __init__(self) -> None:
+        self.by_key: dict[tuple[UUID, str, str], Credential] = {}
+        self.lose_next_update = False
+
+    @staticmethod
+    def _key(
+        account_id: AccountId, broker: str, purpose: CredentialPurpose
+    ) -> tuple[UUID, str, str]:
+        return (account_id.value, broker, purpose.value)
+
+    def seed(self, credential: Credential) -> Credential:
+        """Insert a credential directly, bypassing the transaction."""
+        self.by_key[self._key(credential.account_id, credential.broker, credential.purpose)] = (
+            credential
+        )
+        return credential
+
+    async def get(
+        self,
+        account_id: AccountId,
+        broker: str,
+        purpose: CredentialPurpose,
+    ) -> Credential | None:
+        """Return the credential for this account, broker and purpose."""
+        return self.by_key.get(self._key(account_id, broker, purpose))
+
+    async def get_by_id(self, credential_id: CredentialId) -> Credential | None:
+        """Return the credential with this identity, or ``None``."""
+        return next(
+            (c for c in self.by_key.values() if c.credential_id == credential_id),
+            None,
+        )
+
+    async def add(self, credential: Credential) -> None:
+        """Stage a new credential."""
+        self.seed(credential)
+
+    async def update(self, credential: Credential) -> None:
+        """Stage a rotation, refusing it if another writer got there first."""
+        if self.lose_next_update:
+            self.lose_next_update = False
+            raise ConflictError("credential was modified by another writer")
+        self.seed(credential)
+
+
 class FakeAuditSink:
     """Collects audit records instead of writing them."""
 
@@ -318,6 +384,7 @@ class FakeUnitOfWork:
     refresh_tokens: FakeRefreshTokenStore = field(default_factory=FakeRefreshTokenStore)
     roles: FakeRoleStore = field(default_factory=FakeRoleStore)
     audit: FakeAuditSink = field(default_factory=FakeAuditSink)
+    credentials: FakeCredentialStore = field(default_factory=FakeCredentialStore)
     authorisation: FakeAuthorisationDirectory = field(init=False)
     commits: int = 0
     rollbacks: int = 0

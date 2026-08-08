@@ -85,6 +85,7 @@ should not have been made gets caught.
 | [ADR-074](ADR-074-rls-policies-are-authored-and-exercised-from-the-start.md) | Row-level security policies are authored *and exercised* from the start, permissive in v1 | Accepted |
 | [ADR-075](ADR-075-reference-identity-and-watchlist-are-bitemporal-revisions.md) | Reference identity and watchlist membership are bitemporal revisions | Accepted |
 | [ADR-076](ADR-076-kite-market-data-uses-a-narrow-direct-http-adapter.md) | Kite market data uses a narrow direct HTTP adapter | Accepted |
+| [ADR-077](ADR-077-credential-purpose-separates-secret-lifecycles.md) | Bind a credential to its purpose, not just its broker | Accepted |
 
 ## Reading order for someone new
 

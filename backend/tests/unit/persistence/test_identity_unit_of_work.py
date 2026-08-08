@@ -14,6 +14,9 @@ from dhruva.contexts.platform.infrastructure.persistence.authorisation import (
     PostgresAuthorisationDirectory,
     RoleRepository,
 )
+from dhruva.contexts.platform.infrastructure.persistence.credentials import (
+    CredentialRepository,
+)
 from dhruva.contexts.platform.infrastructure.persistence.identity import (
     PrincipalRepository,
     RefreshTokenRepository,
@@ -44,6 +47,7 @@ async def test_identity_stores_are_bound_to_the_one_active_session() -> None:
         assert isinstance(uow.roles, RoleRepository)
         assert isinstance(uow.authorisation, PostgresAuthorisationDirectory)
         assert isinstance(uow.audit, AuditRecorder)
+        assert isinstance(uow.credentials, CredentialRepository)
 
     assert factory.latest.calls == ["rollback", "close"]
 

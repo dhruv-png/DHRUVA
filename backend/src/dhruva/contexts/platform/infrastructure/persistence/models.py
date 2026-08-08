@@ -115,7 +115,13 @@ class CredentialModel(Base):
 
     __tablename__ = "credential"
     __table_args__ = (
-        UniqueConstraint("account_id", "broker", name="uq_credential_account_broker"),
+        UniqueConstraint(
+            "account_id", "broker", "purpose", name="uq_credential_account_broker_purpose"
+        ),
+        CheckConstraint(
+            "purpose IN ('ENROLMENT', 'SESSION')",
+            name="ck_credential_purpose",
+        ),
         CheckConstraint("version >= 1", name="ck_credential_version"),
         CheckConstraint("key_version >= 1", name="ck_credential_key_version"),
     )
@@ -123,6 +129,11 @@ class CredentialModel(Base):
     id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
     account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
     broker: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: Which secret lifecycle this row holds (ADR-077). Constrained in the
+    #: database as well as in the domain: a value the enum does not know would
+    #: seal under a binding nothing can reproduce, and a check constraint is the
+    #: only guard that survives a hand-written INSERT.
+    purpose: Mapped[str] = mapped_column(String(16), nullable=False)
     wrapped_data_key: Mapped[bytes] = mapped_column(postgresql.BYTEA(), nullable=False)
     ciphertext: Mapped[bytes] = mapped_column(postgresql.BYTEA(), nullable=False)
     key_version: Mapped[int] = mapped_column(
