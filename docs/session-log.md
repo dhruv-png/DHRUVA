@@ -1509,3 +1509,62 @@ in `docs/PERFORMANCE_BASELINE.md`.
 
 **No live credential was involved.** Nothing about this slice requires one: it
 stores no Zerodha material, opens no broker session and makes no network call.
+
+---
+
+## 2026-08-08 — Zerodha enrolment and manual session login
+
+**Verified the flow before implementing it.** The official Kite Connect v3
+documentation, read on 2026-08-08: the login page is
+`https://kite.zerodha.com/connect/login?v=3&api_key=…`; a successful sign-in
+returns a `request_token` on the registered redirect URL; that token plus a
+`checksum` -- SHA-256 of `api_key + request_token + api_secret` -- is POSTed to
+`/session/token`; the response carries `access_token`, `user_id` and
+`login_time`, and the token "will expire at `6 AM` on the next day (regulatory
+requirement)". That last sentence is the only reason session expiry is
+representable at all, so it is computed from the broker's `login_time` rather
+than from this machine's clock -- a wrong local clock would otherwise extend a
+session past the point where the broker stops honouring it, and every call after
+that fails for a reason no local state explains.
+
+**What was built.** `dhruva-broker zerodha enrol | login | status`, over the
+ADR-077 credential store and no new persistence mechanism. Enrolment seals the
+API key and secret as one `ENROLMENT` document -- they are issued together and
+rotated together, so they are one lifecycle, which is not the arrangement
+ADR-077 rejected. Login opens that credential for the length of one handshake,
+exchanges the request token, and seals the access token, broker user id and
+expiry as `SESSION`. Status reports one of five states and changes nothing.
+
+**No secret can be passed as an argument, and that is a property of the parser.**
+There is no `--api-secret`, `--request-token` or `--access-token`, a test walks
+every action in every subparser and fails if an option name contains anything
+secret-shaped, and four more assert that passing one exits with status 2. Values
+arrive through a hidden prompt that refuses twice: when `getpass` warns it cannot
+suppress echo, and when stdin is not a terminal. The second refusal is the one
+worth having -- `echo secret | dhruva-broker …` working quietly is how a secret
+ends up in a committed script.
+
+**A port I had argued against turned out to be necessary.** ADR-077's
+`CredentialSealer` docstring claimed there should be no matching opener, because
+"a use case that needed it would take a `KeyProvider` visibly". That was wrong,
+and the login use case is what exposed it: holding a `KeyProvider` confers no
+ability to decrypt, since the function that decrypts lives in infrastructure. The
+choice was never between a port and visible key material; it was between a port
+and a layering violation. `CredentialOpener` now sits beside the sealer, and the
+old docstring says so rather than being quietly deleted.
+
+**What is not stored.** Of the fifteen fields Kite returns from the session
+exchange, three are kept. Email, avatar URL, enabled exchanges, permitted order
+types, `public_token` and `enctoken` are not parsed, not logged and not stored --
+and a test asserts it by name, because "we do not keep the email" is a privacy
+claim and an unchecked claim stops being true the first time somebody adds a
+field while they are in there.
+
+**No migration.** 0017 was sufficient, as expected: two purposes, two rows, one
+broker. The session's expiry lives inside the sealed document rather than in a
+column, so nothing about this slice needed the schema to change.
+
+**What this still does not do.** No instrument master, no daily bars, no
+backfill, no scheduler, no orders and no paper trading. Authenticating is not
+having data: after a successful login the ingestion path is still unwired, which
+is the next separately-approved slice.

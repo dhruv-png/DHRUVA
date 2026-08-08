@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AuditSink",
     "AuthorisationDirectory",
+    "CredentialOpener",
     "CredentialSealer",
     "CredentialStore",
     "IdentityUnitOfWork",
@@ -183,10 +184,13 @@ class CredentialSealer(Protocol):
     ``infrastructure.crypto``; the composition root injects it, exactly as it
     injects a ``KeyProvider``.
 
-    There is deliberately no matching "open" port. Opening a credential is a
-    narrower, rarer act than storing one, and a use case that needed it would
-    take a ``KeyProvider`` visibly rather than acquiring the ability through a
-    collaborator it was handed for something else.
+    A matching :class:`CredentialOpener` follows below. The first version of
+    this module argued there should not be one -- that a use case needing a
+    plaintext would "take a ``KeyProvider`` visibly" instead. That was wrong,
+    and the broker-login use case is what exposed it: holding a ``KeyProvider``
+    confers no ability to decrypt, because the function that does the
+    decrypting lives in infrastructure. The choice was never between a port and
+    visible key material; it was between a port and a layering violation.
     """
 
     def __call__(  # noqa: PLR0913 - four of these are the binding itself
@@ -200,6 +204,34 @@ class CredentialSealer(Protocol):
         purpose: CredentialPurpose,
     ) -> EncryptedSecret:
         """Return sealed material bound to these four facts."""
+        ...
+
+
+@runtime_checkable
+class CredentialOpener(Protocol):
+    """Opens sealed material back into a plaintext (ADR-070).
+
+    Deliberately separate from :class:`CredentialSealer` rather than two methods
+    on one port. Storing a credential is common; opening one is rare and is the
+    only route to a plaintext in the system. A use case that only writes should
+    not be handed the ability to read, and two ports is how that is expressed in
+    a constructor signature rather than in a comment.
+
+    The ``KeyProvider`` stays an explicit argument for the reason ADR-070 gives:
+    the call that can produce a secret should be visibly holding what it takes
+    to produce one.
+    """
+
+    def __call__(self, credential: Credential, key_provider: KeyProvider) -> SecretValue:
+        """Return the plaintext this credential seals.
+
+        Raises
+        ------
+        SafetyError
+            If the ciphertext does not authenticate against the row presenting
+            it -- a credential moved between accounts, brokers, purposes or
+            records (TD-S06-6, ADR-077).
+        """
         ...
 
 
