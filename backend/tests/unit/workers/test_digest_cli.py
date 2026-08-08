@@ -40,6 +40,11 @@ from dhruva.contexts.intelligence.domain.news import (
     canonical_url,
 )
 from dhruva.contexts.intelligence.domain.sentiment import evaluate_sentiment
+from dhruva.contexts.intelligence.interfaces.attention_presentation import (
+    ATTENTION_DISCLAIMER,
+    rank_watchlist,
+    render_attention,
+)
 from dhruva.contexts.intelligence.interfaces.digest_presentation import (
     DIGEST_DISCLAIMER,
     render_digest,
@@ -492,3 +497,60 @@ def test_market_context_can_be_switched_off_from_the_command_line() -> None:
 
     assert parser.parse_args(["--account", str(ACCOUNT)]).no_market is False
     assert parser.parse_args(["--account", str(ACCOUNT), "--no-market"]).no_market is True
+
+
+# --------------------------------------------------------------------------- #
+# --ranked: the same path, with attention prepended
+# --------------------------------------------------------------------------- #
+
+
+def test_ranked_defaults_to_off() -> None:
+    """The digest is the existing product; ranking is an addition, not a default."""
+    parser = cli.build_parser()
+
+    assert parser.parse_args(["--account", str(ACCOUNT)]).ranked is False
+    assert parser.parse_args(["--account", str(ACCOUNT), "--ranked"]).ranked is True
+
+
+def test_ranked_help_text_does_not_promise_a_recommendation() -> None:
+    """Somebody reading --help must not come away thinking this is a signal."""
+    parser = cli.build_parser()
+    ranked_action = next(
+        action for action in parser._actions if "--ranked" in action.option_strings
+    )
+
+    assert "recommendation" in (ranked_action.help or "")
+
+
+def test_ranked_output_is_the_attention_rendering_prepended_to_the_unchanged_digest() -> None:
+    """Exactly what run() assembles: unchanged digest, with attention ahead of it.
+
+    ``run()`` composes ``render_attention`` and ``render_digest`` from the same
+    ``digest``/``contexts`` pair and joins them with a blank line; that
+    composition is reproduced here so it is proven without a database.
+    """
+    digest = _digest(FRAUD)
+    contexts = {SBIN.instrument_id: _context(["100", "110"])}
+
+    without_ranking = render_digest(digest, contexts)
+    ranked = rank_watchlist(digest, contexts)
+    with_ranking = f"{render_attention(ranked)}\n\n{without_ranking}"
+
+    assert with_ranking.endswith(without_ranking)
+    assert with_ranking.index(ATTENTION_DISCLAIMER) < with_ranking.index(DIGEST_DISCLAIMER)
+    attention_only, _, _ = with_ranking.partition(without_ranking)
+    assert "SBIN" in attention_only
+
+
+def test_ranked_with_no_market_treats_every_instrument_as_unavailable() -> None:
+    """--ranked and --no-market compose the same way render_digest already does.
+
+    ``run()`` passes ``None`` for market contexts under ``--no-market`` to both
+    ``render_digest`` and ``rank_watchlist`` -- attention must read that the same
+    way the digest does: not requested, not zero.
+    """
+    ranked = rank_watchlist(_digest(FRAUD), None)
+
+    assert all(entry.market_context_available is False for entry in ranked)
+    rendered = render_attention(ranked)
+    assert "market context unavailable" in rendered

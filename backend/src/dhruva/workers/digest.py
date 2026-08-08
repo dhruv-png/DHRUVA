@@ -38,6 +38,10 @@ from dhruva.contexts.intelligence.domain.digest import MAX_ITEMS_PER_INSTRUMENT
 from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import (
     SqlAlchemyIntelligenceUnitOfWork,
 )
+from dhruva.contexts.intelligence.interfaces.attention_presentation import (
+    rank_watchlist,
+    render_attention,
+)
 from dhruva.contexts.intelligence.interfaces.digest_presentation import render_digest
 from dhruva.contexts.marketdata.api import (
     DEFAULT_MULTI_DAY_SESSIONS,
@@ -127,6 +131,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=MAX_ITEMS_PER_INSTRUMENT,
         help=f"items shown per instrument (default {MAX_ITEMS_PER_INSTRUMENT})",
     )
+    parser.add_argument(
+        "--ranked",
+        action="store_true",
+        help=(
+            "prepend a deterministic research-attention ranking -- observable "
+            "price/volume/news magnitude only, never a recommendation"
+        ),
+    )
     return parser
 
 
@@ -180,7 +192,12 @@ async def run(argv: Sequence[str] | None = None) -> int:
     finally:
         await engine.dispose()
 
-    sys.stdout.write(render_digest(digest, None if args.no_market else contexts) + "\n")
+    market_contexts = None if args.no_market else contexts
+    output = render_digest(digest, market_contexts)
+    if args.ranked:
+        ranked = rank_watchlist(digest, market_contexts)
+        output = f"{render_attention(ranked)}\n\n{output}"
+    sys.stdout.write(output + "\n")
     return _EXIT_OK
 
 
