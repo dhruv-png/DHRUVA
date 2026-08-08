@@ -1,6 +1,6 @@
 """Compose and render research attention, with an explicit non-recommendation notice.
 
-Three jobs, for the same reason ``digest_presentation`` and ``digest_export``
+Four jobs, for the same reason ``digest_presentation`` and ``digest_export``
 combine composition and output rather than splitting them: :func:`rank_watchlist`
 is where a ``WatchlistDigest`` and a ``MarketContext`` mapping -- already
 resolved point-in-time by their own callers -- are read together, and the
@@ -13,7 +13,11 @@ only reads a ``MarketContext``'s fields and calls into that pure arithmetic.
 :func:`render_brief` is the third job: a compact, top-N alternative to
 :func:`render_attention` plus the full digest, showing the same ranking with
 just enough market and news detail beside each entry to explain it, and
-nothing that would need a second read to produce.
+nothing that would need a second read to produce. :func:`render_changes` is
+the fourth: rendering
+:mod:`dhruva.contexts.intelligence.domain.changes`'s comparison of two
+already-ranked cutoffs -- itself pure and MarketContext-free, so this module
+only prints what it already computed.
 
 The same constraint ``digest_presentation`` is built around applies to
 :func:`render_attention` with more force, not less: a list that puts one
@@ -36,17 +40,29 @@ from dhruva.contexts.intelligence.domain.attention import (
     move_points,
     volume_points,
 )
+from dhruva.contexts.intelligence.domain.changes import ChangeCategory
 from dhruva.contexts.intelligence.domain.events import EventCategory, event_precedence
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from dhruva.contexts.intelligence.domain.digest import DigestSection, WatchlistDigest
+    from dhruva.contexts.intelligence.domain.changes import ResearchChange
+    from dhruva.contexts.intelligence.domain.digest import (
+        DigestEntry,
+        DigestSection,
+        WatchlistDigest,
+    )
     from dhruva.contexts.marketdata.api import MarketContext
     from dhruva.shared.identity import InstrumentId
 
-__all__ = ["ATTENTION_DISCLAIMER", "rank_watchlist", "render_attention", "render_brief"]
+__all__ = [
+    "ATTENTION_DISCLAIMER",
+    "rank_watchlist",
+    "render_attention",
+    "render_brief",
+    "render_changes",
+]
 
 #: Printed once per rendering. States positively what the ranking measures and
 #: negatively what it is never allowed to be read as -- both matter, because a
@@ -283,4 +299,79 @@ def _brief_news_lines(section: DigestSection | None) -> list[str]:
         lines.append(f"{_INDENT * 3}{news.text.title}")
         lines.append(f"{_INDENT * 3}{news.identity.url}")
         lines.append(f"{_INDENT * 3}source: {news.source.display_name} ({news.source.key})")
+    return lines
+
+
+def render_changes(
+    changes: Sequence[ResearchChange],
+    *,
+    from_cutoff: datetime,
+    to_cutoff: datetime,
+) -> str:
+    """Render one deterministic comparison between two research cutoffs.
+
+    ``changes`` is expected to already be the result of :func:`~dhruva.
+    contexts.intelligence.domain.changes.compare_watchlist` -- this function
+    performs no comparison, ranking or point-in-time logic of its own, and no
+    instrument whose verdict was identical at both cutoffs appears at all.
+    """
+    lines = [
+        "Research changes",
+        f"from {from_cutoff.isoformat()}",
+        f"to   {to_cutoff.isoformat()}",
+        "",
+        ATTENTION_DISCLAIMER,
+        "",
+        _RULE,
+        "",
+    ]
+    if not changes:
+        lines.append("No changes between these two cutoffs.")
+        return "\n".join(lines)
+
+    for change in changes:
+        lines.extend(_change_entry(change))
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _change_entry(change: ResearchChange) -> list[str]:
+    """Render one instrument's categories, then its supporting detail."""
+    lines = [f"{change.canonical_symbol}  --  {change.company_name}"]
+    lines.append(f"{_INDENT}categories: {', '.join(change.categories)}")
+    lines.append(
+        f"{_INDENT}attention: {change.before.band.value} {change.before.score} -> "
+        f"{change.after.band.value} {change.after.score}"
+    )
+    if change.new_reasons:
+        lines.append(f"{_INDENT}new reasons:")
+        lines.extend(f"{_INDENT * 2}- {reason}" for reason in change.new_reasons)
+    if change.new_news:
+        lines.append(f"{_INDENT}new archived news:")
+        lines.extend(_change_news_lines(change.new_news))
+    if ChangeCategory.MARKET_CONTEXT_ADDED in change.categories:
+        lines.append(f"{_INDENT}market context: unavailable -> available")
+    if ChangeCategory.MARKET_CONTEXT_REMOVED in change.categories:
+        lines.append(f"{_INDENT}market context: available -> unavailable")
+    return lines
+
+
+def _change_news_lines(entries: Sequence[DigestEntry]) -> list[str]:
+    """Render the minimal, citable facts for each newly-seen item.
+
+    Same fields ``_brief_news_lines`` shows, plus ``first seen`` -- the one
+    fact that made the item "new" rather than merely present, and the fact a
+    reader would otherwise have to look up to check this report at all.
+    """
+    lines: list[str] = []
+    for item in entries:
+        news = item.item.revision.item
+        lines.append(
+            f"{_INDENT * 2}- {item.category}  sentiment {item.sentiment}  "
+            f"published {news.published_at.isoformat()}"
+        )
+        lines.append(f"{_INDENT * 3}{news.text.title}")
+        lines.append(f"{_INDENT * 3}{news.identity.url}")
+        lines.append(f"{_INDENT * 3}source: {news.source.display_name} ({news.source.key})")
+        lines.append(f"{_INDENT * 3}first seen {news.first_seen_at.isoformat()}")
     return lines

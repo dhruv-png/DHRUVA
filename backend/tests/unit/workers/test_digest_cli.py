@@ -25,6 +25,7 @@ from dhruva.contexts.intelligence.domain.archive import (
     content_revision,
 )
 from dhruva.contexts.intelligence.domain.attention import top_attention
+from dhruva.contexts.intelligence.domain.changes import compare_watchlist
 from dhruva.contexts.intelligence.domain.digest import build_digest
 from dhruva.contexts.intelligence.domain.entity_linking import (
     LinkableInstrument,
@@ -46,6 +47,7 @@ from dhruva.contexts.intelligence.interfaces.attention_presentation import (
     rank_watchlist,
     render_attention,
     render_brief,
+    render_changes,
 )
 from dhruva.contexts.intelligence.interfaces.digest_presentation import (
     DIGEST_DISCLAIMER,
@@ -72,6 +74,7 @@ from dhruva.workers import digest as cli
 from dhruva.workers.cli_arguments import (
     BRIEF_TOP_DEFAULT,
     parse_account,
+    parse_change_window,
     parse_cutoff,
     parse_max_items,
     parse_sessions,
@@ -79,6 +82,7 @@ from dhruva.workers.cli_arguments import (
     parse_window,
     select_instruments,
     validate_brief_options,
+    validate_changes_options,
 )
 
 pytestmark = pytest.mark.unit
@@ -635,3 +639,154 @@ def test_brief_output_is_exactly_render_brief_of_the_top_selection() -> None:
     assert "SBIN" in expected
     rendered = render_attention(ranked)
     assert "market context unavailable" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# --changes: two independent reads compared, never a third rendering of one
+# --------------------------------------------------------------------------- #
+
+
+def test_changes_and_from_and_to_default_to_off() -> None:
+    """A change report is an addition to the digest, never the default."""
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["--account", str(ACCOUNT)])
+    assert (args.changes, args.from_cutoff, args.to_cutoff) == (False, None, None)
+
+    changed = parser.parse_args(
+        [
+            "--account",
+            str(ACCOUNT),
+            "--changes",
+            "--from",
+            "2026-08-07T18:00:00+00:00",
+            "--to",
+            "2026-08-08T18:00:00+00:00",
+        ]
+    )
+    assert changed.changes is True
+    assert changed.from_cutoff == "2026-08-07T18:00:00+00:00"
+    assert changed.to_cutoff == "2026-08-08T18:00:00+00:00"
+
+
+def test_changes_help_text_does_not_promise_a_recommendation() -> None:
+    """Somebody reading --help must not come away thinking this is a signal."""
+    parser = cli.build_parser()
+    changes_action = next(
+        action for action in parser._actions if "--changes" in action.option_strings
+    )
+
+    assert "recommendation" in (changes_action.help or "")
+
+
+def test_changes_requires_both_from_and_to() -> None:
+    """Half a window cannot be compared."""
+    with pytest.raises(ValidationError, match="requires both --from and --to"):
+        validate_changes_options(
+            changes=True, ranked=False, brief=False, as_of=None, from_cutoff=None, to_cutoff=None
+        )
+
+
+def test_changes_is_mutually_exclusive_with_ranked_and_brief() -> None:
+    """Two different, incompatible shapes of the same ranking; neither is silently chosen."""
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        validate_changes_options(
+            changes=True,
+            ranked=True,
+            brief=False,
+            as_of=None,
+            from_cutoff="2026-08-07T18:00:00+00:00",
+            to_cutoff="2026-08-08T18:00:00+00:00",
+        )
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        validate_changes_options(
+            changes=True,
+            ranked=False,
+            brief=True,
+            as_of=None,
+            from_cutoff="2026-08-07T18:00:00+00:00",
+            to_cutoff="2026-08-08T18:00:00+00:00",
+        )
+
+
+def test_changes_is_mutually_exclusive_with_as_of() -> None:
+    """--as-of names one cutoff; --changes names two -- one would be silently unused."""
+    with pytest.raises(ValidationError, match="--as-of does not apply"):
+        validate_changes_options(
+            changes=True,
+            ranked=False,
+            brief=False,
+            as_of="2026-08-08T18:00:00+00:00",
+            from_cutoff="2026-08-07T18:00:00+00:00",
+            to_cutoff="2026-08-08T18:00:00+00:00",
+        )
+
+
+def test_from_and_to_without_changes_are_refused() -> None:
+    """--from/--to bound a change report's own window; without --changes they do nothing."""
+    with pytest.raises(ValidationError, match="only meaningful together with --changes"):
+        validate_changes_options(
+            changes=False,
+            ranked=False,
+            brief=False,
+            as_of=None,
+            from_cutoff="2026-08-07T18:00:00+00:00",
+            to_cutoff=None,
+        )
+
+
+def test_changes_alone_with_a_valid_window_is_accepted() -> None:
+    """The combination a runbook actually uses must not be refused."""
+    validate_changes_options(
+        changes=True,
+        ranked=False,
+        brief=False,
+        as_of=None,
+        from_cutoff="2026-08-07T18:00:00+00:00",
+        to_cutoff="2026-08-08T18:00:00+00:00",
+    )
+    validate_changes_options(
+        changes=False, ranked=False, brief=False, as_of=None, from_cutoff=None, to_cutoff=None
+    )
+
+
+def test_to_earlier_than_from_is_refused() -> None:
+    """A change report reads forward; asking it to read backward is refused."""
+    with pytest.raises(ValidationError, match="--to must not be earlier than --from"):
+        parse_change_window("2026-08-08T18:00:00+00:00", "2026-08-07T18:00:00+00:00")
+
+
+def test_to_equal_to_from_is_accepted() -> None:
+    """A zero-width window is a valid question with a deterministic, empty answer."""
+    same = "2026-08-08T18:00:00+00:00"
+    assert parse_change_window(same, same) == (parse_cutoff(same), parse_cutoff(same))
+
+
+def test_to_later_than_from_is_accepted() -> None:
+    """The ordinary case."""
+    from_cutoff, to_cutoff = parse_change_window(
+        "2026-08-07T18:00:00+00:00", "2026-08-08T18:00:00+00:00"
+    )
+    assert from_cutoff < to_cutoff
+
+
+def test_changes_output_is_exactly_render_changes_of_the_comparison() -> None:
+    """Exactly what run() assembles under --changes: two independent reads, compared.
+
+    ``run()`` never renders a single-cutoff digest under ``--changes`` -- it is
+    a substitute for one, not an addition -- so this reproduces only that path,
+    without a database.
+    """
+    digest_before = _digest()
+    digest_after = _digest(FRAUD)
+    contexts_after = {SBIN.instrument_id: _context(["100", "110"])}
+
+    before = rank_watchlist(digest_before, None)
+    after = rank_watchlist(digest_after, contexts_after)
+    changes = compare_watchlist(before, after, after_digest=digest_after)
+    expected = render_changes(changes, from_cutoff=OBSERVED, to_cutoff=OBSERVED + timedelta(days=1))
+
+    assert "Research changes" in expected
+    assert DIGEST_DISCLAIMER not in expected
+    assert "SBIN" in expected
+    assert "ENTERED" in expected

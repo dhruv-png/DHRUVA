@@ -33,6 +33,7 @@ __all__ = [
     "BRIEF_TOP_DEFAULT",
     "MAX_ITEMS_CEILING",
     "parse_account",
+    "parse_change_window",
     "parse_cutoff",
     "parse_max_items",
     "parse_sessions",
@@ -40,6 +41,7 @@ __all__ = [
     "parse_window",
     "select_instruments",
     "validate_brief_options",
+    "validate_changes_options",
 ]
 
 #: Items one section may show. A digest is something a person reads; past this
@@ -154,6 +156,53 @@ def parse_top(requested: int) -> int:
             maximum=BRIEF_TOP_CEILING,
         )
     return requested
+
+
+def parse_change_window(from_raw: str, to_raw: str) -> tuple[datetime, datetime]:
+    """Parse and order-check the two cutoffs a change report compares.
+
+    ``--to`` earlier than ``--from`` cannot be answered: a change report
+    reads forward from the earlier cutoff to the later one, and silently
+    swapping them would compare in a direction the operator did not ask for.
+    Equal cutoffs are accepted -- the report over them is empty, and empty is
+    a complete, correct answer rather than a special case.
+    """
+    from_cutoff = parse_cutoff(from_raw)
+    to_cutoff = parse_cutoff(to_raw)
+    if to_cutoff < from_cutoff:
+        raise ValidationError(
+            "--to must not be earlier than --from",
+            from_=from_cutoff.isoformat(),
+            to=to_cutoff.isoformat(),
+        )
+    return from_cutoff, to_cutoff
+
+
+def validate_changes_options(  # noqa: PLR0913 - one keyword per independently varied flag
+    *,
+    changes: bool,
+    ranked: bool,
+    brief: bool,
+    as_of: str | None,
+    from_cutoff: str | None,
+    to_cutoff: str | None,
+) -> None:
+    """Refuse an option combination --changes and the other renderings cannot both satisfy.
+
+    A change report replaces the single-cutoff renderings entirely -- it
+    reads the archive twice, once per cutoff, rather than once -- so it is
+    refused alongside ``--ranked``/``--brief`` rather than silently choosing
+    one shape to print. ``--as-of`` names one cutoff; ``--changes`` names two
+    explicitly, so accepting both would leave one silently unused.
+    """
+    if changes and (ranked or brief):
+        raise ValidationError("--changes is mutually exclusive with --ranked and --brief")
+    if changes and as_of is not None:
+        raise ValidationError("--changes compares --from and --to; --as-of does not apply")
+    if changes and (from_cutoff is None or to_cutoff is None):
+        raise ValidationError("--changes requires both --from and --to")
+    if not changes and (from_cutoff is not None or to_cutoff is not None):
+        raise ValidationError("--from and --to are only meaningful together with --changes")
 
 
 def validate_brief_options(*, brief: bool, ranked: bool, top: int | None) -> None:
