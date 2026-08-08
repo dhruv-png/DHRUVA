@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -96,6 +97,195 @@ def test_schema_drift_and_malformed_rows_fail_closed(payload: bytes, message: st
     """Provider schema or value drift cannot silently produce instrument facts."""
     with pytest.raises(DataQualityError, match=message):
         parse_instrument_master(payload)
+
+
+_HEADER = (
+    b"instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,"
+    b"tick_size,lot_size,instrument_type,segment,exchange\n"
+)
+
+
+def _row(  # noqa: PLR0913 - one keyword per CSV column, all defaulted
+    *,
+    instrument_token: str = "1",  # noqa: S107 - a public provider row id, not a secret
+    exchange_token: str = "2",  # noqa: S107 - a public provider row id, not a secret
+    tradingsymbol: str = "TESTIDX",
+    name: str = "TEST INDEX",
+    last_price: str = "0",
+    expiry: str = "",
+    strike: str = "",
+    tick_size: str = "",
+    lot_size: str = "",
+    instrument_type: str = "EQ",
+    segment: str = "INDICES",
+    exchange: str = "NSE",
+) -> bytes:
+    """Build one header plus one synthetic data row, structurally like a live one.
+
+    Defaults model a non-tradeable index row -- blank expiry, strike, tick size
+    and lot size, exactly as Zerodha's own forum moderators describe: "INDICES
+    can't be traded, so all those irrelevant fields are null." Every value here
+    is synthetic; nothing is copied from a real fetch.
+    """
+    fields = (
+        instrument_token,
+        exchange_token,
+        tradingsymbol,
+        name,
+        last_price,
+        expiry,
+        strike,
+        tick_size,
+        lot_size,
+        instrument_type,
+        segment,
+        exchange,
+    )
+    return _HEADER + (",".join(fields) + "\n").encode()
+
+
+def test_a_non_tradeable_row_with_blank_optional_numeric_fields_is_accepted() -> None:
+    """A live compatibility regression: an index row must not poison the whole fetch.
+
+    Zerodha's real instrument dump nulls strike, tick size and lot size for
+    rows that can never be traded -- this is structurally the shape that
+    previously raised DHR-DQL-001 on a live fetch, reproduced synthetically.
+    """
+    entries = parse_instrument_master(_row(strike="", tick_size="", lot_size=""))
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.strike == Decimal("0")
+    assert entry.tick_size == Decimal("0")
+    assert entry.lot_size == 0
+    assert entry.segment == "INDICES"
+    assert entry.instrument_type == "EQ"
+
+
+def test_a_present_but_unparseable_tick_size_is_still_refused_with_a_precise_diagnostic() -> None:
+    """Blank is accepted; garbled is not -- and the failure names its own column."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(tick_size="not-a-decimal"))
+
+    context = captured.value.context
+    assert context["row_number"] == 2
+    assert context["column"] == "tick_size"
+    assert context["exchange"] == "NSE"
+    assert context["segment"] == "INDICES"
+    assert context["instrument_type"] == "EQ"
+    assert context["trading_symbol"] == "TESTIDX"
+
+
+def test_a_negative_tick_size_is_still_refused() -> None:
+    """A present, explicit negative value is a domain violation, not an absence."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(tick_size="-1"))
+
+    context = captured.value.context
+    assert context["column"] == "tick_size"
+    assert "negative" in context["reason"]
+
+
+def test_a_negative_lot_size_is_still_refused() -> None:
+    """The same guarantee holds for lot size, not only for tick size."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(lot_size="-5"))
+
+    assert captured.value.context["column"] == "lot_size"
+
+
+def test_a_blank_required_identity_field_is_still_refused() -> None:
+    """Exchange, segment and instrument_type stay required: blank there is unresolvable."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(segment=""))
+
+    context = captured.value.context
+    assert context["column"] == "segment"
+    assert context["row_number"] == 2
+
+
+def test_a_blank_trading_symbol_is_still_refused() -> None:
+    """The instrument's own identifier is never optional."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(tradingsymbol=""))
+
+    assert captured.value.context["column"] == "tradingsymbol"
+
+
+def test_the_expiry_format_diagnostic_names_its_own_column() -> None:
+    """The pre-existing malformed-expiry refusal now also names the column."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(expiry="not-a-date"))
+
+    assert captured.value.context["column"] == "expiry"
+
+
+def test_a_bse_equity_name_with_surrounding_whitespace_is_normalized_not_refused() -> None:
+    """A live compatibility regression, reproduced structurally with a synthetic value.
+
+    A live fetch was refused on exactly this shape -- exchange BSE, segment
+    BSE, instrument_type EQ, tradingsymbol BIRLACABLE -- because the
+    registrar-sourced ``name`` carried incidental surrounding whitespace. The
+    company name below is a placeholder, not the real one; only the
+    structural shape is reproduced.
+    """
+    entries = parse_instrument_master(
+        _row(
+            tradingsymbol="BIRLACABLE",
+            name="  Sample Cable Industries Limited  ",
+            instrument_type="EQ",
+            segment="BSE",
+            exchange="BSE",
+        )
+    )
+
+    assert len(entries) == 1
+    assert entries[0].name == "Sample Cable Industries Limited"
+    assert entries[0].trading_symbol == "BIRLACABLE"
+
+
+def test_internal_whitespace_in_a_name_is_preserved_not_collapsed() -> None:
+    """Only the edges are trimmed -- this is boundary normalization, not reformatting."""
+    entries = parse_instrument_master(_row(name="  Sample  Cable  Industries  "))
+
+    assert entries[0].name == "Sample  Cable  Industries"
+
+
+def test_a_name_still_invalid_after_stripping_whitespace_is_refused() -> None:
+    """Stripping removes formatting noise; it does not widen what a name may be."""
+    too_long = "A" * 201
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(name=f"  {too_long}  "))
+
+    context = captured.value.context
+    assert context["column"] == "name"
+    assert "too long" in context["reason"]
+
+
+def test_a_blank_name_and_expiry_remain_accepted() -> None:
+    """Unchanged behavior: a derivative has no name; an equity has no expiry."""
+    entries = parse_instrument_master(
+        _row(name="", expiry="", instrument_type="FUT", segment="NFO-FUT", exchange="NFO")
+    )
+
+    assert entries[0].name == ""
+    assert entries[0].expiry is None
+
+
+def test_the_diagnostic_never_leaks_more_than_the_documented_public_columns() -> None:
+    """Only structural, public instrument facts appear in the error -- nothing else."""
+    with pytest.raises(DataQualityError) as captured:
+        parse_instrument_master(_row(tick_size="garbage"))
+
+    assert set(captured.value.context) == {
+        "row_number",
+        "column",
+        "reason",
+        "exchange",
+        "segment",
+        "instrument_type",
+        "trading_symbol",
+    }
 
 
 def test_duplicate_provider_tokens_are_rejected() -> None:
