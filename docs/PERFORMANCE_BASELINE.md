@@ -706,6 +706,52 @@ optimised, and all six remain unverified on the authoritative Linux environment.
 
 ---
 
+## E2 — canonical measurement (2026-08-08T03:08:41Z, commit `9a6c31d`)
+
+Evidence: `docs/evidence/s04-20260808T030841Z/`. `GATING: PASS`, shell exit
+status 0; `50-benchmarks` the only failure, informational under ADR-060 §2. Host
+port **55632** via `-ContainerPort`. PostgreSQL 16.6, TimescaleDB 2.17.2,
+Python 3.12.13.
+
+Suite result: **5 failed, 22 passed, 2,791 deselected, 2 xfailed in 9.54s**.
+
+### Nine runs
+
+| Benchmark | Budget | 13:43Z 08-07 | 14:54Z 08-07 | **03:08Z 08-08** |
+|---|---|---|---|---|
+| Database query p95 | < 3 ms | 1.456 ✓ | 0.867 ✓ | **1.192 ms** ✓ |
+| End-to-end read p95 | < 3 ms | 3.029 ✗ | 4.030 ✗ | **3.159 ms** ✗ |
+| End-to-end write p95 | < 5 ms | 5.031 ✗ | 5.329 ✗ | **5.374 ms** ✗ |
+| Bulk append, 10,000 rows | < 500 ms | 72.6 ✓ | 74.0 ✓ | **69.4 ms** ✓ |
+| `money add` | 0.500 µs | 0.573 ✗ | 0.573 ✗ | **0.574 µs** ✗ |
+| `money mul` | 0.500 µs | 0.608 ✗ | 0.593 ✗ | **0.598 µs** ✗ |
+| 2000-day iteration | < 1000 µs | 1038.1 ✗ | passed ✓ | **1012.6 µs** ✗ |
+
+**Five failures rather than four, and the fifth is the range iteration again.**
+It has now changed verdict seven times across nine runs, and 1012.6 µs against a
+1000 µs budget is a 1.3% miss — the same margin that read as a pass seventy
+minutes earlier and as a 3.8% miss the morning before that. Nothing in any of
+those three commits touches `DateRange`.
+
+The two `money` primitives are the steadiest numbers in the table and the only
+ones that have never passed: 0.574 and 0.598 µs here, within 0.002 and 0.005 µs
+of the previous run. A budget missed by 15–20% in every one of nine runs is a
+budget that was set on a different machine, not a regression.
+
+The write has now measured 5.031, 6.128, 28.661, 5.329 and 5.374 ms across five
+runs of four commits. Three of the five are within 8% of the 5 ms threshold and
+one was 5.7× past it, which is the range this environment produces from code
+that does not change.
+
+The commit under test adds a column, an enum and a cipher binding to the
+`credential` table — a table no benchmark touches, holding no rows. No budget
+adjusted, nothing optimised, and all six remain unverified on the authoritative
+Linux environment.
+
+---
+
+---
+
 ## How to append
 
 After a canonical run, add a new dated section rather than editing an existing

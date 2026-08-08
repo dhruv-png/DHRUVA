@@ -1,0 +1,64 @@
+﻿uv : INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+At C:\Users\dhruv\Projects\DHRUVA\scripts\canonical_validation.ps1:728 char:48
++ ... d '34-migration-current'   { uv run alembic current --verbose } | Out ...
++                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO  [alembic....PostgresqlImpl.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+Current revision(s) for postgresql+asyncpg://dhruva_test:***@localhost:55632/dhruva_test:
+Rev: 0017_credential_purpose (head)
+Parent: 0016_news_archive
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260807_1500_credential_purpose.py
+
+    Distinguish credential purposes so one broker can hold two secret lifecycles.
+    
+    Revision ID: 0017_credential_purpose
+    Revises: 0016_news_archive
+    Created: 2026-08-07
+    
+    Reversibility: reversible
+    Rollback procedure: `alembic downgrade 0016_news_archive` drops `purpose` and
+        restores the `(account_id, broker)` uniqueness. **Downgrade fails loudly if
+        any account holds more than one credential for one broker**, because
+        collapsing them would have to discard a row, and the row it would discard
+        holds ciphertext nobody can regenerate. Delete the unwanted credential
+        explicitly first if that is really the intent.
+    Irreversible operations: none. No ciphertext is read, rewritten or re-sealed by
+        this migration in either direction.
+    Expected runtime: sub-second. The table is empty in every environment that
+        exists today (see the compatibility note below), and would be a handful of
+        rows even in a mature one.
+    Operational impact: one new NOT NULL column with a check constraint, one unique
+        constraint replaced by a wider one. Existing ciphertext is untouched.
+    
+    Compatibility with existing rows
+    --------------------------------
+    There are none, and this is a statement of fact rather than an assumption. No
+    composition root writes a credential: nothing under `src/` constructs a
+    `Credential` outside the persistence factory that reconstructs one on read, no
+    enrolment use case exists, and no CLI reaches the credential store. Every
+    credential row that has ever existed was created inside a test and dropped with
+    its transaction.
+    
+    So the backfill is unconditional and cannot misclassify anything: any row that
+    somehow exists predates the distinction entirely, and the only material the
+    product was ever going to store under the old shape is enrolment material -- the
+    session concept did not exist until this revision. The `server_default` is
+    therefore applied and then dropped, leaving the column NOT NULL with no default,
+    so a future insert must state its purpose rather than inherit one.
+    
+    Had rows existed with two possible meanings, this migration would have been the
+    wrong place to guess: re-sealing ciphertext under a new binding requires the
+    master key, which a migration does not have and should not.
+    
+    Why the associated data changed with the schema
+    -----------------------------------------------
+    ADR-077. `purpose` is bound into the AES-GCM associated data, and the binding's
+    version tag moved from v1 to v2 in the same change. Any ciphertext sealed under
+    v1 now fails authentication rather than opening under a binding that no longer
+    distinguishes an owner's long-lived secret from a day's session token. With no
+    rows in existence that costs nothing today, and it is the behaviour that would
+    have been wanted had there been rows.
+
+exit_code: 0
