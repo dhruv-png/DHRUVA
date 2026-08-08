@@ -58,7 +58,18 @@ class NewsFeed(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PollNewsFeedsCommand:
-    """One polling pass across every configured feed."""
+    """One polling pass across every configured feed.
+
+    ``analysed_at`` is a floor, not the final ingestion cutoff. It is
+    typically captured before any feed is fetched -- often before a search
+    plan is even built -- so that it can serve as the ``known_at`` a caller
+    reads the watchlist at. :meth:`PollNewsFeeds.execute` never ingests
+    against it directly: each feed stamps its own items with its own
+    retrieval instant, taken after this value was captured, and a live fetch
+    routinely takes long enough that those instants land after it. The actual
+    cutoff ingestion uses is derived after fetching, from what was actually
+    observed, so it can never be earlier than the field on this command.
+    """
 
     account_id: AccountId
     universe: tuple[LinkableInstrument, ...]
@@ -187,12 +198,21 @@ class PollNewsFeeds:
                 duplicates=0,
             )
 
+        # The floor captured before fetching, widened to cover every instant a
+        # feed actually stamped. Never earlier than a real observation: it is
+        # the later of the caller's own cutoff and the latest genuine
+        # first_seen_at this pass produced, not a fresh clock read and not a
+        # backdated one. A cutoff taken once before a multi-batch, multi-second
+        # live fetch is stale by the time later batches return -- this is not
+        # hypothetical, it is what a live poll actually produces.
+        analysed_at = max(command.analysed_at, *(item.first_seen_at for item in offered))
+
         ingested = await self._ingest.execute(
             IngestNewsItemsCommand(
                 account_id=command.account_id,
                 items=tuple(offered),
                 universe=command.universe,
-                analysed_at=command.analysed_at,
+                analysed_at=analysed_at,
             )
         )
         return PollNewsFeedsResult(

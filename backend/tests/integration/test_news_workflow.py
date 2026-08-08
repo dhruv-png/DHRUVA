@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from dhruva.contexts.intelligence.application.news_ingestion import (
     GetArchivedNews,
     GetArchivedNewsQuery,
+    IngestNewsItems,
+    IngestNewsItemsCommand,
 )
 from dhruva.contexts.intelligence.application.news_polling import (
     PollNewsFeeds,
@@ -453,7 +455,11 @@ async def test_a_failed_ingestion_leaves_the_archive_untouched(
 
     The command is refused because one item claims to have been observed after
     the analysis that reads it, which is exactly the ordering the archive must
-    never store.
+    never store. Exercised directly against ``IngestNewsItems`` -- the
+    boundary that actually owns this invariant -- rather than through
+    ``PollNewsFeeds``, which now derives its ingestion cutoff from what a poll
+    actually retrieved and so cannot be handed a stale floor by a caller in
+    the first place; see ``test_news_polling.py`` for that guarantee.
     """
     factory = _factory(migrated)
     impossible = _item(
@@ -461,9 +467,14 @@ async def test_a_failed_ingestion_leaves_the_archive_untouched(
     )
 
     with pytest.raises(ValidationError):
-        await PollNewsFeeds(
-            [_Feed(_healthy(impossible, observed_at=CORRECTED_SEEN))], factory
-        ).execute(_poll_command(ANALYSED))
+        await IngestNewsItems(factory).execute(
+            IngestNewsItemsCommand(
+                account_id=ACCOUNT,
+                items=(impossible,),
+                universe=UNIVERSE,
+                analysed_at=ANALYSED,
+            )
+        )
 
     assert await _count(migrated, NewsItemRevisionModel) == 0
 

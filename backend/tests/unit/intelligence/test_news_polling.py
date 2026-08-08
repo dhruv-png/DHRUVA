@@ -71,7 +71,13 @@ FEED_B = NewsSource(
 )
 
 
-def _item(source: NewsSource, url: str, title: str) -> NewsItem:
+def _item(
+    source: NewsSource,
+    url: str,
+    title: str,
+    *,
+    first_seen_at: datetime = RETRIEVED,
+) -> NewsItem:
     link = canonical_url(url)
     return NewsItem(
         identity=NewsItemIdentity(
@@ -82,7 +88,7 @@ def _item(source: NewsSource, url: str, title: str) -> NewsItem:
         source=source,
         text=PermittedText(title=title),
         published_at=PUBLISHED,
-        first_seen_at=RETRIEVED,
+        first_seen_at=first_seen_at,
     )
 
 
@@ -599,3 +605,152 @@ async def test_an_unmatched_headline_is_counted_as_unresolved() -> None:
 
     assert result.unresolved == 1
     assert result.links_added == 0
+
+
+# --------------------------------------------------------------------------- #
+# A cutoff captured before fetching must not refuse what fetching produced
+# --------------------------------------------------------------------------- #
+#
+# A live poll captures its floor once, before a search plan is even built, and
+# each feed then stamps its own items with its own retrieval instant, taken
+# after that floor and after however long the request actually took. These
+# tests reproduce that ordering directly rather than relying on real elapsed
+# time, which a fake feed does not spend.
+
+
+def _early_command(floor: datetime = PUBLISHED) -> PollNewsFeedsCommand:
+    """Return a command whose floor predates every fake feed's own timestamp."""
+    return PollNewsFeedsCommand(account_id=ACCOUNT, universe=UNIVERSE, analysed_at=floor)
+
+
+async def test_a_cutoff_captured_before_fetching_does_not_refuse_freshly_retrieved_items() -> None:
+    """The exact live failure: floor < first_seen_at must still ingest cleanly."""
+    store = FakeNewsStore()
+    assert PUBLISHED < RETRIEVED  # the floor genuinely predates the item's own timestamp
+    feed = FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE)))
+
+    result = await PollNewsFeeds([feed], Factory(store)).execute(_early_command())
+
+    assert result.revisions_added == 1
+    assert len(store.rows) == 1
+
+
+async def test_the_persisted_first_seen_at_is_not_backdated_to_the_floor() -> None:
+    """Correcting the ingestion cutoff must never rewrite the item's own timestamp."""
+    store = FakeNewsStore()
+    feed = FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE)))
+
+    await PollNewsFeeds([feed], Factory(store)).execute(_early_command())
+
+    (revision, analysis) = next(iter(store.rows.values()))
+    assert revision.item.first_seen_at == RETRIEVED
+    assert revision.item.first_seen_at != PUBLISHED
+    assert analysis is not None
+    assert analysis.analysed_at >= RETRIEVED
+
+
+async def test_multi_batch_polling_derives_the_cutoff_from_the_latest_batch_deterministically() -> (
+    None
+):
+    """Two batches, two genuine retrieval instants: the later one governs ingestion.
+
+    Reproduces sequential live batches directly: the second feed's items are
+    stamped later than the first's, exactly as a real multi-batch poll
+    produces when each feed's own fetch() takes its own fresh clock read.
+    """
+    store = FakeNewsStore()
+    second_batch_retrieved = RETRIEVED + timedelta(seconds=45)
+    feeds = [
+        FakeFeed(
+            _healthy(
+                FEED_A,
+                _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE, first_seen_at=RETRIEVED),
+            )
+        ),
+        FakeFeed(
+            _healthy(
+                FEED_B,
+                _item(
+                    FEED_B,
+                    "https://feed-b.example/2",
+                    "State Bank of India cuts lending rates",
+                    first_seen_at=second_batch_retrieved,
+                ),
+            )
+        ),
+    ]
+
+    result = await PollNewsFeeds(feeds, Factory(store)).execute(_early_command())
+
+    assert result.revisions_added == 2
+    assert len(store.rows) == 2
+    for _, analysis in store.rows.values():
+        assert analysis is not None
+        assert analysis.analysed_at >= second_batch_retrieved
+
+
+async def test_a_floor_already_at_or_after_every_item_is_used_unchanged() -> None:
+    """When the caller's own cutoff already covers every item, nothing is widened."""
+    store = FakeNewsStore()
+    feed = FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE)))
+
+    await PollNewsFeeds([feed], Factory(store)).execute(_command())  # ANALYSED > RETRIEVED
+
+    (_, analysis) = next(iter(store.rows.values()))
+    assert analysis is not None
+    assert analysis.analysed_at == ANALYSED
+
+
+async def test_no_item_is_dropped_to_satisfy_the_point_in_time_invariant() -> None:
+    """The fix widens the cutoff; it never narrows what gets ingested."""
+    store = FakeNewsStore()
+    feeds = [
+        FakeFeed(_healthy(FEED_A, _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE))),
+        FakeFeed(
+            _healthy(
+                FEED_B,
+                _item(
+                    FEED_B,
+                    "https://feed-b.example/2",
+                    "State Bank of India cuts lending rates",
+                    first_seen_at=RETRIEVED + timedelta(minutes=10),
+                ),
+            )
+        ),
+    ]
+
+    result = await PollNewsFeeds(feeds, Factory(store)).execute(_early_command())
+
+    assert result.items_offered == 2
+    assert result.revisions_added == 2
+    assert len(store.rows) == 2
+
+
+async def test_historical_reads_still_refuse_an_item_observed_after_their_cutoff() -> None:
+    """The domain invariant PollNewsFeeds relies on is untouched and still strict.
+
+    This is IngestNewsItems' own guarantee, exercised directly: an explicit
+    historical analysed_at earlier than an item's first_seen_at is still
+    refused. PollNewsFeeds only ever widens the cutoff it passes down; it
+    cannot and does not launder a genuinely historical read through this path.
+    """
+    from dhruva.contexts.intelligence.application.news_ingestion import (  # noqa: PLC0415
+        IngestNewsItems,
+        IngestNewsItemsCommand,
+    )
+    from dhruva.shared.errors import ValidationError  # noqa: PLC0415
+
+    factory = Factory(FakeNewsStore())
+    item = _item(FEED_A, "https://feed-a.example/1", ORDER_HEADLINE, first_seen_at=RETRIEVED)
+
+    with pytest.raises(ValidationError, match="cannot be observed after"):
+        await IngestNewsItems(factory).execute(
+            IngestNewsItemsCommand(
+                account_id=ACCOUNT,
+                items=(item,),
+                universe=UNIVERSE,
+                analysed_at=RETRIEVED - timedelta(minutes=1),
+            )
+        )
+
+    assert factory.created == []
