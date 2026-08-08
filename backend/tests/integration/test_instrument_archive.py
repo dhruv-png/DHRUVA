@@ -18,6 +18,7 @@ from dhruva.contexts.reference.application.instrument_archive import (
     ArchiveOwnerInstrumentMaster,
     ArchiveOwnerInstrumentMasterCommand,
     GetArchivedInstrumentDiscovery,
+    GetLatestArchivedInstrumentDiscovery,
 )
 from dhruva.contexts.reference.application.instrument_discovery import (
     DiscoverOwnerInstruments,
@@ -251,6 +252,46 @@ async def test_archive_unit_of_work_rolls_back_by_default(
         await unit_of_work.instrument_archive.archive(discovery)
 
     assert await _counts(migrated) == (0, 0, 0, 0, 0)
+
+
+async def test_get_latest_returns_none_before_any_archive_exists(
+    migrated: AsyncEngine,
+    truncated_after_test: None,  # noqa: ARG001 - requests committed-state cleanup
+) -> None:
+    """A coverage read must not have to know a market date to ask for."""
+    factory = _factory(migrated)
+
+    latest = await GetLatestArchivedInstrumentDiscovery(factory).execute(
+        account_id=ACCOUNT, provider="zerodha", resolver_revision="instrument-discovery-v1"
+    )
+
+    assert latest is None
+
+
+async def test_get_latest_returns_the_most_recently_dated_archive(
+    migrated: AsyncEngine,
+    truncated_after_test: None,  # noqa: ARG001 - requests committed-state cleanup
+) -> None:
+    """The most recent market date wins, not the first or last one written."""
+    await _configure(migrated)
+    factory = _factory(migrated)
+    earliest = _snapshot(market_date=MARKET_DATE - timedelta(days=2))
+    middle = _snapshot(market_date=MARKET_DATE - timedelta(days=1))
+    latest_snapshot = _snapshot(market_date=MARKET_DATE)
+    # Written out of chronological order, so a query that picked "last written"
+    # rather than "latest market date" would answer with the wrong one.
+    await ArchiveOwnerInstrumentMaster(FakeSource(latest_snapshot), factory).execute(
+        _command(latest_snapshot)
+    )
+    await ArchiveOwnerInstrumentMaster(FakeSource(earliest), factory).execute(_command(earliest))
+    await ArchiveOwnerInstrumentMaster(FakeSource(middle), factory).execute(_command(middle))
+
+    latest = await GetLatestArchivedInstrumentDiscovery(factory).execute(
+        account_id=ACCOUNT, provider="zerodha", resolver_revision="instrument-discovery-v1"
+    )
+
+    assert latest is not None
+    assert latest.snapshot.market_date == MARKET_DATE
 
 
 def _run_alembic(command: str, revision: str) -> None:

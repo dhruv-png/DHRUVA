@@ -13,9 +13,11 @@ import pytest
 from dhruva.contexts.reference.application.instrument_archive import (
     ArchiveOwnerInstrumentMaster,
     ArchiveOwnerInstrumentMasterCommand,
+    GetLatestArchivedInstrumentDiscovery,
 )
 from dhruva.contexts.reference.domain.instrument_master import (
     ArchivedInstrumentDiscovery,
+    ArchivedInstrumentMaster,
     InstrumentArchiveWrite,
     InstrumentDiscovery,
     InstrumentMasterSnapshot,
@@ -49,6 +51,7 @@ class FakeArchiveStore:
 
     def __init__(self) -> None:
         self.discoveries: list[InstrumentDiscovery] = []
+        self.latest: ArchivedInstrumentDiscovery | None = None
 
     async def archive(self, discovery: InstrumentDiscovery) -> InstrumentArchiveWrite:
         """Record one application-layer archive request."""
@@ -72,6 +75,17 @@ class FakeArchiveStore:
     ) -> ArchivedInstrumentDiscovery:
         """Fail because the archival command test must never execute a query."""
         raise AssertionError((provider, market_date, resolver_revision))
+
+    async def get_latest(
+        self,
+        *,
+        provider: str,
+        resolver_revision: str,
+    ) -> ArchivedInstrumentDiscovery | None:
+        """Return whatever this test arranged as the latest archive."""
+        assert provider == "zerodha"
+        assert resolver_revision == "instrument-discovery-v1"
+        return self.latest
 
 
 class FakeUnitOfWork:
@@ -152,3 +166,39 @@ async def test_refresh_resolves_then_commits_one_complete_archive() -> None:
     assert len(store.discoveries) == 1
     assert factory.created[0].commits == 1
     assert factory.created[0].rollbacks == 0
+
+
+async def test_get_latest_returns_none_before_any_archive_exists() -> None:
+    """A coverage read must not have to know a market date to ask for."""
+    factory = Factory(FakeArchiveStore())
+
+    latest = await GetLatestArchivedInstrumentDiscovery(factory).execute(
+        account_id=ACCOUNT, provider="zerodha", resolver_revision="instrument-discovery-v1"
+    )
+
+    assert latest is None
+
+
+async def test_get_latest_delegates_to_the_store_unchanged() -> None:
+    """The query is a pure read: whatever the store answers is what comes back."""
+    store = FakeArchiveStore()
+    snapshot = _snapshot()
+    store.latest = ArchivedInstrumentDiscovery(
+        snapshot=ArchivedInstrumentMaster(
+            provider=snapshot.provider,
+            market_date=snapshot.market_date,
+            fetched_at=snapshot.fetched_at,
+            content_sha256=snapshot.content_sha256,
+            raw_csv=snapshot.raw_csv,
+            row_count=len(snapshot.entries),
+        ),
+        resolutions=(),
+        resolver_revision="instrument-discovery-v1",
+    )
+    factory = Factory(store)
+
+    latest = await GetLatestArchivedInstrumentDiscovery(factory).execute(
+        account_id=ACCOUNT, provider="zerodha", resolver_revision="instrument-discovery-v1"
+    )
+
+    assert latest is store.latest

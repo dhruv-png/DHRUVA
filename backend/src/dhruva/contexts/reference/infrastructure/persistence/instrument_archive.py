@@ -243,6 +243,35 @@ class InstrumentArchiveRepository:
             resolver_revision=resolver_revision,
         )
 
+    async def get_latest(
+        self,
+        *,
+        provider: str,
+        resolver_revision: str,
+    ) -> ArchivedInstrumentDiscovery | None:
+        """Replay the most recently dated archive, or ``None`` before the first one.
+
+        Used by a network-free coverage read, which must never guess a market
+        date to ask :meth:`get` for -- it wants "whatever was last resolved",
+        not evidence for a date it would have to already know.
+        """
+        snapshot_model = await self._session.scalar(
+            select(InstrumentMasterSnapshotModel)
+            .where(InstrumentMasterSnapshotModel.provider == provider)
+            .order_by(InstrumentMasterSnapshotModel.market_date.desc())
+            .limit(1)
+        )
+        if snapshot_model is None:
+            return None
+        try:
+            return await self.get(
+                provider=provider,
+                market_date=snapshot_model.market_date,
+                resolver_revision=resolver_revision,
+            )
+        except MissingDataError:
+            return None
+
     async def _verify_snapshot(
         self,
         snapshot_id: UUID,

@@ -17,6 +17,7 @@ from dhruva.contexts.reference.application import (
     ConfigureReferenceUniverseResult,
     DiscoverOwnerInstruments,
     GetArchivedInstrumentDiscovery,
+    GetLatestArchivedInstrumentDiscovery,
     GetSharedWatchlist,
 )
 from dhruva.contexts.reference.domain import (
@@ -42,6 +43,7 @@ __all__ = [
     "FuturesContractObservation",
     "FuturesContractStatus",
     "GetArchivedInstrumentDiscovery",
+    "GetLatestArchivedInstrumentDiscovery",
     "GetSharedWatchlist",
     "InstrumentDiscovery",
     "InstrumentKind",

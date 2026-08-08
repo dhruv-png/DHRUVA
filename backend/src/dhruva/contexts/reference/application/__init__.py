@@ -11,6 +11,7 @@ from dhruva.contexts.reference.application.instrument_archive import (
     ArchiveOwnerInstrumentMasterCommand,
     ArchiveOwnerInstrumentMasterResult,
     GetArchivedInstrumentDiscovery,
+    GetLatestArchivedInstrumentDiscovery,
 )
 from dhruva.contexts.reference.application.instrument_discovery import (
     DiscoverOwnerInstruments,
@@ -34,6 +35,7 @@ __all__ = [
     "DiscoverOwnerInstruments",
     "DiscoverOwnerInstrumentsCommand",
     "GetArchivedInstrumentDiscovery",
+    "GetLatestArchivedInstrumentDiscovery",
     "GetSharedWatchlist",
     "UniverseDefinition",
 ]

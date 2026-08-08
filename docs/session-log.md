@@ -1568,3 +1568,85 @@ column, so nothing about this slice needed the schema to change.
 backfill, no scheduler, no orders and no paper trading. Authenticating is not
 having data: after a successful login the ingestion path is still unwired, which
 is the next separately-approved slice.
+
+---
+
+## 2026-08-08 — bounded daily-history ingestion wired to the broker session
+
+**Verified the architecture before writing anything.** `IngestDailyHistory`
+already enforces synchronized session sets atomically and refuses the whole
+attempted batch — no partial-success path exists to weaken. Migration `0014`
+already carries the archive and mapping structures this slice needed. The
+custom boundary checker's dependency matrix confirms `marketdata` cannot import
+`platform` directly, and that composition roots are exempt from that matrix —
+so SESSION credential opening belongs in `workers/`, not in a context. A
+current five-session return needs six complete bars
+(`domain.market_context._multi_day`). All four held; no STOP condition fired,
+and no migration was needed.
+
+**Done.** `dhruva-marketdata coverage` and `dhruva-marketdata refresh`. Coverage
+reads the shared watchlist, the most recently archived Zerodha mapping, and
+locally stored daily bars, and makes zero external network calls -- a new
+`GetLatestArchivedInstrumentDiscovery` query (and a matching
+`InstrumentArchiveStore.get_latest`) answers "what was last resolved" without
+the caller having to already know a market date. Refresh inspects that same
+coverage first; if the whole watchlist is already `READY` it exits having made
+no provider call and never even checking the broker session. Otherwise it opens
+exactly the `ENROLMENT` and `SESSION` credentials `dhruva-broker` already
+sealed, reports `SESSION_MISSING`/`SESSION_EXPIRED`/`ENROLMENT_MISSING`
+explicitly, resolves the owner universe against one fetched Zerodha instrument
+master through the existing archive use case, and requests daily candles only
+for the Nifty 50 benchmark plus whatever is not yet `READY`, bounded to a
+twenty-calendar-day bootstrap window that is a hard configuration ceiling
+(`settings.marketdata.bootstrap_lookback_days`, `Field(ge=1, le=20)` --
+narrowable, never widenable). Ingestion goes through the unmodified
+`IngestDailyHistory`, so the existing whole-batch refusal is inherited rather
+than re-implemented: one incompatible instrument -- stale session, timeout,
+malformed payload -- refuses the entire attempted refresh and commits zero
+rows, proven against real PostgreSQL by injecting a synthetic provider that
+fails mid-batch and counting rows afterward.
+
+**Decided.** No separate "resolve" command exists; resolution is the first
+half of one atomic refresh, because a mapping resolved on its own and a
+history fetch that then finds it stale would be two round-trips pretending to
+be one operation. `refresh` always requests the Nifty 50 benchmark alongside
+whatever the watchlist needs, since `IngestDailyHistory` requires exactly one
+benchmark per synchronized batch and the benchmark defines the session
+calendar every other instrument is checked against. `run()` takes optional
+`instrument_source`/`history_source` injection points -- the same seam
+`dhruva-broker` leaves for its hidden-prompt injection -- so the full flow,
+SESSION gate included, is testable against a real database with no HTTP call
+ever attempted. Coverage's own lookback (sixty calendar days) is a private
+implementation bound, not a configuration surface, matching
+`GetMarketContext`'s existing `_LOOKBACK_DAYS` precedent: only the
+twenty-calendar-day bootstrap ceiling was Decision 2's approved knob.
+
+**Validated.** Twenty-one unit tests over parsing, IST-date arithmetic, mapping
+lookup and coverage classification (`MISSING_MAPPING`, `NO_DATA`,
+`INSUFFICIENT_HISTORY`, `STALE`, `READY`, ordering, an empty watchlist, and a
+future-retrieved bar staying invisible) against a real `GetDailyBarSeries` over
+an in-memory PIT-filtered store -- the point-in-time rule is proven once, in
+the repository, and these tests do not re-implement it. Eleven integration
+tests against real PostgreSQL: empty and unmapped coverage, `READY` after a
+full synchronized refresh, all three explicit SESSION states refusing before
+any adapter is built, zero provider calls when nothing is missing, the fetched
+range never exceeding the twenty-day bound, a mid-batch provider timeout
+refusing the whole batch with zero rows committed, a repeated refresh adding
+nothing and issuing no request, and a bar refresh itself wrote staying
+invisible to a coverage read at an earlier cutoff. Two further integration
+tests prove `get_latest` picks the most recently *dated* archive rather than
+the most recently *written* one. Ruff lint and format, strict mypy, the custom
+boundary checker, `lint-imports` and the ADR guard all pass with no
+`type: ignore` added. Migration head remains `0017_credential_purpose`; none
+was created.
+
+**No live credential was involved.** Every test runs against a synthetic Kite
+instrument master (the same fixture `test_instrument_archive.py` already uses)
+and a synthetic daily-history provider. The ₹500/month Kite Connect
+historical-data plan remains unactivated and is not required to validate this
+slice; see `docs/runbooks/marketdata-refresh.md`.
+
+**Next.** Owner-side canonical validation on Windows against real PostgreSQL,
+then the first live-credential-gated Zerodha smoke test whenever the owner
+chooses to activate the plan -- still not required for this slice to be
+complete.

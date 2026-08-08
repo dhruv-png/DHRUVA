@@ -100,6 +100,10 @@ dhruva-reference = "dhruva.workers.seed_reference:main"
 # this command accepts a secret; every sensitive value is typed at a hidden
 # prompt (see the module docstring and its parser test).
 dhruva-broker = "dhruva.workers.broker:main"
+# Resolve the watchlist to Zerodha instrument identities and maintain bounded
+# daily history. 'coverage' makes no network call; 'refresh' reuses the
+# session dhruva-broker established and fetches only what is missing.
+dhruva-marketdata = "dhruva.workers.marketdata:main"
 
 [dependency-groups]
 dev = [

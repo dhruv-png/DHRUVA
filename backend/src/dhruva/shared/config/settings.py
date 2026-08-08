@@ -47,6 +47,7 @@ __all__ = [
     "CryptoSettings",
     "DatabaseSettings",
     "LogSettings",
+    "MarketDataSettings",
     "NewsSettings",
     "RedisSettings",
     "Settings",
@@ -330,6 +331,26 @@ class NewsSettings(_Group):
         return value
 
 
+class MarketDataSettings(_Group):
+    """Bounds for the bounded daily-history bootstrap refresh (MVP 1, AR-002).
+
+    ``bootstrap_lookback_days`` is the whole of this group. It bounds how far
+    back an operator-triggered refresh may ever request daily candles for the
+    *current* market context -- this is bootstrap, not historical backfill, and
+    the upper bound is the approved default itself: the field can be narrowed
+    for a faster or cheaper run, never widened past twenty calendar days by
+    configuration. A ``--all-history`` flag or an unbounded value here would be
+    the same mistake wearing a different name.
+
+    Twenty rather than six (the sessions a current market-context calculation
+    needs) because weekends and Indian market holidays consume calendar days
+    without producing a session, and the margin has to survive the worst
+    realistic holiday clustering, not just an ordinary week.
+    """
+
+    bootstrap_lookback_days: int = Field(default=20, ge=1, le=20)
+
+
 class TracingSettings(_Group):
     """OpenTelemetry configuration.
 
@@ -376,6 +397,7 @@ class Settings(BaseSettings):
     crypto: CryptoSettings = Field(default_factory=CryptoSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     news: NewsSettings = Field(default_factory=NewsSettings)
+    marketdata: MarketDataSettings = Field(default_factory=MarketDataSettings)
     otel: TracingSettings = Field(default_factory=TracingSettings)
 
     @property

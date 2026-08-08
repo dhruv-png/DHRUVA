@@ -30,6 +30,7 @@ __all__ = [
     "ArchiveOwnerInstrumentMasterCommand",
     "ArchiveOwnerInstrumentMasterResult",
     "GetArchivedInstrumentDiscovery",
+    "GetLatestArchivedInstrumentDiscovery",
 ]
 
 
@@ -115,5 +116,38 @@ class GetArchivedInstrumentDiscovery:
             return await unit_of_work.instrument_archive.get(
                 provider=provider,
                 market_date=market_date,
+                resolver_revision=resolver_revision,
+            )
+
+
+class GetLatestArchivedInstrumentDiscovery:
+    """Replay the most recently archived resolution, without knowing its date.
+
+    A network-free coverage read wants "whatever DHRUVA last resolved", not
+    evidence for a market date it would have to already know -- and asking it
+    to guess a date to pass to :class:`GetArchivedInstrumentDiscovery` would
+    make the read depend on a fact only a successful refresh could supply.
+    """
+
+    __slots__ = ("_unit_of_work_factory",)
+
+    def __init__(
+        self,
+        unit_of_work_factory: Callable[[AccountId], InstrumentArchiveUnitOfWork],
+    ) -> None:
+        """Bind the query to a transaction factory."""
+        self._unit_of_work_factory = unit_of_work_factory
+
+    async def execute(
+        self,
+        *,
+        account_id: AccountId,
+        provider: str,
+        resolver_revision: str,
+    ) -> ArchivedInstrumentDiscovery | None:
+        """Return the latest archived resolution, or ``None`` before the first one."""
+        async with self._unit_of_work_factory(account_id) as unit_of_work:
+            return await unit_of_work.instrument_archive.get_latest(
+                provider=provider,
                 resolver_revision=resolver_revision,
             )

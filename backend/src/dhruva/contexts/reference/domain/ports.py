@@ -57,6 +57,15 @@ class InstrumentArchiveStore(Protocol):
         """Replay one archived resolution or report that it is missing."""
         ...
 
+    async def get_latest(
+        self,
+        *,
+        provider: str,
+        resolver_revision: str,
+    ) -> ArchivedInstrumentDiscovery | None:
+        """Replay the most recently archived resolution, or ``None`` if none exists."""
+        ...
+
 
 @runtime_checkable
 class ReferenceStore(Protocol):
