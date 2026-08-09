@@ -31,10 +31,13 @@ __all__ = [
     "IngestDailyHistory",
     "IngestDailyHistoryCommand",
     "IngestDailyHistoryResult",
+    "IngestHistoricalDailyHistory",
+    "IngestHistoricalDailyHistoryCommand",
 ]
 
 DAILY_HISTORY_QUALITY_REVISION = "daily-history-quality-v1"
 _MAX_UNEXPLAINED_CLOSE_MOVE = Decimal("0.35")
+_MAX_HISTORICAL_CHUNK_INSTRUMENTS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,16 @@ class IngestDailyHistoryResult:
     incomplete_bars: int
     required_through: date
     quality_revision: str
+
+
+@dataclass(frozen=True, slots=True)
+class IngestHistoricalDailyHistoryCommand:
+    """One bounded historical chunk, complete as of a modern retrieval."""
+
+    account_id: AccountId
+    requests: tuple[DailyHistoryRequest, ...]
+    benchmark_id: InstrumentId
+    completed_through: date
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +150,73 @@ class IngestDailyHistory:
         from_date, to_date = next(iter(ranges))
         if not from_date <= command.required_through <= command.completed_through <= to_date:
             raise ValidationError("daily history cutoffs fall outside the requested range")
+
+
+class IngestHistoricalDailyHistory:
+    """Ingest one independently atomic historical instrument/benchmark chunk."""
+
+    __slots__ = ("_source", "_unit_of_work_factory")
+
+    def __init__(
+        self,
+        source: DailyHistorySource,
+        unit_of_work_factory: Callable[[AccountId], MarketDataUnitOfWork],
+    ) -> None:
+        self._source = source
+        self._unit_of_work_factory = unit_of_work_factory
+
+    async def execute(
+        self, command: IngestHistoricalDailyHistoryCommand
+    ) -> IngestDailyHistoryResult:
+        """Fetch sequentially, validate the synchronized chunk, then commit it."""
+        self._validate_command(command)
+        batches = await fetch_history_batches(self._source, command.requests)
+        series = tuple(
+            build_daily_series(batch, completed_through=command.completed_through)
+            for batch in batches
+        )
+        for item in series:
+            _reject_unexplained_discontinuities(item)
+        _validate_synchronized_sessions(
+            series,
+            benchmark_id=command.benchmark_id,
+            required_through=None,
+        )
+        added, unchanged = await append_daily_series(
+            account_id=command.account_id,
+            series=series,
+            unit_of_work_factory=self._unit_of_work_factory,
+        )
+        return IngestDailyHistoryResult(
+            instruments=len(series),
+            bars_added=added,
+            bars_unchanged=unchanged,
+            incomplete_bars=sum(
+                bar.completeness is BarCompleteness.INCOMPLETE
+                for item in series
+                for bar in item.bars
+            ),
+            required_through=command.completed_through,
+            quality_revision=DAILY_HISTORY_QUALITY_REVISION,
+        )
+
+    @staticmethod
+    def _validate_command(command: IngestHistoricalDailyHistoryCommand) -> None:
+        if not command.requests or len(command.requests) > _MAX_HISTORICAL_CHUNK_INSTRUMENTS:
+            raise ValidationError(
+                "historical chunk requires a benchmark and at most one owner instrument"
+            )
+        ids = tuple(item.instrument_id for item in command.requests)
+        if len(ids) != len(set(ids)):
+            raise ValidationError("historical chunk contains duplicate instruments")
+        if ids.count(command.benchmark_id) != 1:
+            raise ValidationError("historical chunk requires exactly one benchmark")
+        ranges = {(item.from_date, item.to_date) for item in command.requests}
+        if len(ranges) != 1:
+            raise ValidationError("historical chunk requests must share one date range")
+        _from_date, to_date = next(iter(ranges))
+        if command.completed_through < to_date:
+            raise ValidationError("historical chunk extends beyond its completed cutoff")
 
 
 class GetDailyBarSeries:
@@ -285,17 +365,17 @@ def _validate_synchronized_sessions(
     series: tuple[DailyBarSeries, ...],
     *,
     benchmark_id: InstrumentId,
-    required_through: date,
+    required_through: date | None,
 ) -> None:
     """Use benchmark sessions as the explicit calendar and reject silent gaps."""
     benchmark = next(item for item in series if item.bars[0].instrument_id == benchmark_id)
     benchmark_dates = {
         item.candle.trading_date
         for item in benchmark.bars
-        if item.candle.trading_date <= required_through
+        if (required_through is None or item.candle.trading_date <= required_through)
         and item.completeness is BarCompleteness.COMPLETE
     }
-    if required_through not in benchmark_dates:
+    if required_through is not None and required_through not in benchmark_dates:
         raise StaleDataError(
             "benchmark daily history is stale or incomplete",
             required_through=required_through.isoformat(),
@@ -304,10 +384,10 @@ def _validate_synchronized_sessions(
         dates = {
             bar.candle.trading_date
             for bar in item.bars
-            if bar.candle.trading_date <= required_through
+            if (required_through is None or bar.candle.trading_date <= required_through)
             and bar.completeness is BarCompleteness.COMPLETE
         }
-        if required_through not in dates:
+        if required_through is not None and required_through not in dates:
             raise StaleDataError(
                 "instrument daily history is stale or incomplete",
                 instrument_id=str(item.bars[0].instrument_id),

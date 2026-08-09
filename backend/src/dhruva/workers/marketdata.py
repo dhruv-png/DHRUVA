@@ -1,19 +1,13 @@
-"""``dhruva-marketdata`` -- resolve the watchlist, then fetch only what is missing.
+"""``dhruva-marketdata`` -- routine refresh and explicit historical acquisition.
 
-Two subcommands. ``coverage`` reads what is already stored -- watchlist mapping
-state, the earliest and latest visible complete daily bar, and whether that is
-enough for the current market-context calculation -- and makes **no external
-network call of any kind**. ``refresh`` is the only thing here that talks to a
-provider, and it only does so when local coverage says it must: it resolves the
-owner watchlist to Zerodha instrument identities through the existing archive
-use cases, fetches only the bounded range still missing inside a
-twenty-calendar-day bootstrap window, and ingests through the existing
-synchronized daily-history path. Neither command places an order, reads a
-position, or requires the paid Kite historical-data plan to be active -- only
-``refresh`` needs a live, logged-in session at all, and only when something is
-actually missing.
+``coverage`` reads full locally visible history and makes **no external network
+call of any kind**. ``refresh`` resolves the owner watchlist and fetches only a
+twenty-calendar-day routine bootstrap when current context needs it.
+``backfill-plan`` is a separate network-free historical dry run; ``backfill``
+executes its bounded deterministic chunks. Only the two execution commands need
+a live logged-in session, and neither accepts a secret or exposes an order API.
 
-**Whole-run refusal is deliberate, not a bug.** ``IngestDailyHistory`` already
+**Routine whole-run refusal is deliberate, not a bug.** ``IngestDailyHistory`` already
 fetches every requested instrument before opening a transaction and validates
 the whole batch against one shared benchmark calendar before writing anything,
 so one incompatible instrument -- a stale session, a provider timeout, a
@@ -46,7 +40,7 @@ import argparse
 import asyncio
 import sys
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import UTC, date, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -55,6 +49,7 @@ import httpx2
 from dhruva.contexts.marketdata.api import (
     DEFAULT_MULTI_DAY_SESSIONS,
     DEFAULT_STALE_AFTER_DAYS,
+    AdjustmentStatus,
     DailyHistoryRequest,
     GetDailyBarSeries,
     GetDailyBarSeriesQuery,
@@ -63,6 +58,18 @@ from dhruva.contexts.marketdata.api import (
 from dhruva.contexts.marketdata.application.daily_history import (
     IngestDailyHistory,
     IngestDailyHistoryCommand,
+    IngestHistoricalDailyHistory,
+    IngestHistoricalDailyHistoryCommand,
+)
+from dhruva.contexts.marketdata.application.historical_backfill import (
+    EVALUATION_TARGET_SESSIONS,
+    FEATURE_SESSION_THRESHOLDS,
+    OPERATIONAL_TARGET_SESSIONS,
+    BackfillInstrument,
+    BackfillUniverseRole,
+    BenchmarkReturnBasis,
+    HistoricalBackfillPlan,
+    plan_historical_backfill,
 )
 from dhruva.contexts.marketdata.infrastructure.persistence.unit_of_work import (
     SqlAlchemyMarketDataUnitOfWork,
@@ -113,7 +120,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from dhruva.contexts.marketdata.application.daily_history import IngestDailyHistoryResult
-    from dhruva.contexts.marketdata.domain.ports import DailyHistorySource
+    from dhruva.contexts.marketdata.domain.daily_bars import DailyBarRevision
+    from dhruva.contexts.marketdata.domain.ports import DailyHistorySource, MarketDataUnitOfWork
     from dhruva.contexts.platform.domain.broker.session import BrokerApplication, BrokerSession
     from dhruva.contexts.reference.domain.instrument_master import (
         ArchivedInstrumentDiscovery,
@@ -154,26 +162,26 @@ _RESOLVER_REVISION = "instrument-discovery-v1"
 #: but ``IngestDailyHistory`` requires exactly one benchmark in every
 #: synchronized batch, and this is that instrument.
 _BENCHMARK_IDENTITY_KEY = "nse-index-nifty-50"
+_BENCHMARK_SYMBOL = "NIFTY 50"
+_BENCHMARK_NAME = "Nifty 50 price index"
 
 #: Complete daily bars a current five-session return needs: one more than the
 #: sessions it spans (``domain.market_context._multi_day``).
 _NEEDED_BARS = DEFAULT_MULTI_DAY_SESSIONS + 1
 
-#: Calendar days of local history a coverage read inspects. Generous margin
-#: over the twenty-day bootstrap window so coverage shows the true earliest and
-#: latest stored bar rather than an artifact of its own read window; this MVP
-#: never backfills further than bootstrap reaches, so the margin is ample.
-_COVERAGE_LOOKBACK_DAYS = 60
+#: Full supported market-date floor for a network-free PIT coverage query.
+_COVERAGE_FROM = date(1900, 1, 1)
 
 _IST_OFFSET = timedelta(hours=5, minutes=30)
 _HTTP_TIMEOUT_SECONDS = 30.0
+_MAX_BACKFILL_YEARS = 10
 
 _SAFETY = (
     "Reads and writes daily cash/index history only: no order placement, no "
     "positions or holdings, no options, futures or intraday data, and no "
-    "provider call at all from 'coverage'. 'refresh' talks to Zerodha only "
-    "when local coverage is insufficient, using the session dhruva-broker "
-    "already established -- no option here accepts a secret."
+    "provider call at all from 'coverage' or 'backfill-plan'. 'refresh' and explicit "
+    "'backfill' use only the session dhruva-broker already established -- no "
+    "option here accepts a secret."
 )
 
 
@@ -207,6 +215,31 @@ class InstrumentCoverage:
     enough_history: bool
     fresh: bool
     status: CoverageStatus
+    history_span_years: float = 0.0
+    feature_20_ready: bool = False
+    feature_60_ready: bool = False
+    feature_120_ready: bool = False
+    feature_200_ready: bool = False
+    feature_252_ready: bool = False
+    operational_gap_sessions: int = OPERATIONAL_TARGET_SESSIONS
+    evaluation_depth_gap_sessions: int = EVALUATION_TARGET_SESSIONS
+    adjustment_status: AdjustmentStatus | None = None
+    universe_role: BackfillUniverseRole = BackfillUniverseRole.OWNER_WATCHLIST
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoricalCoverage:
+    """Derived acquisition-depth fields for one compatible stored series."""
+
+    history_span_years: float
+    feature_20_ready: bool
+    feature_60_ready: bool
+    feature_120_ready: bool
+    feature_200_ready: bool
+    feature_252_ready: bool
+    operational_gap_sessions: int
+    evaluation_depth_gap_sessions: int
+    adjustment_status: AdjustmentStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +248,7 @@ class CoverageSummary:
 
     as_of: datetime
     entries: tuple[InstrumentCoverage, ...]
+    benchmark: InstrumentCoverage | None = None
 
     @property
     def counts(self) -> dict[str, int]:
@@ -320,6 +354,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="ISO-8601 knowledge cutoff; nothing first retrieved after it is used (default: now)",
     )
 
+    plan = sub.add_parser(
+        "backfill-plan",
+        help="plan bounded historical chunks from local coverage; never calls a provider",
+    )
+    _add_backfill_arguments(plan)
+
+    backfill = sub.add_parser(
+        "backfill",
+        help="execute an explicit bounded historical plan sequentially",
+    )
+    _add_backfill_arguments(backfill)
+
     refresh = sub.add_parser(
         "refresh",
         help="fetch only the missing bounded daily history and ingest it synchronously",
@@ -331,6 +377,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="ISO-8601 instant the refresh is run at; bounds the bootstrap window (default: now)",
     )
     return parser
+
+
+def _add_backfill_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add one explicitly bounded target shape to a historical command."""
+    parser.add_argument("--account", required=True, help="account the operation is attributed to")
+    parser.add_argument(
+        "--as-of",
+        default=None,
+        help="ISO-8601 knowledge/operation cutoff (default: now)",
+    )
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--years", type=int, help="whole years to acquire (1 through 10)")
+    target.add_argument("--from", dest="from_date", help="earliest market date (YYYY-MM-DD)")
 
 
 async def run(
@@ -377,6 +436,19 @@ async def run(
             sys.stdout.write(_render_coverage(summary) + "\n")
             return _EXIT_OK
 
+        if args.command in {"backfill-plan", "backfill"}:
+            return await _backfill_command(
+                args=args,
+                account_id=account_id,
+                as_of=as_of,
+                reference_uow_factory=reference_uow,
+                marketdata_uow_factory=marketdata_uow,
+                identity_uow_factory=identity_uow,
+                key_provider=MasterKeyProvider(settings.crypto.master_key),
+                clock=active_clock,
+                history_source=history_source,
+            )
+
         return await _refresh(
             account_id=account_id,
             as_of=as_of,
@@ -416,7 +488,124 @@ async def read_coverage(
         account_id=account_id,
         as_of=as_of,
     )
-    return CoverageSummary(as_of=as_of, entries=entries)
+    benchmark = await _benchmark_coverage(
+        mapped=mapped,
+        read=read,
+        account_id=account_id,
+        as_of=as_of,
+    )
+    return CoverageSummary(as_of=as_of, entries=entries, benchmark=benchmark)
+
+
+async def _benchmark_coverage(
+    *,
+    mapped: dict[InstrumentId, ResolvedCashInstrument],
+    read: GetDailyBarSeries,
+    account_id: AccountId,
+    as_of: datetime,
+) -> InstrumentCoverage:
+    benchmark_id = InstrumentId.deterministic("reference", _BENCHMARK_IDENTITY_KEY)
+    cash = mapped.get(benchmark_id)
+    if cash is None:
+        return InstrumentCoverage(
+            instrument_id=benchmark_id,
+            canonical_symbol=_BENCHMARK_SYMBOL,
+            company_name=_BENCHMARK_NAME,
+            mapped=False,
+            source_instrument_id=None,
+            earliest_complete=None,
+            latest_complete=None,
+            bar_count=0,
+            enough_history=False,
+            fresh=False,
+            status=CoverageStatus.MISSING_MAPPING,
+            universe_role=BackfillUniverseRole.BENCHMARK,
+        )
+    try:
+        series = await read.execute(
+            GetDailyBarSeriesQuery(
+                account_id=account_id,
+                instrument_id=benchmark_id,
+                from_date=_COVERAGE_FROM,
+                to_date=as_of.date(),
+                known_at=as_of,
+                require_complete=True,
+            )
+        )
+    except MissingDataError:
+        return InstrumentCoverage(
+            instrument_id=benchmark_id,
+            canonical_symbol=_BENCHMARK_SYMBOL,
+            company_name=_BENCHMARK_NAME,
+            mapped=True,
+            source_instrument_id=cash.instrument_token,
+            earliest_complete=None,
+            latest_complete=None,
+            bar_count=0,
+            enough_history=False,
+            fresh=False,
+            status=CoverageStatus.NO_DATA,
+            universe_role=BackfillUniverseRole.BENCHMARK,
+        )
+    bars = series.bars
+    latest = bars[-1].candle.trading_date
+    enough = len(bars) >= _NEEDED_BARS
+    fresh = (as_of.date() - latest).days <= DEFAULT_STALE_AFTER_DAYS
+    status = (
+        CoverageStatus.INSUFFICIENT_HISTORY
+        if not enough
+        else CoverageStatus.READY
+        if fresh
+        else CoverageStatus.STALE
+    )
+    history = _historical_coverage_fields(bars)
+    return InstrumentCoverage(
+        instrument_id=benchmark_id,
+        canonical_symbol=_BENCHMARK_SYMBOL,
+        company_name=_BENCHMARK_NAME,
+        mapped=True,
+        source_instrument_id=cash.instrument_token,
+        earliest_complete=bars[0].candle.trading_date,
+        latest_complete=latest,
+        bar_count=len(bars),
+        enough_history=enough,
+        fresh=fresh,
+        status=status,
+        universe_role=BackfillUniverseRole.BENCHMARK,
+        history_span_years=history.history_span_years,
+        feature_20_ready=history.feature_20_ready,
+        feature_60_ready=history.feature_60_ready,
+        feature_120_ready=history.feature_120_ready,
+        feature_200_ready=history.feature_200_ready,
+        feature_252_ready=history.feature_252_ready,
+        operational_gap_sessions=history.operational_gap_sessions,
+        evaluation_depth_gap_sessions=history.evaluation_depth_gap_sessions,
+        adjustment_status=history.adjustment_status,
+    )
+
+
+def _historical_coverage_fields(
+    bars: tuple[DailyBarRevision, ...],
+) -> _HistoricalCoverage:
+    """Derive feature depth without claiming that depth validates a model."""
+    count = len(bars)
+    span_days = (bars[-1].candle.trading_date - bars[0].candle.trading_date).days
+    ready = {threshold: count >= threshold for threshold in FEATURE_SESSION_THRESHOLDS}
+    return _HistoricalCoverage(
+        history_span_years=span_days / 365.2425,
+        feature_20_ready=ready[20],
+        feature_60_ready=ready[60],
+        feature_120_ready=ready[120],
+        feature_200_ready=ready[200],
+        feature_252_ready=ready[252],
+        operational_gap_sessions=max(0, OPERATIONAL_TARGET_SESSIONS - count),
+        evaluation_depth_gap_sessions=max(0, EVALUATION_TARGET_SESSIONS - count),
+        adjustment_status=bars[0].adjustment_status,
+    )
+
+
+def _yn(value: bool) -> str:
+    return "yes" if value else "no"
 
 
 async def _coverage_entries(
@@ -428,7 +617,7 @@ async def _coverage_entries(
     as_of: datetime,
 ) -> tuple[InstrumentCoverage, ...]:
     as_of_date = as_of.date()
-    from_date = as_of_date - timedelta(days=_COVERAGE_LOOKBACK_DAYS)
+    from_date = _COVERAGE_FROM
     entries: list[InstrumentCoverage] = []
     for item in sorted(watchlist, key=lambda entry: entry.identity.canonical_symbol):
         identity = item.identity
@@ -488,6 +677,7 @@ async def _coverage_entries(
             status = CoverageStatus.STALE
         else:
             status = CoverageStatus.READY
+        history = _historical_coverage_fields(bars)
         entries.append(
             InstrumentCoverage(
                 instrument_id=identity.instrument_id,
@@ -501,6 +691,15 @@ async def _coverage_entries(
                 enough_history=enough,
                 fresh=fresh,
                 status=status,
+                history_span_years=history.history_span_years,
+                feature_20_ready=history.feature_20_ready,
+                feature_60_ready=history.feature_60_ready,
+                feature_120_ready=history.feature_120_ready,
+                feature_200_ready=history.feature_200_ready,
+                feature_252_ready=history.feature_252_ready,
+                operational_gap_sessions=history.operational_gap_sessions,
+                evaluation_depth_gap_sessions=history.evaluation_depth_gap_sessions,
+                adjustment_status=history.adjustment_status,
             )
         )
     return tuple(entries)
@@ -522,13 +721,25 @@ def _mapped_cash(
 def _render_coverage(summary: CoverageSummary) -> str:
     """Render one line per instrument, then the aggregate an operator scans first."""
     lines = [f"coverage as of {summary.as_of.isoformat()}", ""]
-    for entry in summary.entries:
+    rendered_entries = list(summary.entries)
+    if summary.benchmark is not None:
+        rendered_entries.append(summary.benchmark)
+    for entry in rendered_entries:
         earliest = entry.earliest_complete.isoformat() if entry.earliest_complete else "-"
         latest = entry.latest_complete.isoformat() if entry.latest_complete else "-"
         lines.append(
             f"{entry.canonical_symbol:<12} {entry.status.value:<20} "
             f"mapped={'yes' if entry.mapped else 'no':<3} bars={entry.bar_count:<4} "
             f"earliest={earliest:<12} latest={latest:<12}"
+        )
+        lines.append(
+            f"  role={entry.universe_role.value} span_years={entry.history_span_years:.2f} "
+            f"features=20:{_yn(entry.feature_20_ready)} 60:{_yn(entry.feature_60_ready)} "
+            f"120:{_yn(entry.feature_120_ready)} 200:{_yn(entry.feature_200_ready)} "
+            f"252:{_yn(entry.feature_252_ready)} operational_gap={entry.operational_gap_sessions} "
+            f"evaluation_depth_gap={entry.evaluation_depth_gap_sessions} "
+            "adjustment="
+            f"{entry.adjustment_status.value if entry.adjustment_status else 'UNAVAILABLE'}"
         )
     counts = summary.counts
     lines.append("")
@@ -538,7 +749,198 @@ def _render_coverage(summary: CoverageSummary) -> str:
         f"no_data={counts['no_data']} enough_history={counts['enough_history']} "
         f"insufficient={counts['insufficient']} stale={counts['stale']}"
     )
+    lines.append(
+        "evaluation note: 2000 sessions is acquisition-depth readiness only; the current "
+        "owner watchlist is not an unbiased historical evaluation universe."
+    )
+    lines.append("benchmark note: NIFTY 50 is PRICE_INDEX; TRI/total-return data is unavailable.")
     return "\n".join(lines)
+
+
+async def _build_backfill_plan(
+    *,
+    args: argparse.Namespace,
+    account_id: AccountId,
+    as_of: datetime,
+    reference_uow_factory: Callable[[AccountId], SqlAlchemyReferenceUnitOfWork],
+    marketdata_uow_factory: Callable[[AccountId], SqlAlchemyMarketDataUnitOfWork],
+) -> tuple[HistoricalBackfillPlan, CoverageSummary]:
+    """Build a plan from local PIT state only; this function owns no provider port."""
+    coverage = await read_coverage(
+        account_id=account_id,
+        as_of=as_of,
+        reference_uow_factory=reference_uow_factory,
+        marketdata_uow_factory=marketdata_uow_factory,
+    )
+    completed_through = _ist_date(as_of) - timedelta(days=1)
+    target_from = _parse_historical_target(args, completed_through)
+    if coverage.benchmark is None or not coverage.benchmark.mapped:
+        raise ValidationError("historical backfill requires an archived NIFTY 50 provider mapping")
+    benchmark = _backfill_instrument(coverage.benchmark, MarketInstrumentKind.INDEX)
+    mapped_entries = tuple(entry for entry in coverage.entries if entry.mapped)
+    unresolved = tuple(entry.canonical_symbol for entry in coverage.entries if not entry.mapped)
+    plan = plan_historical_backfill(
+        target_from=target_from,
+        completed_through=completed_through,
+        benchmark=benchmark,
+        benchmark_basis=BenchmarkReturnBasis.PRICE_INDEX,
+        instruments=tuple(
+            _backfill_instrument(entry, MarketInstrumentKind.CASH_EQUITY)
+            for entry in mapped_entries
+        ),
+        unresolved_symbols=unresolved,
+    )
+    return plan, coverage
+
+
+def _parse_historical_target(args: argparse.Namespace, completed_through: date) -> date:
+    if args.years is not None:
+        if not 1 <= args.years <= _MAX_BACKFILL_YEARS:
+            raise ValidationError("--years must be between 1 and 10")
+        try:
+            return completed_through.replace(year=completed_through.year - args.years)
+        except ValueError:
+            return completed_through.replace(year=completed_through.year - args.years, day=28)
+    if args.from_date is None:
+        raise ValidationError("historical backfill requires --years or --from")
+    try:
+        return date.fromisoformat(args.from_date)
+    except ValueError as error:
+        raise ValidationError("--from must be a valid YYYY-MM-DD date") from error
+
+
+def _backfill_instrument(
+    entry: InstrumentCoverage, kind: MarketInstrumentKind
+) -> BackfillInstrument:
+    if entry.source_instrument_id is None:
+        raise ValidationError(
+            "historical target has no provider token", instrument=entry.canonical_symbol
+        )
+    return BackfillInstrument(
+        instrument_id=entry.instrument_id,
+        canonical_symbol=entry.canonical_symbol,
+        instrument_kind=kind,
+        source_instrument_id=entry.source_instrument_id,
+        role=entry.universe_role,
+        earliest_stored=entry.earliest_complete,
+    )
+
+
+def _render_backfill_plan(plan: HistoricalBackfillPlan) -> str:
+    lines = [
+        "historical backfill plan (network-free)",
+        f"target={plan.target_from.isoformat()}..{plan.completed_through.isoformat()} ",
+        f"benchmark={_BENCHMARK_SYMBOL} basis={plan.benchmark_basis.value} "
+        f"chunks={len(plan.chunks)} provider_requests={plan.provider_requests}",
+        "atomicity=one target instrument plus benchmark per chunk; execution is sequential",
+    ]
+    for chunk in plan.chunks:
+        lines.append(
+            f"{chunk.ordinal:04d} {chunk.target_symbol:<12} role={chunk.role.value:<15} "
+            f"core={chunk.core_from.isoformat()}..{chunk.core_to.isoformat()} "
+            f"request={chunk.request_from.isoformat()}..{chunk.request_to.isoformat()} "
+            f"calls={len(chunk.requests)}"
+        )
+    for symbol in plan.unresolved_symbols:
+        lines.append(f"BLOCKER MISSING_MAPPING {symbol}")
+    lines.append(
+        "adjustment=UNKNOWN for Zerodha history; raw observations are never relabelled as adjusted"
+    )
+    lines.append(
+        "universe=OWNER_WATCHLIST only; this is not an unbiased historical evaluation universe"
+    )
+    return "\n".join(lines)
+
+
+async def _backfill_command(  # noqa: PLR0913 - composition root collaborators
+    *,
+    args: argparse.Namespace,
+    account_id: AccountId,
+    as_of: datetime,
+    reference_uow_factory: Callable[[AccountId], SqlAlchemyReferenceUnitOfWork],
+    marketdata_uow_factory: Callable[[AccountId], SqlAlchemyMarketDataUnitOfWork],
+    identity_uow_factory: Callable[[AccountId], SqlAlchemyIdentityUnitOfWork],
+    key_provider: MasterKeyProvider,
+    clock: Clock,
+    history_source: DailyHistorySource | None,
+) -> int:
+    plan, _coverage = await _build_backfill_plan(
+        args=args,
+        account_id=account_id,
+        as_of=as_of,
+        reference_uow_factory=reference_uow_factory,
+        marketdata_uow_factory=marketdata_uow_factory,
+    )
+    rendered = _render_backfill_plan(plan)
+    if args.command == "backfill-plan":
+        sys.stdout.write(rendered + "\n")
+        return _EXIT_OK
+    if plan.unresolved_symbols:
+        sys.stderr.write(rendered + "\nbackfill: REFUSED -- resolve every mapping first.\n")
+        return _EXIT_REFUSED
+    if not plan.chunks:
+        sys.stdout.write(rendered + "\nbackfill: target already covered; no provider call.\n")
+        return _EXIT_OK
+
+    source = history_source
+    if source is None:
+        status = await DescribeBrokerAuthentication(
+            identity_uow_factory, key_provider, open_credential, clock
+        ).execute(account_id, _BROKER)
+        if status.state is not BrokerAuthState.SUCCESS:
+            sys.stderr.write(_SESSION_REMEDY.get(status.state, status.state.value) + "\n")
+            return _EXIT_NOT_AUTHENTICATED
+        application, session = await _open_zerodha_credentials(
+            identity_uow_factory, key_provider, account_id
+        )
+        async with httpx2.AsyncClient(
+            base_url=KITE_API_BASE, timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False
+        ) as client:
+            source = KiteDailyHistoryAdapter(
+                client=client,
+                api_key=application.identifier,
+                access_token=session.token,
+                clock=clock,
+            )
+            return await _execute_backfill(plan, account_id, source, marketdata_uow_factory)
+    return await _execute_backfill(plan, account_id, source, marketdata_uow_factory)
+
+
+async def _execute_backfill(
+    plan: HistoricalBackfillPlan,
+    account_id: AccountId,
+    source: DailyHistorySource,
+    marketdata_uow_factory: Callable[[AccountId], MarketDataUnitOfWork],
+) -> int:
+    ingest = IngestHistoricalDailyHistory(source, marketdata_uow_factory)
+    completed = 0
+    added = 0
+    unchanged = 0
+    for chunk in plan.chunks:
+        try:
+            result = await ingest.execute(
+                IngestHistoricalDailyHistoryCommand(
+                    account_id=account_id,
+                    requests=chunk.requests,
+                    benchmark_id=plan.benchmark_id,
+                    completed_through=plan.completed_through,
+                )
+            )
+        except DhruvaError as error:
+            sys.stderr.write(
+                f"backfill: REFUSED at chunk {chunk.ordinal} ({chunk.target_symbol}) -- {error}\n"
+                f"partial progress: {completed}/{len(plan.chunks)} chunks committed, "
+                f"{added} bars added, {unchanged} unchanged; rerun the plan to resume.\n"
+            )
+            return _EXIT_REFUSED
+        completed += 1
+        added += result.bars_added
+        unchanged += result.bars_unchanged
+    sys.stdout.write(
+        f"backfill: completed {completed} chunks / {plan.provider_requests} provider requests; "
+        f"{added} bars added, {unchanged} unchanged.\n"
+    )
+    return _EXIT_OK
 
 
 _SESSION_REMEDY: dict[BrokerAuthState, str] = {

@@ -347,3 +347,22 @@ conditions.
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
+
+### Historical market-data foundation (2026-08-09)
+
+The P0 historical foundation is implemented as an explicit workflow separate
+from routine refresh. `dhruva-marketdata backfill-plan` derives a network-free,
+bounded, deterministic plan from full PIT coverage; `backfill` executes it in
+restartable target-plus-benchmark chunks. Coverage exposes exact 20/60/120/200/
+252-session feature depth, the 252-session operational gap, and a separate
+2,000-session acquisition-depth target. Meeting either threshold is not a model
+validation result.
+
+The currently mapped NIFTY 50 feed is a price index, not TRI. Zerodha historical
+adjustment semantics remain `UNKNOWN`; DHRUVA neither fabricates dividends nor
+destructively rewrites provider observations. A licensed TRI/corporate-action
+source and a historical constituent universe remain required for total-return
+and survivorship-safe evaluation. Deep history for today's twenty-stock owner
+watchlist enables feature development only. Reconstructed old bars retain their
+modern retrieval/knowledge time and never rewrite prospective frozen research
+observations. See ADR-079 and `docs/runbooks/marketdata-refresh.md`.

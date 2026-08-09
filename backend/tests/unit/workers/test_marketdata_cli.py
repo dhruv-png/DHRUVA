@@ -25,6 +25,7 @@ from dhruva.contexts.marketdata.api import (
     DEFAULT_STALE_AFTER_DAYS,
     GetDailyBarSeries,
 )
+from dhruva.contexts.marketdata.application.historical_backfill import BackfillUniverseRole
 from dhruva.contexts.marketdata.domain.daily_bars import (
     AdjustmentStatus,
     BarCompleteness,
@@ -101,15 +102,15 @@ def test_no_option_anywhere_can_carry_a_secret() -> None:
             assert forbidden not in lowered, f"{name} could carry a secret"
 
 
-def test_the_two_subcommands_are_coverage_and_refresh() -> None:
-    """Stated so that a third verb is a deliberate act."""
+def test_the_explicit_routine_and_historical_subcommands_are_exposed() -> None:
+    """Historical work is explicit and cannot hide inside routine refresh."""
     parser = cli.build_parser()
     subcommands: set[str] = set()
     for action in _all_actions(parser):
         if isinstance(action, argparse._SubParsersAction):
             subcommands |= set(action.choices)
 
-    assert subcommands == {"coverage", "refresh"}
+    assert subcommands == {"coverage", "refresh", "backfill-plan", "backfill"}
 
 
 def test_both_subcommands_require_an_account() -> None:
@@ -136,6 +137,30 @@ def test_refresh_accepts_an_explicit_as_of() -> None:
     )
 
     assert args.as_of == "2026-08-10T12:00:00+00:00"
+
+
+def test_historical_commands_require_one_bounded_target() -> None:
+    """Plan and execution both refuse accidental unbounded history."""
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["backfill-plan", "--account", "owner-family"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "backfill",
+                "--account",
+                "owner-family",
+                "--years",
+                "2",
+                "--from",
+                "2025-01-01",
+            ]
+        )
+
+    planned = parser.parse_args(["backfill-plan", "--account", "owner-family", "--years", "2"])
+    assert planned.years == 2
+    assert planned.from_date is None
 
 
 def test_the_safety_notice_states_what_refresh_will_not_do() -> None:
@@ -576,3 +601,105 @@ def test_missing_mappings_are_reported_by_name_not_silently_dropped() -> None:
 def test_no_missing_mappings_renders_no_text() -> None:
     """An empty mapping gap list contributes nothing to the printed report."""
     assert cli._missing_mappings_text(()) == ""
+
+
+@pytest.mark.asyncio
+async def test_backfill_planning_has_no_provider_or_transport_collaborator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dry-run path depends only on the local coverage read."""
+    owner = cli.InstrumentCoverage(
+        instrument_id=InstrumentId.deterministic("reference", "owner"),
+        canonical_symbol="OWNER",
+        company_name="Owner Limited",
+        mapped=True,
+        source_instrument_id=200,
+        earliest_complete=date(2026, 7, 1),
+        latest_complete=date(2026, 8, 8),
+        bar_count=15,
+        enough_history=True,
+        fresh=True,
+        status=cli.CoverageStatus.READY,
+    )
+    benchmark = cli.InstrumentCoverage(
+        instrument_id=InstrumentId.deterministic("reference", "nse-index-nifty-50"),
+        canonical_symbol="NIFTY 50",
+        company_name="Nifty 50 price index",
+        mapped=True,
+        source_instrument_id=100,
+        earliest_complete=date(2026, 7, 1),
+        latest_complete=date(2026, 8, 8),
+        bar_count=15,
+        enough_history=True,
+        fresh=True,
+        status=cli.CoverageStatus.READY,
+        universe_role=BackfillUniverseRole.BENCHMARK,
+    )
+
+    async def local_coverage(**_kwargs: object) -> cli.CoverageSummary:
+        return cli.CoverageSummary(as_of=AS_OF, entries=(owner,), benchmark=benchmark)
+
+    monkeypatch.setattr(cli, "read_coverage", local_coverage)
+    plan, _summary = await cli._build_backfill_plan(
+        args=argparse.Namespace(years=2, from_date=None),
+        account_id=ACCOUNT,
+        as_of=AS_OF,
+        reference_uow_factory=lambda _account: (_ for _ in ()).throw(AssertionError()),
+        marketdata_uow_factory=lambda _account: (_ for _ in ()).throw(AssertionError()),
+    )
+
+    assert plan.provider_requests > 0
+    assert plan.benchmark_basis.value == "PRICE_INDEX"
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [
+        (0, (False, False, False, False, False, 252, 2000)),
+        (15, (False, False, False, False, False, 237, 1985)),
+        (19, (False, False, False, False, False, 233, 1981)),
+        (20, (True, False, False, False, False, 232, 1980)),
+        (59, (True, False, False, False, False, 193, 1941)),
+        (60, (True, True, False, False, False, 192, 1940)),
+        (119, (True, True, False, False, False, 133, 1881)),
+        (120, (True, True, True, False, False, 132, 1880)),
+        (199, (True, True, True, False, False, 53, 1801)),
+        (200, (True, True, True, True, False, 52, 1800)),
+        (251, (True, True, True, True, False, 1, 1749)),
+        (252, (True, True, True, True, True, 0, 1748)),
+        (2001, (True, True, True, True, True, 0, 0)),
+    ],
+)
+def test_historical_readiness_thresholds_are_exact(
+    count: int, expected: tuple[bool, bool, bool, bool, bool, int, int]
+) -> None:
+    """Feature depth and both stronger readiness gaps change only at exact boundaries."""
+    if count == 0:
+        entry = _coverage(cli.CoverageStatus.NO_DATA)
+        actual = (
+            entry.feature_20_ready,
+            entry.feature_60_ready,
+            entry.feature_120_ready,
+            entry.feature_200_ready,
+            entry.feature_252_ready,
+            entry.operational_gap_sessions,
+            entry.evaluation_depth_gap_sessions,
+        )
+    else:
+        instrument_id = InstrumentId.deterministic("reference", "threshold")
+        bars = tuple(
+            _bar(instrument_id, date(2010, 1, 1) + timedelta(days=index), retrieved_at=RECORDED)
+            for index in range(count)
+        )
+        fields = cli._historical_coverage_fields(bars)
+        actual = (
+            fields.feature_20_ready,
+            fields.feature_60_ready,
+            fields.feature_120_ready,
+            fields.feature_200_ready,
+            fields.feature_252_ready,
+            fields.operational_gap_sessions,
+            fields.evaluation_depth_gap_sessions,
+        )
+
+    assert actual == expected

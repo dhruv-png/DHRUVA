@@ -87,6 +87,7 @@ should not have been made gets caught.
 | [ADR-076](ADR-076-kite-market-data-uses-a-narrow-direct-http-adapter.md) | Kite market data uses a narrow direct HTTP adapter | Accepted |
 | [ADR-077](ADR-077-credential-purpose-separates-secret-lifecycles.md) | Bind a credential to its purpose, not just its broker | Accepted |
 | [ADR-078](ADR-078-research-observations-are-immutable-pit-facts.md) | Research observations are immutable point-in-time facts | Accepted |
+| [ADR-079](ADR-079-historical-daily-history-is-an-explicit-chunked-workflow.md) | Historical daily history is an explicit chunked workflow | Accepted |
 
 ## Reading order for someone new
 

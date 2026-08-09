@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+import hashlib
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -29,6 +31,20 @@ from dhruva.contexts.intelligence.infrastructure.persistence.models import (
 )
 from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import (
     SqlAlchemyIntelligenceUnitOfWork,
+)
+from dhruva.contexts.marketdata.application.daily_history import (
+    IngestHistoricalDailyHistory,
+    IngestHistoricalDailyHistoryCommand,
+)
+from dhruva.contexts.marketdata.domain.daily_bars import (
+    AdjustmentStatus,
+    DailyCandle,
+    DailyHistoryBatch,
+    DailyHistoryRequest,
+    MarketInstrumentKind,
+)
+from dhruva.contexts.marketdata.infrastructure.persistence.unit_of_work import (
+    SqlAlchemyMarketDataUnitOfWork,
 )
 from dhruva.shared.identity import AccountId, InstrumentId
 
@@ -147,6 +163,77 @@ async def _append(
         result = await unit_of_work.observations.append(observation)
         await unit_of_work.commit()
     return result
+
+
+class _HistoricalSource:
+    """Return old market dates with a truthful modern retrieval timestamp."""
+
+    async def fetch(self, request: DailyHistoryRequest) -> DailyHistoryBatch:
+        raw = f"historical-{request.instrument_id}".encode()
+        candles = tuple(
+            DailyCandle(
+                trading_date=trading_date,
+                open=Decimal("100"),
+                high=Decimal("102"),
+                low=Decimal("99"),
+                close=Decimal("101"),
+                volume=1000,
+                open_interest=None,
+            )
+            for trading_date in (date(2020, 1, 2), date(2020, 1, 3))
+        )
+        return DailyHistoryBatch(
+            provider="zerodha",
+            request=request,
+            retrieved_at=CUTOFF + timedelta(hours=1),
+            content_sha256=hashlib.sha256(raw).hexdigest(),
+            raw_response=raw,
+            adjustment_status=AdjustmentStatus.UNKNOWN,
+            candles=candles,
+        )
+
+
+async def test_historical_backfill_cannot_rewrite_a_frozen_observation(
+    connection: AsyncConnection,
+) -> None:
+    """Old market dates append separately from prospective research evidence."""
+    stored = await _append(connection, _observation())
+    benchmark = InstrumentId.deterministic("reference", "nse-index-nifty-50")
+    requests = tuple(
+        DailyHistoryRequest(
+            instrument_id=instrument_id,
+            instrument_kind=kind,
+            source_instrument_id=token,
+            from_date=date(2020, 1, 2),
+            to_date=date(2020, 1, 3),
+        )
+        for instrument_id, kind, token in (
+            (benchmark, MarketInstrumentKind.INDEX, 100),
+            (HAL, MarketInstrumentKind.CASH_EQUITY, 200),
+        )
+    )
+    sessions = async_sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+
+    await IngestHistoricalDailyHistory(
+        _HistoricalSource(),
+        lambda account_id: SqlAlchemyMarketDataUnitOfWork(sessions, account_id=account_id),
+    ).execute(
+        IngestHistoricalDailyHistoryCommand(
+            account_id=ACCOUNT,
+            requests=requests,
+            benchmark_id=benchmark,
+            completed_through=date(2026, 8, 8),
+        )
+    )
+    async with _factory(connection, ACCOUNT) as unit_of_work:
+        after = await unit_of_work.observations.list_recent(limit=1)
+
+    assert len(after) == 1
+    assert after[0].observation == stored.stored.observation
 
 
 async def test_an_attention_observation_and_every_ranked_member_are_persisted(

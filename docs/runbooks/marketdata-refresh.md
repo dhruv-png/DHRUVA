@@ -1,9 +1,10 @@
 # Runbook — instrument resolution and bounded daily-history refresh
 
-**What this covers.** `dhruva-marketdata coverage` and `dhruva-marketdata
-refresh`: resolving the owner-family watchlist to Zerodha instrument
-identities, inspecting locally stored daily-bar coverage, and fetching only
-the bounded range of daily candles current market context still needs.
+**What this covers.** `dhruva-marketdata coverage`, routine `refresh`, and the
+separate `backfill-plan` / `backfill` historical workflow: resolving the
+owner-family watchlist, inspecting full locally visible daily-bar coverage,
+fetching the small range current market context needs, and explicitly acquiring
+bounded deeper history.
 
 **What it does not do.** No order placement, no positions or holdings, no
 options, futures or intraday data. `coverage` makes no network call of any
@@ -111,10 +112,66 @@ not find it in the provider's master, `refresh` names it explicitly —
 `MISSING_MAPPING: <SYMBOL> has no current Zerodha mapping` — and excludes it
 from the fetch rather than silently dropping it from the report.
 
+## 3. Historical backfill - explicit, bounded, and resumable
+
+Historical acquisition is deliberately absent from `dhruva-refresh` and from
+routine `dhruva-marketdata refresh`. First produce a network-free plan:
+
+```powershell
+dhruva-marketdata backfill-plan --account owner-family --years 2
+```
+
+Or use an explicit earliest market date:
+
+```powershell
+dhruva-marketdata backfill-plan --account owner-family --from 2024-08-01
+```
+
+Exactly one target is required. `--years` is limited to 1-10 and `--from` is
+also capped at ten calendar years. Planning reads the archived mapping and PIT
+daily-bar coverage only; it does not inspect a broker session or call any
+provider. It prints every deterministic chunk, mapping blocker, and exact
+provider-request count.
+
+Execution repeats the same local plan and then uses the existing read-only Kite
+history adapter sequentially:
+
+```powershell
+dhruva-marketdata backfill --account owner-family --years 2
+```
+
+Targets are ordered NIFTY 50 first, then owner symbols alphabetically. Each
+target runs newest-to-oldest in 365-calendar-day core chunks with seven days of
+forward overlap. One safe transaction contains the target and NIFTY benchmark;
+the benchmark's own chunk contains only itself. A later refusal leaves earlier
+chunks committed. Rerun `backfill-plan` to see the reduced plan and `backfill`
+to resume. Overlap and retries create no duplicate bars because normalized bar
+content owns the append-only source revision.
+
+Every historical response retains its actual modern `retrieved_at`. A 2020 bar
+retrieved today is reconstructed history, not evidence DHRUVA possessed in
+2020. Backfill never recalculates or mutates an existing
+`ATTENTION_OBSERVATION`.
+
+Coverage reports readiness at 20, 60, 120, 200 and 252 stored sessions,
+remaining sessions to operational 252-session warm-up, and remaining sessions
+to a stronger 2,000-session evaluation-depth target. The latter is only a data
+depth check: today's twenty surviving owner stocks are not an unbiased
+historical evaluation universe. Historical constituents and delisted securities
+require an approved future source.
+
+The current Zerodha NIFTY 50 mapping is represented as `PRICE_INDEX`, never
+NIFTY 50 TRI. Its dividends are not fabricated. Zerodha historical bars carry
+`adjustment=UNKNOWN`; DHRUVA retains raw provider observations and refuses
+unexplained large discontinuities rather than silently treating them as
+investment returns. Corporate-action-safe adjusted and total-return views stay
+blocked until an approved, auditable source exists. Do not scrape NSE.
+
 ## No secret on this command, ever
 
-`dhruva-marketdata` accepts `--account` and `--as-of` and nothing else. There
-is no `--api-key`, `--access-token`, `--api-secret` or `--request-token`;
+`dhruva-marketdata` accepts attribution/time options plus the bounded historical
+targets `--years` or `--from`. There is no `--api-key`, `--access-token`,
+`--api-secret` or `--request-token`;
 authentication is entirely `dhruva-broker`'s job, established once and reused
 here read-only. A test reads the argument parser and fails the build if that
 ever stops being true.
