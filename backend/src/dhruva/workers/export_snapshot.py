@@ -110,10 +110,15 @@ def build_parser() -> argparse.ArgumentParser:
             "recommendation."
         ),
         epilog=(
-            f"Full export schema {EXPORT_SCHEMA_VERSION}; --packet schema "
-            f"{PACKET_SCHEMA_VERSION}. Either body is byte-for-byte stable for "
-            "a given database state, cutoff and options; only the envelope's "
-            "generated_at varies. NSE filings are not an input."
+            f"Full export schema {EXPORT_SCHEMA_VERSION}: the body is "
+            "byte-for-byte stable for a given database state, cutoff and "
+            "options, but the envelope's generated_at is the wall clock at "
+            "export time, so the whole file still varies between runs. "
+            f"--packet schema {PACKET_SCHEMA_VERSION}: generated_at is the "
+            "packet's own resolved --as-of cutoff, not the wall clock, so "
+            "the entire file -- envelope included -- is byte-for-byte stable "
+            "for a given database state, cutoff and options. NSE filings are "
+            "not an input."
         ),
     )
     parser.add_argument("--account", required=True, help="account the read is attributed to")
@@ -247,24 +252,33 @@ async def run(argv: Sequence[str] | None = None) -> int:
     finally:
         await engine.dispose()
 
-    generated_at = SystemClock().now()
     export: dict[str, Any]
     if args.packet:
         ranked = rank_watchlist(digest, contexts)
         selected = top_attention(ranked, limit=top_n)
+        # Deterministic, not the wall clock: digest.known_at is the resolved
+        # PIT cutoff (== as_of), itself a pure function of the persisted
+        # state, account and --as-of. Using it here -- rather than
+        # SystemClock().now() -- is what makes the *entire* packet file,
+        # envelope included, byte-for-byte identical across repeated exports
+        # of the same state and cutoff, not merely its body_sha256-verified
+        # body. The full snapshot below intentionally keeps the wall clock;
+        # this determinism promise is specific to dhruva.research-packet.v1.
         export = build_packet(
             selected,
             ranked=ranked,
             digest=digest,
             contexts=contexts,
             account_id=account_id,
-            generated_at=generated_at,
+            generated_at=digest.known_at,
             requested_top=top_n,
         )
         schema_version = PACKET_SCHEMA_VERSION
         headline_count = len(selected)
     else:
-        export = build_snapshot(digest, contexts, account_id=account_id, generated_at=generated_at)
+        export = build_snapshot(
+            digest, contexts, account_id=account_id, generated_at=SystemClock().now()
+        )
         schema_version = EXPORT_SCHEMA_VERSION
         headline_count = len(digest.sections)
     destination.write_text(serialise_snapshot(export), encoding="utf-8")

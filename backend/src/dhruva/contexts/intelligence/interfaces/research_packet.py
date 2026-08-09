@@ -83,8 +83,18 @@ def build_packet(  # noqa: PLR0913 - one collaborator per already-resolved read 
 
     ``generated_at`` reaches only the envelope, exactly as
     :func:`~dhruva.contexts.intelligence.interfaces.digest_export.
-    build_snapshot` keeps it out of the body -- two packets of the same
-    cutoff minutes apart differ in exactly one field.
+    build_snapshot` keeps it out of the body. Unlike the full snapshot,
+    though, a packet's whole-file byte-determinism is a stated contract of
+    ``dhruva.research-packet.v1``: pass ``digest.known_at`` (the resolved PIT
+    cutoff, already threaded through this same call as part of ``digest``),
+    never a wall-clock read, so that two packets built from identical
+    persisted state, account and cutoff serialise to identical bytes --
+    envelope included, not merely an identical ``body_sha256``. This function
+    does not enforce that itself (``generated_at`` stays an explicit
+    parameter, matching every sibling export function in this codebase, and
+    matching ADR-011's "time is injected" rule at the one place it is
+    injected from); the composition root that calls it is what must uphold
+    it. See ``dhruva-export``'s own docstring for where that happens.
 
     ``requested_top`` is recorded rather than re-derived from ``len(top)``:
     the packet's own shape depends on it (a caller comparing two packets

@@ -229,6 +229,52 @@ def test_only_the_envelope_carries_the_moment_of_writing() -> None:
     assert first["envelope"]["body_sha256"] == second["envelope"]["body_sha256"]
 
 
+def test_generated_at_equal_to_known_at_makes_the_whole_packet_byte_identical() -> None:
+    """``dhruva-export --packet``'s own convention: pass known_at, never the wall clock.
+
+    The two tests above show ``build_packet`` accepts an arbitrary
+    ``generated_at``, so an uncooperative caller can still make two packets
+    of one cutoff differ. This proves the convention this codebase's only
+    caller (``dhruva-export``) actually follows: passing ``digest.known_at``
+    as ``generated_at`` makes the *entire* file byte-for-byte identical
+    across repeated exports, not merely its body.
+    """
+    contexts = {SBIN.instrument_id: _moved_context(SBIN)}
+    first = _packet(
+        _archived("https://p.test/sbi", FRAUD), contexts=contexts, generated_at=ANALYSED
+    )
+    second = _packet(
+        _archived("https://p.test/sbi", FRAUD), contexts=contexts, generated_at=ANALYSED
+    )
+
+    assert serialise_snapshot(first) == serialise_snapshot(second)
+    assert first["envelope"]["generated_at"] == second["envelope"]["generated_at"]
+
+
+def test_generated_at_equal_to_known_at_matches_the_bodys_own_as_of() -> None:
+    """The deterministic value this convention produces is exactly the packet's own as_of."""
+    packet = _packet(
+        _archived("https://p.test/sbi", FRAUD),
+        contexts={SBIN.instrument_id: _moved_context(SBIN)},
+        known_at=ANALYSED,
+        generated_at=ANALYSED,
+    )
+
+    assert packet["envelope"]["generated_at"] == packet["body"]["as_of"] == ANALYSED.isoformat()
+
+
+def test_two_different_cutoffs_produce_two_different_deterministic_generated_at_values() -> None:
+    """generated_at tracks the resolved cutoff, never a frozen or wall-clock value."""
+    later = ANALYSED + timedelta(days=1)
+    contexts = {SBIN.instrument_id: _moved_context(SBIN)}
+    earlier_packet = _packet(contexts=contexts, known_at=ANALYSED, generated_at=ANALYSED)
+    later_packet = _packet(contexts=contexts, known_at=later, generated_at=later)
+
+    assert earlier_packet["envelope"]["generated_at"] == ANALYSED.isoformat()
+    assert later_packet["envelope"]["generated_at"] == later.isoformat()
+    assert earlier_packet["envelope"]["generated_at"] != later_packet["envelope"]["generated_at"]
+
+
 def test_serialisation_is_stable_under_json_sorted_keys() -> None:
     """The same canonical-JSON contract the full snapshot already proves."""
     packet = _packet(

@@ -74,10 +74,17 @@ from dhruva.contexts.marketdata.infrastructure.persistence.models import (
 from dhruva.contexts.marketdata.infrastructure.persistence.unit_of_work import (
     SqlAlchemyMarketDataUnitOfWork,
 )
+from dhruva.contexts.reference.application.watchlist import ConfigureReferenceUniverse
+from dhruva.contexts.reference.infrastructure import (
+    SqlAlchemyReferenceUnitOfWork,
+    load_owner_universe,
+)
 from dhruva.shared.identity import AccountId, InstrumentId
+from dhruva.workers import export_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -86,6 +93,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")
 ACCOUNT = AccountId.deterministic("owner-family")
 CUTOFF_DAY = date(2026, 8, 3)
 KNOWN_AT = datetime(2026, 8, 3, 18, 0, tzinfo=UTC)
+WATCHLIST_RECORDED_AT = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
 LATER = datetime(2026, 8, 4, 18, 0, tzinfo=UTC)
 EARLY_RETRIEVAL = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
 LATE_RETRIEVAL = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
@@ -240,6 +248,25 @@ def _entry(packet: dict[str, Any], symbol: str) -> dict[str, Any]:
     return next(item for item in body["attention"] if item["canonical_symbol"] == symbol)
 
 
+async def _seed_watchlist(engine: AsyncEngine) -> None:
+    """Seed the real committed watchlist -- required for ``export_snapshot.run``.
+
+    The ``_packet`` helper above bypasses this entirely (it hands
+    ``BuildWatchlistDigest`` a hardcoded ``UNIVERSE`` tuple), which is fine
+    for proving ``build_packet``'s own contract but not for a test that goes
+    through the actual ``dhruva-export`` composition root, which resolves the
+    watchlist itself via ``GetSharedWatchlist``.
+    """
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    def reference_uow(account: AccountId) -> SqlAlchemyReferenceUnitOfWork:
+        return SqlAlchemyReferenceUnitOfWork(sessions, account_id=account)
+
+    await ConfigureReferenceUniverse(reference_uow).execute(
+        load_owner_universe(ACCOUNT, recorded_at=WATCHLIST_RECORDED_AT)
+    )
+
+
 async def _counts(engine: AsyncEngine) -> tuple[int, int]:
     async with engine.connect() as connection:
         news = await connection.execute(select(func.count()).select_from(NewsItemRevisionModel))
@@ -272,6 +299,67 @@ async def test_repeating_a_packet_export_produces_an_identical_body(
     assert serialise_snapshot({"b": first["body"]}) == serialise_snapshot({"b": second["body"]})
     assert first["envelope"]["body_sha256"] == second["envelope"]["body_sha256"]
     assert first["envelope"]["generated_at"] != second["envelope"]["generated_at"]
+
+
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_the_cli_export_of_a_packet_is_byte_identical_across_two_output_files(
+    migrated: AsyncEngine, tmp_path: Path
+) -> None:
+    """The actual requirement, proven at the real ``dhruva-export --packet`` command surface.
+
+    Not merely equal ``body_sha256`` and not merely an equal body: the entire
+    written file -- envelope included -- must be byte-for-byte identical for
+    the same persisted state, account and explicit ``--as-of`` cutoff. This
+    is what a wall-clock ``generated_at`` broke, and what
+    ``digest.known_at`` fixes.
+    """
+    await _seed_watchlist(migrated)
+    await _ingest(migrated, "sbi-audit", FRAUD)
+    await _store_bars(
+        migrated,
+        _bar(SBIN, CUTOFF_DAY - timedelta(days=1), "100"),
+        _bar(SBIN, CUTOFF_DAY, "110"),
+    )
+    as_of = KNOWN_AT.isoformat()
+    first_path = tmp_path / "packet-a.json"
+    second_path = tmp_path / "packet-b.json"
+
+    first_exit = await export_snapshot.run(
+        ["--account", str(ACCOUNT), "--output", str(first_path), "--as-of", as_of, "--packet"]
+    )
+    second_exit = await export_snapshot.run(
+        ["--account", str(ACCOUNT), "--output", str(second_path), "--as-of", as_of, "--packet"]
+    )
+
+    assert first_exit == 0
+    assert second_exit == 0
+    assert first_path.read_bytes() == second_path.read_bytes()
+
+
+@pytest.mark.usefixtures("truncated_after_test")
+async def test_a_full_snapshot_export_still_varies_by_wall_clock(
+    migrated: AsyncEngine, tmp_path: Path
+) -> None:
+    """The legacy path is untouched: a full snapshot's generated_at is still the wall clock.
+
+    Two exports of the same state and cutoff, seconds apart, must still
+    differ at the whole-file level for ``dhruva.research-snapshot.v1`` -- the
+    packet fix must not have leaked into the unrelated schema.
+    """
+    await _seed_watchlist(migrated)
+    await _ingest(migrated, "sbi-audit", FRAUD)
+    as_of = KNOWN_AT.isoformat()
+    first_path = tmp_path / "snapshot-a.json"
+    second_path = tmp_path / "snapshot-b.json"
+
+    await export_snapshot.run(
+        ["--account", str(ACCOUNT), "--output", str(first_path), "--as-of", as_of]
+    )
+    await export_snapshot.run(
+        ["--account", str(ACCOUNT), "--output", str(second_path), "--as-of", as_of]
+    )
+
+    assert first_path.read_bytes() != second_path.read_bytes()
 
 
 @pytest.mark.usefixtures("truncated_after_test")
