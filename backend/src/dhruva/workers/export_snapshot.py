@@ -1,16 +1,29 @@
-"""``dhruva-export`` -- write the digest and its market context to a JSON file.
+"""``dhruva-export`` -- write a deterministic research artifact to a JSON file.
 
 A sibling of ``dhruva-digest`` reading exactly the same path: the same watchlist,
 the same news archive, the same daily bars, the same cutoff. What differs is only
 where the answer goes. If the two ever disagreed about what was knowable at an
 instant, one of them would be wrong, so neither has its own read.
 
+Two body shapes, chosen by ``--packet``. The default writes the full-watchlist
+snapshot every instrument this command has always exported
+(:func:`~dhruva.contexts.intelligence.interfaces.digest_export.build_snapshot`,
+schema ``dhruva.research-snapshot.v1``, unchanged). ``--packet`` writes the
+compact, top-N research-attention artifact
+(:func:`~dhruva.contexts.intelligence.interfaces.research_packet.build_packet`,
+schema ``dhruva.research-packet.v1``) -- the same ranking
+``dhruva-digest --brief`` renders as text, serialised the same way the full
+snapshot already is. Neither mode ranks or reads anything the other does not;
+they differ only in which already-resolved read models reach the file.
+
 Read-only against PostgreSQL and against the network, which here means the
-network is not contacted at all. A snapshot is evidence about what was already
+network is not contacted at all. An export is evidence about what was already
 stored; going to fetch something first would make it evidence about now.
+Nothing here triggers ``dhruva-refresh`` or any other write path -- refreshing
+first, if that is wanted, is a separate, explicit command.
 
 **It will not overwrite.** An existing file is refused unless ``--force`` is
-given. A snapshot is the thing somebody keeps in order to be able to say what
+given. An export is the thing somebody keeps in order to be able to say what
 they knew, and a command that silently replaced yesterday's would destroy the
 only copy of a fact at the moment it became inconvenient.
 """
@@ -28,14 +41,20 @@ from dhruva.contexts.intelligence.application.watchlist_digest import (
     BuildWatchlistDigest,
     BuildWatchlistDigestQuery,
 )
+from dhruva.contexts.intelligence.domain.attention import top_attention
 from dhruva.contexts.intelligence.domain.digest import MAX_ITEMS_PER_INSTRUMENT
 from dhruva.contexts.intelligence.infrastructure.persistence.unit_of_work import (
     SqlAlchemyIntelligenceUnitOfWork,
 )
+from dhruva.contexts.intelligence.interfaces.attention_presentation import rank_watchlist
 from dhruva.contexts.intelligence.interfaces.digest_export import (
     EXPORT_SCHEMA_VERSION,
     build_snapshot,
     serialise_snapshot,
+)
+from dhruva.contexts.intelligence.interfaces.research_packet import (
+    PACKET_SCHEMA_VERSION,
+    build_packet,
 )
 from dhruva.contexts.marketdata.api import (
     DEFAULT_MULTI_DAY_SESSIONS,
@@ -57,16 +76,20 @@ from dhruva.shared.errors import DhruvaError, ValidationError
 from dhruva.shared.identity import AccountId
 from dhruva.shared.time.clock import SystemClock
 from dhruva.workers.cli_arguments import (
+    BRIEF_TOP_DEFAULT,
     parse_account,
     parse_cutoff,
     parse_max_items,
     parse_sessions,
+    parse_top,
     parse_window,
     select_instruments,
+    validate_packet_options,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Any
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -81,14 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dhruva-export",
         description=(
-            "Write a deterministic, self-describing JSON snapshot of what DHRUVA "
+            "Write a deterministic, self-describing JSON export of what DHRUVA "
             "had archived about the approved watchlist at an explicit instant. "
             "Read-only: no network call, no write to the database, no "
             "recommendation."
         ),
         epilog=(
-            f"Schema {EXPORT_SCHEMA_VERSION}. The body is byte-for-byte stable "
-            "for a given database state and cutoff; only the envelope's "
+            f"Full export schema {EXPORT_SCHEMA_VERSION}; --packet schema "
+            f"{PACKET_SCHEMA_VERSION}. Either body is byte-for-byte stable for "
+            "a given database state, cutoff and options; only the envelope's "
             "generated_at varies. NSE filings are not an input."
         ),
     )
@@ -125,6 +149,22 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"items exported per instrument (default {MAX_ITEMS_PER_INSTRUMENT})",
     )
     parser.add_argument(
+        "--packet",
+        action="store_true",
+        help=(
+            "write the compact top-N research-attention packet instead of the "
+            "full watchlist snapshot -- same ranking dhruva-digest --brief "
+            f"renders, schema {PACKET_SCHEMA_VERSION}; never a recommendation"
+        ),
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"instruments included in --packet (default {BRIEF_TOP_DEFAULT}); requires --packet",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="overwrite the output file if it already exists",
@@ -133,9 +173,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _destination(output: Path, *, force: bool) -> Path:
-    """Return the path to write, refusing to destroy an existing snapshot.
+    """Return the path to write, refusing to destroy an existing export.
 
-    Fail-closed. A snapshot is what somebody keeps in order to say what they
+    Fail-closed. An export is what somebody keeps in order to say what they
     knew at a point in time; overwriting one silently would remove the only copy
     of a fact at the moment it became inconvenient, and the cost of being wrong
     in the other direction is retyping the command with ``--force``.
@@ -143,7 +183,7 @@ def _destination(output: Path, *, force: bool) -> Path:
     if output.exists() and not force:
         raise ValidationError(
             f"{output} already exists. Pass --force to replace it, or choose "
-            "another path; a snapshot is not overwritten by accident."
+            "another path; an export is not overwritten by accident."
         )
     if output.exists() and not output.is_file():
         raise ValidationError(f"{output} exists and is not a regular file")
@@ -154,8 +194,10 @@ def _destination(output: Path, *, force: bool) -> Path:
 
 
 async def run(argv: Sequence[str] | None = None) -> int:
-    """Read the archives once at the cutoff and write the snapshot."""
+    """Read the archives once at the cutoff and write the export."""
     args = build_parser().parse_args(argv)
+    validate_packet_options(packet=args.packet, top=args.top)
+    top_n = parse_top(args.top) if args.top is not None else BRIEF_TOP_DEFAULT
     settings = load_settings()
     account_id: AccountId = parse_account(args.account)
     as_of = parse_cutoff(args.as_of)
@@ -205,21 +247,35 @@ async def run(argv: Sequence[str] | None = None) -> int:
     finally:
         await engine.dispose()
 
-    snapshot = build_snapshot(
-        digest,
-        contexts,
-        account_id=account_id,
-        generated_at=SystemClock().now(),
-    )
-    destination.write_text(serialise_snapshot(snapshot), encoding="utf-8")
+    generated_at = SystemClock().now()
+    export: dict[str, Any]
+    if args.packet:
+        ranked = rank_watchlist(digest, contexts)
+        selected = top_attention(ranked, limit=top_n)
+        export = build_packet(
+            selected,
+            ranked=ranked,
+            digest=digest,
+            contexts=contexts,
+            account_id=account_id,
+            generated_at=generated_at,
+            requested_top=top_n,
+        )
+        schema_version = PACKET_SCHEMA_VERSION
+        headline_count = len(selected)
+    else:
+        export = build_snapshot(digest, contexts, account_id=account_id, generated_at=generated_at)
+        schema_version = EXPORT_SCHEMA_VERSION
+        headline_count = len(digest.sections)
+    destination.write_text(serialise_snapshot(export), encoding="utf-8")
 
     sys.stdout.write(
         f"wrote {destination}\n"
-        f"  schema     : {EXPORT_SCHEMA_VERSION}\n"
+        f"  schema     : {schema_version}\n"
         f"  as of      : {as_of.isoformat()}\n"
-        f"  instruments: {len(digest.sections)}\n"
+        f"  instruments: {headline_count}\n"
         f"  items      : {digest.items_reported}\n"
-        f"  body sha256: {snapshot['envelope']['body_sha256']}\n"
+        f"  body sha256: {export['envelope']['body_sha256']}\n"
     )
     return _EXIT_OK
 

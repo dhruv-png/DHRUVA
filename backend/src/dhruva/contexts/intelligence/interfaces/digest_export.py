@@ -31,6 +31,12 @@ credential, no machine-local path, no account secret. The account appears as its
 stable surrogate identifier, which identifies without revealing. A snapshot is a
 file somebody may email to themselves; it should contain nothing they would mind
 having emailed.
+
+``market_summary``, ``news_entry`` and ``linked_instruments`` are public so
+:mod:`dhruva.contexts.intelligence.interfaces.research_packet` can reuse the
+identical per-instrument market and news shape rather than re-deriving it --
+two independent renderings of one fact would eventually disagree about which
+fields a close or a headline needs.
 """
 
 from __future__ import annotations
@@ -65,6 +71,9 @@ __all__ = [
     "EXPORT_SCHEMA_VERSION",
     "body_fingerprint",
     "build_snapshot",
+    "linked_instruments",
+    "market_summary",
+    "news_entry",
     "serialise_snapshot",
 ]
 
@@ -173,12 +182,12 @@ def _section(section: DigestSection, context: MarketContext | None) -> dict[str,
         "items_withheld": section.withheld,
         "event_categories": [str(category) for category in section.categories],
         "sentiment_counts": {str(label): count for label, count in section.sentiments},
-        "market": _market(context),
-        "news": [_entry(entry) for entry in section.entries],
+        "market": market_summary(context),
+        "news": [news_entry(entry) for entry in section.entries],
     }
 
 
-def _market(context: MarketContext | None) -> dict[str, Any]:
+def market_summary(context: MarketContext | None) -> dict[str, Any]:
     """Return the market summary, or the reason there is not one.
 
     ``requested`` distinguishes "we did not look" from "we looked and the
@@ -209,7 +218,7 @@ def _market(context: MarketContext | None) -> dict[str, Any]:
     }
 
 
-def _entry(entry: DigestEntry) -> dict[str, Any]:
+def news_entry(entry: DigestEntry) -> dict[str, Any]:
     """Return one archived item with everything needed to cite and audit it."""
     news = entry.item.revision.item
     decision = entry.item.revision.deduplication
@@ -241,11 +250,11 @@ def _entry(entry: DigestEntry) -> dict[str, Any]:
             "rule": None if decision.rule is None else str(decision.rule),
             "original_url": None if decision.original is None else decision.original.url,
         },
-        "linked_instruments": _links(entry),
+        "linked_instruments": linked_instruments(entry),
     }
 
 
-def _links(entry: DigestEntry) -> list[dict[str, Any]]:
+def linked_instruments(entry: DigestEntry) -> list[dict[str, Any]]:
     """Return every instrument the stored analysis linked, ambiguities included."""
     analysis = entry.item.analysis
     if analysis is None:

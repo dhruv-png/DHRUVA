@@ -15,12 +15,19 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 from dhruva.contexts.intelligence.interfaces.digest_export import EXPORT_SCHEMA_VERSION
+from dhruva.contexts.intelligence.interfaces.research_packet import PACKET_SCHEMA_VERSION
 from dhruva.contexts.marketdata.api import DEFAULT_MULTI_DAY_SESSIONS
 from dhruva.shared.errors import ValidationError
 from dhruva.shared.identity import AccountId
 from dhruva.workers import digest as digest_cli
 from dhruva.workers import export_snapshot as cli
-from dhruva.workers.cli_arguments import parse_account, parse_cutoff, parse_window
+from dhruva.workers.cli_arguments import (
+    BRIEF_TOP_DEFAULT,
+    parse_account,
+    parse_cutoff,
+    parse_window,
+    validate_packet_options,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -197,3 +204,62 @@ def test_a_non_positive_window_is_refused(days: int) -> None:
 def test_an_omitted_window_falls_back_to_configuration() -> None:
     """One default, defined in the configuration boundary."""
     assert parse_window(None, fallback=9) == timedelta(days=9)
+
+
+# --------------------------------------------------------------------------- #
+# --packet: a compact top-N attention artifact instead of the full snapshot
+# --------------------------------------------------------------------------- #
+
+
+def test_packet_and_top_default_to_off(tmp_path: Path) -> None:
+    """The full snapshot is the existing product; a packet is an addition, not a default."""
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["--account", str(ACCOUNT), "--output", str(tmp_path / "s.json")])
+    assert (args.packet, args.top) == (False, None)
+
+    packet_args = parser.parse_args(
+        ["--account", str(ACCOUNT), "--output", str(tmp_path / "p.json"), "--packet", "--top", "3"]
+    )
+    assert packet_args.packet is True
+    assert packet_args.top == 3
+
+
+def test_packet_help_text_does_not_promise_a_recommendation() -> None:
+    """Somebody reading --help must not come away thinking this is a signal."""
+    parser = cli.build_parser()
+    packet_action = next(
+        action for action in parser._actions if "--packet" in action.option_strings
+    )
+
+    assert "recommendation" in (packet_action.help or "")
+
+
+def test_the_help_text_states_both_schema_versions() -> None:
+    """An operator deciding whether to diff two files needs to know which schema each uses."""
+    epilog = cli.build_parser().epilog or ""
+
+    assert EXPORT_SCHEMA_VERSION in epilog
+    assert PACKET_SCHEMA_VERSION in epilog
+
+
+def test_top_without_packet_is_refused() -> None:
+    """--top bounds a packet's own selection; without --packet it would do nothing."""
+    with pytest.raises(ValidationError, match="--top is only meaningful together with --packet"):
+        validate_packet_options(packet=False, top=3)
+
+
+def test_packet_alone_or_with_a_valid_top_is_accepted() -> None:
+    """The combinations a runbook actually uses must not be refused."""
+    validate_packet_options(packet=True, top=None)
+    validate_packet_options(packet=True, top=3)
+    validate_packet_options(packet=False, top=None)
+
+
+def test_the_top_default_matches_the_briefs_own_default() -> None:
+    """One default, so a packet and a brief agree on what "top" means unqualified."""
+    parser = cli.build_parser()
+    args = parser.parse_args(["--account", str(ACCOUNT), "--output", "p.json", "--packet"])
+
+    assert args.top is None  # resolved to BRIEF_TOP_DEFAULT inside run(), not by argparse
+    assert BRIEF_TOP_DEFAULT == 5

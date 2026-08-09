@@ -42,6 +42,7 @@ __all__ = [
     "select_instruments",
     "validate_brief_options",
     "validate_changes_options",
+    "validate_packet_options",
 ]
 
 #: Items one section may show. A digest is something a person reads; past this
@@ -219,6 +220,18 @@ def validate_brief_options(*, brief: bool, ranked: bool, top: int | None) -> Non
         raise ValidationError("--top is only meaningful together with --brief")
     if brief and ranked:
         raise ValidationError("--brief and --ranked are mutually exclusive")
+
+
+def validate_packet_options(*, packet: bool, top: int | None) -> None:
+    """Refuse --top without --packet, matching --brief's own rule on dhruva-digest.
+
+    ``--top`` bounds a packet's own top-N attention selection; asking for it
+    without ``--packet`` would silently do nothing rather than the ceiling it
+    looks like, exactly the failure :func:`validate_brief_options` already
+    guards against for ``dhruva-digest --brief``.
+    """
+    if top is not None and not packet:
+        raise ValidationError("--top is only meaningful together with --packet")
 
 
 def select_instruments(
