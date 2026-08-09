@@ -104,6 +104,10 @@ dhruva-broker = "dhruva.workers.broker:main"
 # daily history. 'coverage' makes no network call; 'refresh' reuses the
 # session dhruva-broker established and fetches only what is missing.
 dhruva-marketdata = "dhruva.workers.marketdata:main"
+# Orchestrates market-data refresh, news poll and the compact brief through
+# their own application interfaces -- never a subprocess. No scheduler; the
+# owner runs it once per invocation.
+dhruva-refresh = "dhruva.workers.refresh:main"
 
 [dependency-groups]
 dev = [

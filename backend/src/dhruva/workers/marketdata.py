@@ -112,6 +112,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from dhruva.contexts.marketdata.application.daily_history import IngestDailyHistoryResult
     from dhruva.contexts.marketdata.domain.ports import DailyHistorySource
     from dhruva.contexts.platform.domain.broker.session import BrokerApplication, BrokerSession
     from dhruva.contexts.reference.domain.instrument_master import (
@@ -127,8 +128,12 @@ __all__ = [
     "CoverageStatus",
     "CoverageSummary",
     "InstrumentCoverage",
+    "MarketDataRefreshOutcome",
+    "MarketDataRefreshStatus",
     "build_parser",
     "main",
+    "read_coverage",
+    "refresh_market_data",
 ]
 
 _EXIT_OK = 0
@@ -229,6 +234,68 @@ class CoverageSummary:
         }
 
 
+class MarketDataRefreshStatus(StrEnum):
+    """Every terminal state one refresh attempt can reach, independent of text.
+
+    Exists so a caller other than this CLI -- ``dhruva-refresh``'s
+    orchestration is the first one -- can decide what a refresh attempt did
+    without parsing the printed report. Every member here corresponds to
+    exactly one ``return`` inside :func:`refresh_market_data`.
+    """
+
+    #: Local coverage already met every instrument's need; no provider call.
+    ALREADY_SUFFICIENT = "ALREADY_SUFFICIENT"
+    #: The broker session was missing, expired, or nothing is enrolled.
+    NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
+    #: Instrument-master resolution raised a ``DhruvaError``.
+    RESOLUTION_REFUSED = "RESOLUTION_REFUSED"
+    #: The Nifty 50 benchmark has no current Zerodha mapping.
+    BENCHMARK_UNMAPPED = "BENCHMARK_UNMAPPED"
+    #: Mapping was refreshed but no instrument actually needed new bars.
+    MAPPING_REFRESHED = "MAPPING_REFRESHED"
+    #: ``IngestDailyHistory`` raised a ``DhruvaError``; nothing was persisted.
+    INGEST_REFUSED = "INGEST_REFUSED"
+    #: The bounded synchronized batch was fetched and committed.
+    INGESTED = "INGESTED"
+
+
+#: The statuses under which a provider call was never even attempted, so no
+#: benchmark, resolution or ingest information exists to report.
+_NO_PROVIDER_CALL = frozenset(
+    {MarketDataRefreshStatus.ALREADY_SUFFICIENT, MarketDataRefreshStatus.NOT_AUTHENTICATED}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class MarketDataRefreshOutcome:
+    """The terminal result of one refresh attempt, before any text is rendered.
+
+    Carries exactly what :func:`refresh_market_data` decided and nothing about
+    how to print it -- ``stdout``/``stderr`` are this CLI's own rendering of
+    that decision, byte-identical to what it printed before this type existed,
+    kept here only so ``main`` stays a thin ``sys.stdout.write(outcome.stdout)``.
+    A caller that wants its own rendering, such as ``dhruva-refresh``, reads
+    ``status``/``coverage``/``auth_state`` and ignores both text fields.
+    """
+
+    status: MarketDataRefreshStatus
+    exit_code: int
+    #: Coverage as best known when this outcome was decided: the initial read
+    #: for every early-exit status, the post-ingest read for
+    #: ``MAPPING_REFRESHED``/``INGESTED``.
+    coverage: CoverageSummary
+    auth_state: BrokerAuthState | None = None
+    ingest_result: IngestDailyHistoryResult | None = None
+    still_missing: tuple[InstrumentCoverage, ...] = ()
+    stdout: str = ""
+    stderr: str = ""
+
+    @property
+    def attempted_provider_call(self) -> bool:
+        """Return whether this outcome reached (or tried to reach) Zerodha."""
+        return self.status not in _NO_PROVIDER_CALL
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
@@ -301,7 +368,7 @@ async def run(
 
     try:
         if args.command == "coverage":
-            summary = await _read_coverage(
+            summary = await read_coverage(
                 account_id=account_id,
                 as_of=as_of,
                 reference_uow_factory=reference_uow,
@@ -326,7 +393,7 @@ async def run(
         await engine.dispose()
 
 
-async def _read_coverage(
+async def read_coverage(
     *,
     account_id: AccountId,
     as_of: datetime,
@@ -503,20 +570,69 @@ async def _refresh(  # noqa: PLR0913 - one collaborator per capability, matching
     instrument_source: InstrumentMasterSource | None,
     history_source: DailyHistorySource | None,
 ) -> int:
-    """Inspect coverage first, then fetch only what it says is missing."""
-    coverage = await _read_coverage(
+    """Print exactly what ``refresh_market_data`` decided, and return its exit code."""
+    outcome = await refresh_market_data(
+        account_id=account_id,
+        as_of=as_of,
+        settings=settings,
+        reference_uow_factory=reference_uow_factory,
+        marketdata_uow_factory=marketdata_uow_factory,
+        identity_uow_factory=identity_uow_factory,
+        key_provider=key_provider,
+        clock=clock,
+        instrument_source=instrument_source,
+        history_source=history_source,
+    )
+    if outcome.stdout:
+        sys.stdout.write(outcome.stdout)
+    if outcome.stderr:
+        sys.stderr.write(outcome.stderr)
+    return outcome.exit_code
+
+
+async def refresh_market_data(  # noqa: PLR0913 - one collaborator per capability, matching broker.py's login
+    *,
+    account_id: AccountId,
+    as_of: datetime,
+    settings: Settings,
+    reference_uow_factory: Callable[[AccountId], SqlAlchemyReferenceUnitOfWork],
+    marketdata_uow_factory: Callable[[AccountId], SqlAlchemyMarketDataUnitOfWork],
+    identity_uow_factory: Callable[[AccountId], SqlAlchemyIdentityUnitOfWork],
+    key_provider: MasterKeyProvider,
+    clock: Clock,
+    instrument_source: InstrumentMasterSource | None,
+    history_source: DailyHistorySource | None,
+) -> MarketDataRefreshOutcome:
+    """Inspect coverage first, then fetch only what it says is missing.
+
+    Prints nothing and raises nothing ``IngestDailyHistory``/
+    ``ArchiveOwnerInstrumentMaster`` did not already raise as a
+    :class:`~dhruva.shared.errors.DhruvaError` -- every terminal state is a
+    ``return``, captured in the result's :class:`MarketDataRefreshStatus` so a
+    caller can act on it without parsing text. ``dhruva-marketdata refresh``
+    and ``dhruva-refresh`` are both thin renderings of this one function; ADR
+    fail-closed semantics, the atomic whole-batch refusal, the bounded
+    bootstrap window and the SESSION-only credential read are unchanged from
+    before this function existed -- extracted, not rewritten.
+    """
+    coverage = await read_coverage(
         account_id=account_id,
         as_of=as_of,
         reference_uow_factory=reference_uow_factory,
         marketdata_uow_factory=marketdata_uow_factory,
     )
     if all(entry.status is CoverageStatus.READY for entry in coverage.entries):
-        sys.stdout.write(
-            _render_coverage(coverage)
-            + "\n\nrefresh: local coverage is already sufficient; no provider call was made.\n"
+        return MarketDataRefreshOutcome(
+            status=MarketDataRefreshStatus.ALREADY_SUFFICIENT,
+            exit_code=_EXIT_OK,
+            coverage=coverage,
+            stdout=(
+                _render_coverage(coverage)
+                + "\n\nrefresh: local coverage is already sufficient; no provider call was made.\n"
+            ),
         )
-        return _EXIT_OK
 
+    auth_state: BrokerAuthState | None = None
     if instrument_source is None or history_source is None:
         status = await DescribeBrokerAuthentication(
             identity_uow_factory,
@@ -524,12 +640,18 @@ async def _refresh(  # noqa: PLR0913 - one collaborator per capability, matching
             open_credential,
             clock,
         ).execute(account_id, _BROKER)
+        auth_state = status.state
         if status.state is not BrokerAuthState.SUCCESS:
-            sys.stderr.write(
-                _SESSION_REMEDY.get(status.state, f"refresh: REFUSED -- {status.state.value}")
-                + "\n"
+            return MarketDataRefreshOutcome(
+                status=MarketDataRefreshStatus.NOT_AUTHENTICATED,
+                exit_code=_EXIT_NOT_AUTHENTICATED,
+                coverage=coverage,
+                auth_state=auth_state,
+                stderr=(
+                    _SESSION_REMEDY.get(status.state, f"refresh: REFUSED -- {status.state.value}")
+                    + "\n"
+                ),
             )
-            return _EXIT_NOT_AUTHENTICATED
 
     async with httpx2.AsyncClient(
         base_url=KITE_API_BASE, timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False
@@ -539,6 +661,8 @@ async def _refresh(  # noqa: PLR0913 - one collaborator per capability, matching
             as_of=as_of,
             settings=settings,
             client=client,
+            initial_coverage=coverage,
+            auth_state=auth_state,
             reference_uow_factory=reference_uow_factory,
             marketdata_uow_factory=marketdata_uow_factory,
             identity_uow_factory=identity_uow_factory,
@@ -555,6 +679,8 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
     as_of: datetime,
     settings: Settings,
     client: httpx2.AsyncClient,
+    initial_coverage: CoverageSummary,
+    auth_state: BrokerAuthState | None,
     reference_uow_factory: Callable[[AccountId], SqlAlchemyReferenceUnitOfWork],
     marketdata_uow_factory: Callable[[AccountId], SqlAlchemyMarketDataUnitOfWork],
     identity_uow_factory: Callable[[AccountId], SqlAlchemyIdentityUnitOfWork],
@@ -562,7 +688,7 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
     clock: Clock,
     instrument_source: InstrumentMasterSource | None,
     history_source: DailyHistorySource | None,
-) -> int:
+) -> MarketDataRefreshOutcome:
     """Resolve instrument mapping, then fetch and ingest the bounded missing range."""
     instr_source: InstrumentMasterSource
     hist_source: DailyHistorySource
@@ -603,20 +729,30 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
             resolver_revision=archive_result.resolver_revision,
         )
     except DhruvaError as error:
-        _report_refusal("instrument resolution", error)
-        return _EXIT_REFUSED
+        return MarketDataRefreshOutcome(
+            status=MarketDataRefreshStatus.RESOLUTION_REFUSED,
+            exit_code=_EXIT_REFUSED,
+            coverage=initial_coverage,
+            auth_state=auth_state,
+            stderr=_refusal_text("instrument resolution", error),
+        )
 
     mapped = _mapped_cash(discovery)
     benchmark_id = InstrumentId.deterministic("reference", _BENCHMARK_IDENTITY_KEY)
     benchmark_cash = mapped.get(benchmark_id)
     if benchmark_cash is None:
-        sys.stderr.write(
-            "refresh: REFUSED -- the Nifty 50 benchmark has no current Zerodha "
-            "mapping; no synchronized session calendar is available.\n"
+        return MarketDataRefreshOutcome(
+            status=MarketDataRefreshStatus.BENCHMARK_UNMAPPED,
+            exit_code=_EXIT_REFUSED,
+            coverage=initial_coverage,
+            auth_state=auth_state,
+            stderr=(
+                "refresh: REFUSED -- the Nifty 50 benchmark has no current Zerodha "
+                "mapping; no synchronized session calendar is available.\n"
+            ),
         )
-        return _EXIT_REFUSED
 
-    coverage = await _read_coverage(
+    coverage = await read_coverage(
         account_id=account_id,
         as_of=as_of,
         reference_uow_factory=reference_uow_factory,
@@ -633,12 +769,18 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
     )
 
     if not needs_history:
-        sys.stdout.write(
-            _render_coverage(coverage)
-            + "\n\nrefresh: instrument mapping refreshed; no instrument needed new bars.\n"
+        return MarketDataRefreshOutcome(
+            status=MarketDataRefreshStatus.MAPPING_REFRESHED,
+            exit_code=_EXIT_OK,
+            coverage=coverage,
+            auth_state=auth_state,
+            still_missing=still_missing,
+            stdout=(
+                _render_coverage(coverage)
+                + "\n\nrefresh: instrument mapping refreshed; no instrument needed new bars.\n"
+                + _missing_mappings_text(still_missing)
+            ),
         )
-        _report_missing_mappings(still_missing)
-        return _EXIT_OK
 
     required_through = _ist_date(as_of) - timedelta(days=1)
     from_date = required_through - timedelta(days=settings.marketdata.bootstrap_lookback_days - 1)
@@ -673,42 +815,54 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
             )
         )
     except DhruvaError as error:
-        _report_refusal("daily history ingest", error)
-        return _EXIT_REFUSED
+        return MarketDataRefreshOutcome(
+            status=MarketDataRefreshStatus.INGEST_REFUSED,
+            exit_code=_EXIT_REFUSED,
+            coverage=coverage,
+            auth_state=auth_state,
+            stderr=_refusal_text("daily history ingest", error),
+        )
 
-    final_coverage = await _read_coverage(
+    final_coverage = await read_coverage(
         account_id=account_id,
         as_of=as_of,
         reference_uow_factory=reference_uow_factory,
         marketdata_uow_factory=marketdata_uow_factory,
     )
-    sys.stdout.write(
-        _render_coverage(final_coverage)
-        + f"\n\nrefresh: ingested {result.instruments} instruments "
-        f"({from_date.isoformat()} to {required_through.isoformat()}), "
-        f"{result.bars_added} bars added, {result.bars_unchanged} unchanged.\n"
+    return MarketDataRefreshOutcome(
+        status=MarketDataRefreshStatus.INGESTED,
+        exit_code=_EXIT_OK,
+        coverage=final_coverage,
+        auth_state=auth_state,
+        ingest_result=result,
+        still_missing=still_missing,
+        stdout=(
+            _render_coverage(final_coverage)
+            + f"\n\nrefresh: ingested {result.instruments} instruments "
+            f"({from_date.isoformat()} to {required_through.isoformat()}), "
+            f"{result.bars_added} bars added, {result.bars_unchanged} unchanged.\n"
+            + _missing_mappings_text(still_missing)
+        ),
     )
-    _report_missing_mappings(still_missing)
-    return _EXIT_OK
 
 
-def _report_missing_mappings(entries: tuple[InstrumentCoverage, ...]) -> None:
+def _missing_mappings_text(entries: tuple[InstrumentCoverage, ...]) -> str:
     """State every unresolved mapping by name; a missing instrument is never quiet."""
-    for entry in entries:
-        sys.stdout.write(
-            f"  MISSING_MAPPING: {entry.canonical_symbol} has no current Zerodha mapping.\n"
-        )
-
-
-def _report_refusal(stage: str, error: DhruvaError) -> None:
-    """Print the atomic-refusal banner: what refused, why, and what changed."""
-    sys.stderr.write(f"refresh: REFUSED during {stage} -- {error}\n")
-    for key, value in sorted(error.context.items()):
-        sys.stderr.write(f"    {key}: {value}\n")
-    sys.stderr.write(
-        "the attempted synchronized ingest was not persisted; "
-        "previously committed data is unchanged.\n"
+    return "".join(
+        f"  MISSING_MAPPING: {entry.canonical_symbol} has no current Zerodha mapping.\n"
+        for entry in entries
     )
+
+
+def _refusal_text(stage: str, error: DhruvaError) -> str:
+    """Render the atomic-refusal banner: what refused, why, and what changed."""
+    lines = [f"refresh: REFUSED during {stage} -- {error}"]
+    lines.extend(f"    {key}: {value}" for key, value in sorted(error.context.items()))
+    lines.append(
+        "the attempted synchronized ingest was not persisted; "
+        "previously committed data is unchanged."
+    )
+    return "\n".join(lines) + "\n"
 
 
 async def _open_zerodha_credentials(

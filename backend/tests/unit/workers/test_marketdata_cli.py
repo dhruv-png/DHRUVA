@@ -567,8 +567,12 @@ def test_missing_mappings_are_reported_by_name_not_silently_dropped() -> None:
     """A missing instrument stays a distinct, separately testable reporting step."""
     entries = (_coverage(cli.CoverageStatus.MISSING_MAPPING, symbol="GHOST"),)
 
-    cli._report_missing_mappings(entries)
+    text = cli._missing_mappings_text(entries)
 
-    # No exception and no return value to assert on directly; the real
-    # assertion is that this function exists as an explicit, separately
-    # tested reporting step rather than being folded silently into a count.
+    assert "MISSING_MAPPING" in text
+    assert "GHOST" in text
+
+
+def test_no_missing_mappings_renders_no_text() -> None:
+    """An empty mapping gap list contributes nothing to the printed report."""
+    assert cli._missing_mappings_text(()) == ""
