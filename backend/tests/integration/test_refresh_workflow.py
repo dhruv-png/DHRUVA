@@ -39,7 +39,12 @@ from dhruva.contexts.intelligence.domain.sources import (
     SourceStatus,
 )
 from dhruva.contexts.intelligence.infrastructure.gdelt.mapper import GDELT_SOURCE_KEY, gdelt_source
-from dhruva.contexts.intelligence.infrastructure.persistence.models import NewsItemRevisionModel
+from dhruva.contexts.intelligence.infrastructure.persistence.models import (
+    AttentionObservationMemberModel,
+    NewsItemRevisionModel,
+    ResearchObservationModel,
+)
+from dhruva.contexts.intelligence.interfaces.research_packet import build_packet
 from dhruva.contexts.marketdata.domain.daily_bars import (
     AdjustmentStatus,
     BarCompleteness,
@@ -88,6 +93,7 @@ from dhruva.shared.errors import UpstreamTimeoutError
 from dhruva.shared.identity import AccountId, CredentialId, InstrumentId
 from dhruva.shared.time.clock import FrozenClock
 from dhruva.workers import refresh as cli
+from dhruva.workers.cli_arguments import BRIEF_TOP_DEFAULT
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -365,6 +371,12 @@ async def _news_revision_count(engine: AsyncEngine) -> int:
     return int(count or 0)
 
 
+async def _observation_count(engine: AsyncEngine) -> int:
+    async with engine.connect() as connection:
+        count = await connection.scalar(select(func.count()).select_from(ResearchObservationModel))
+    return int(count or 0)
+
+
 async def _store_bar(
     engine: AsyncEngine,
     *,
@@ -453,6 +465,15 @@ async def test_healthy_market_and_healthy_news_render_a_brief(
     assert "Research brief" in output
     assert "SBIN" in output
     assert feed.polls == 1
+    assert "ATTENTION_OBSERVATION (appended)" in output
+    assert await _observation_count(migrated) == 1
+    async with migrated.connect() as connection:
+        run_status = await connection.scalar(select(ResearchObservationModel.run_status))
+        members = await connection.scalar(
+            select(func.count()).select_from(AttentionObservationMemberModel)
+        )
+    assert run_status == "HEALTHY"
+    assert members == 20
 
 
 async def test_market_data_already_sufficient_still_polls_news_and_renders(
@@ -528,6 +549,19 @@ async def test_first_batch_rate_limited_stops_news_but_still_renders_the_brief(
     assert "news        : DEGRADED" in output
     assert "Research brief" in output
     assert never_reached.polls == 0
+    async with migrated.connect() as connection:
+        run_status, news_source_status, degraded_reasons = (
+            await connection.execute(
+                select(
+                    ResearchObservationModel.run_status,
+                    ResearchObservationModel.news_source_status,
+                    ResearchObservationModel.degraded_reasons,
+                )
+            )
+        ).one()
+    assert run_status == "DEGRADED"
+    assert news_source_status == "DEGRADED"
+    assert degraded_reasons
 
 
 async def test_a_later_batch_rate_limited_preserves_earlier_articles_and_the_brief_sees_them(
@@ -592,6 +626,7 @@ async def test_a_market_data_refusal_halts_before_news_or_the_brief(
     assert "Research brief" not in output
     assert unreachable.polls == 0
     assert await _bar_count(migrated) == 0
+    assert await _observation_count(migrated) == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -627,6 +662,17 @@ async def test_an_expired_session_is_degraded_not_refused_and_prints_no_secret(
     assert "Research brief" in output
     for forbidden in ("synthetic-access-token", "synthetic-api-secret"):
         assert forbidden not in combined
+    async with migrated.connect() as connection:
+        run_status, market_source_status = (
+            await connection.execute(
+                select(
+                    ResearchObservationModel.run_status,
+                    ResearchObservationModel.market_source_status,
+                )
+            )
+        ).one()
+    assert run_status == "DEGRADED"
+    assert market_source_status == "DEGRADED"
 
 
 # --------------------------------------------------------------------------- #
@@ -729,6 +775,16 @@ async def test_the_orchestrators_own_brief_render_respects_the_bitemporal_cutoff
     capsys.readouterr()
     cutoff = INVOKED_AT + timedelta(minutes=2)  # the third, final clock read in _clock()
 
+    async with migrated.connect() as connection:
+        frozen_packet_hash = await connection.scalar(
+            select(ResearchObservationModel.packet_body_sha256)
+        )
+        frozen_member_hash = await connection.scalar(
+            select(AttentionObservationMemberModel.market_context_sha256).where(
+                AttentionObservationMemberModel.instrument_id == sbin_id.value
+            )
+        )
+
     before = await cli._render_brief(
         session_factory, account_id=ACCOUNT, as_of=cutoff, settings=settings
     )
@@ -756,6 +812,30 @@ async def test_the_orchestrators_own_brief_render_respects_the_bitemporal_cutoff
     assert after == before
     assert "close 500" not in after
     assert "close 500" in later
+    async with migrated.connect() as connection:
+        unchanged_hash = await connection.scalar(
+            select(AttentionObservationMemberModel.market_context_sha256).where(
+                AttentionObservationMemberModel.instrument_id == sbin_id.value
+            )
+        )
+    assert unchanged_hash == frozen_member_hash
+
+    resolved = await cli._resolve_brief(
+        session_factory,
+        account_id=ACCOUNT,
+        as_of=cutoff,
+        settings=settings,
+    )
+    packet = build_packet(
+        resolved.selected,
+        ranked=resolved.ranked,
+        digest=resolved.digest,
+        contexts=resolved.contexts,
+        account_id=ACCOUNT,
+        generated_at=cutoff,
+        requested_top=BRIEF_TOP_DEFAULT,
+    )
+    assert frozen_packet_hash == packet["envelope"]["body_sha256"]
 
 
 # --------------------------------------------------------------------------- #
@@ -786,6 +866,7 @@ async def test_repeated_invocations_do_not_duplicate_persisted_data(
         capsys.readouterr()
 
     assert await _news_revision_count(migrated) == 1
+    assert await _observation_count(migrated) == 1
 
 
 async def test_the_brief_is_deterministic_for_identical_persisted_state(
@@ -815,10 +896,9 @@ async def test_the_brief_is_deterministic_for_identical_persisted_state(
     )
     second = capsys.readouterr().out
 
-    assert (
-        first.split("brief cutoff", 1)[1].split("\n", 1)[1]
-        == second.split("brief cutoff", 1)[1].split("\n", 1)[1]
-    )
+    assert first.split("Research brief", 1)[1] == second.split("Research brief", 1)[1]
+    assert "ATTENTION_OBSERVATION (already stored)" in second
+    assert await _observation_count(migrated) == 1
 
 
 # --------------------------------------------------------------------------- #

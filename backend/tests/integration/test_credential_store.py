@@ -801,11 +801,21 @@ async def test_the_downgrade_refuses_to_discard_a_second_purpose(
     )
     await committed_session.commit()
 
-    with pytest.raises(RuntimeError, match="more than one credential purpose"):
-        await asyncio.to_thread(_run_alembic, "downgrade", "0016_news_archive")
+    try:
+        with pytest.raises(RuntimeError, match="more than one credential purpose"):
+            await asyncio.to_thread(_run_alembic, "downgrade", "0016_news_archive")
+
+        async with migrated.connect() as connection:
+            current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
+            surviving = await connection.scalar(sql_text("SELECT count(*) FROM credential"))
+        # Later migrations may have been reversed before 0017 performs its
+        # deliberate data-loss check. The refusal must stop at 0017 and retain
+        # both secrets; the finally block then restores today's sole head.
+        assert current == "0017_credential_purpose"
+        assert surviving == 2, "no sealed material may be discarded by a refusal"
+    finally:
+        await asyncio.to_thread(_run_alembic, "upgrade", "head")
 
     async with migrated.connect() as connection:
-        current = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
-        surviving = await connection.scalar(sql_text("SELECT count(*) FROM credential"))
-    assert current == sole_alembic_head, "a refused downgrade must not move the head"
-    assert surviving == 2, "no sealed material may be discarded by a refusal"
+        restored = await connection.scalar(sql_text("SELECT version_num FROM alembic_version"))
+    assert restored == sole_alembic_head

@@ -62,14 +62,31 @@ from dhruva.contexts.intelligence.application.news_polling import (
     PollNewsFeeds,
     PollNewsFeedsCommand,
 )
+from dhruva.contexts.intelligence.application.research_observations import (
+    FreezeAttentionObservation,
+    FreezeAttentionObservationCommand,
+)
 from dhruva.contexts.intelligence.application.universe import linkable_universe
 from dhruva.contexts.intelligence.application.watchlist_digest import (
     BuildWatchlistDigest,
     BuildWatchlistDigestQuery,
 )
-from dhruva.contexts.intelligence.domain.attention import top_attention
-from dhruva.contexts.intelligence.domain.digest import MAX_ITEMS_PER_INSTRUMENT
+from dhruva.contexts.intelligence.domain.attention import ATTENTION_REVISION, top_attention
+from dhruva.contexts.intelligence.domain.digest import (
+    DIGEST_REVISION,
+    MAX_ITEMS_PER_INSTRUMENT,
+)
+from dhruva.contexts.intelligence.domain.entity_linking import ENTITY_LINKING_REVISION
+from dhruva.contexts.intelligence.domain.events import EVENT_CLASSIFICATION_REVISION
+from dhruva.contexts.intelligence.domain.news import NEWS_IDENTITY_REVISION
+from dhruva.contexts.intelligence.domain.research_observation import (
+    ObservationAppendResult,
+    ObservationProvenance,
+    ObservationSourceHealth,
+    ObservationSourceStatus,
+)
 from dhruva.contexts.intelligence.domain.search import plan_search_phrases
+from dhruva.contexts.intelligence.domain.sentiment import SENTIMENT_RULESET_REVISION
 from dhruva.contexts.intelligence.infrastructure.gdelt.feed import (
     GdeltDocFeed,
     GdeltQuery,
@@ -83,8 +100,17 @@ from dhruva.contexts.intelligence.interfaces.attention_presentation import (
     rank_watchlist,
     render_brief,
 )
+from dhruva.contexts.intelligence.interfaces.digest_export import (
+    body_fingerprint,
+    market_summary,
+)
+from dhruva.contexts.intelligence.interfaces.research_packet import (
+    PACKET_SCHEMA_VERSION,
+    build_packet,
+)
 from dhruva.contexts.marketdata.api import (
     DEFAULT_MULTI_DAY_SESSIONS,
+    MARKET_CONTEXT_REVISION,
     GetMarketContext,
     GetMarketContextQuery,
     contexts_by_instrument,
@@ -124,11 +150,14 @@ if TYPE_CHECKING:
         NewsFeed,
         PollNewsFeedsResult,
     )
+    from dhruva.contexts.intelligence.domain.attention import ResearchAttention
+    from dhruva.contexts.intelligence.domain.digest import WatchlistDigest
     from dhruva.contexts.intelligence.domain.entity_linking import LinkableInstrument
+    from dhruva.contexts.marketdata.api import MarketContext
     from dhruva.contexts.marketdata.domain.ports import DailyHistorySource
     from dhruva.contexts.reference.domain.ports import InstrumentMasterSource
     from dhruva.shared.config.settings import Settings
-    from dhruva.shared.identity import AccountId
+    from dhruva.shared.identity import AccountId, InstrumentId
     from dhruva.shared.time.clock import Clock
 
 
@@ -205,6 +234,17 @@ class NewsPhaseReport:
     status: PhaseStatus
     headline: str
     result: PollNewsFeedsResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBrief:
+    """The one PIT-resolved state shared by rendering, packet hashing and freezing."""
+
+    digest: WatchlistDigest
+    contexts: dict[InstrumentId, MarketContext]
+    ranked: tuple[ResearchAttention, ...]
+    selected: tuple[ResearchAttention, ...]
+    text: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -350,14 +390,14 @@ async def _run_news_phase(
     return NewsPhaseReport(status=PhaseStatus.HEALTHY, headline=headline, result=result)
 
 
-async def _render_brief(
+async def _resolve_brief(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     account_id: AccountId,
     as_of: datetime,
     settings: Settings,
-) -> str:
-    """Render the compact research brief at ``as_of``, through the unmodified read path."""
+) -> ResolvedBrief:
+    """Resolve once, then share the identical state with every downstream consumer."""
     universe = await _universe(session_factory, account_id=account_id, known_at=as_of)
     window = timedelta(days=settings.news.lookback_days)
     digest = await BuildWatchlistDigest(
@@ -386,7 +426,97 @@ async def _render_brief(
     )
     ranked = rank_watchlist(digest, contexts)
     selected = top_attention(ranked, limit=BRIEF_TOP_DEFAULT)
-    return render_brief(selected, digest=digest, contexts=contexts, total_ranked=len(ranked))
+    return ResolvedBrief(
+        digest=digest,
+        contexts=contexts,
+        ranked=ranked,
+        selected=selected,
+        text=render_brief(selected, digest=digest, contexts=contexts, total_ranked=len(ranked)),
+    )
+
+
+async def _render_brief(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    account_id: AccountId,
+    as_of: datetime,
+    settings: Settings,
+) -> str:
+    """Compatibility wrapper for callers that need only the resolved rendering."""
+    resolved = await _resolve_brief(
+        session_factory,
+        account_id=account_id,
+        as_of=as_of,
+        settings=settings,
+    )
+    return resolved.text
+
+
+async def _freeze_attention_observation(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    account_id: AccountId,
+    resolved: ResolvedBrief,
+    market_report: MarketPhaseReport,
+    news_report: NewsPhaseReport,
+) -> ObservationAppendResult:
+    """Persist exactly the state already resolved for the final brief."""
+    cutoff = resolved.digest.known_at
+    packet = build_packet(
+        resolved.selected,
+        ranked=resolved.ranked,
+        digest=resolved.digest,
+        contexts=resolved.contexts,
+        account_id=account_id,
+        generated_at=cutoff,
+        requested_top=BRIEF_TOP_DEFAULT,
+    )
+    packet_hash = str(packet["envelope"]["body_sha256"])
+    market_fingerprints = {
+        instrument_id: body_fingerprint(market_summary(context))
+        for instrument_id, context in resolved.contexts.items()
+    }
+    reasons = tuple(
+        reason
+        for status, reason in (
+            (market_report.status, f"market data: {market_report.headline}"),
+            (news_report.status, f"news: {news_report.headline}"),
+        )
+        if status is not PhaseStatus.HEALTHY
+    )
+    provenance = ObservationProvenance(
+        attention_revision=ATTENTION_REVISION,
+        digest_revision=resolved.digest.revision,
+        digest_policy_revision=DIGEST_REVISION,
+        entity_linking_revision=ENTITY_LINKING_REVISION,
+        event_classification_revision=EVENT_CLASSIFICATION_REVISION,
+        market_context_revision=MARKET_CONTEXT_REVISION,
+        news_identity_revision=NEWS_IDENTITY_REVISION,
+        sentiment_revision=SENTIMENT_RULESET_REVISION,
+        packet_schema_revision=PACKET_SCHEMA_VERSION,
+    )
+    health = ObservationSourceHealth(
+        market=ObservationSourceStatus(market_report.status.value),
+        news=ObservationSourceStatus(news_report.status.value),
+        degraded_reasons=reasons,
+    )
+    return await FreezeAttentionObservation(
+        lambda account: SqlAlchemyIntelligenceUnitOfWork(session_factory, account_id=account)
+    ).execute(
+        FreezeAttentionObservationCommand(
+            account_id=account_id,
+            cutoff=cutoff,
+            # One injected instant identifies both the PIT read and its immediate
+            # freeze. No second wall-clock value can alter logical identity.
+            recorded_at=cutoff,
+            digest=resolved.digest,
+            ranked=resolved.ranked,
+            market_context_fingerprints=market_fingerprints,
+            packet_body_sha256=packet_hash,
+            provenance=provenance,
+            source_health=health,
+        )
+    )
 
 
 def _render_summary(
@@ -394,6 +524,7 @@ def _render_summary(
     market_report: MarketPhaseReport,
     news_report: NewsPhaseReport,
     brief_as_of: datetime,
+    frozen: ObservationAppendResult,
 ) -> str:
     """Render the compact, owner-oriented header -- one status line per phase."""
     return "\n".join(
@@ -405,6 +536,9 @@ def _render_summary(
             f"news        : {news_report.status.value}",
             f"              {news_report.headline}",
             f"brief cutoff: {brief_as_of.isoformat()}",
+            "observation : ATTENTION_OBSERVATION "
+            f"({'appended' if frozen.created else 'already stored'})",
+            f"              {frozen.stored.observation.observation_sha256}",
         )
     )
 
@@ -554,12 +688,19 @@ async def run(
         )
 
         brief_as_of = active_clock.now()
-        brief_text = await _render_brief(
+        resolved = await _resolve_brief(
             session_factory, account_id=account_id, as_of=brief_as_of, settings=settings
         )
+        frozen = await _freeze_attention_observation(
+            session_factory,
+            account_id=account_id,
+            resolved=resolved,
+            market_report=market_report,
+            news_report=news_report,
+        )
 
-        summary = _render_summary(account_id, market_report, news_report, brief_as_of)
-        sys.stdout.write(summary + "\n\n" + brief_text + "\n")
+        summary = _render_summary(account_id, market_report, news_report, brief_as_of, frozen)
+        sys.stdout.write(summary + "\n\n" + resolved.text + "\n")
 
         severity = max(_SEVERITY[market_report.status], _SEVERITY[news_report.status])
         return _EXIT_FOR_SEVERITY[severity]

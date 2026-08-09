@@ -381,14 +381,47 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # so adding it here would not clean up -- it would raise, and take
             # every committing test in the suite down with it. Tests touching
             # that table therefore never commit; see `test_audit_log.py`.
+            # Refresh workflow tests necessarily commit research observations
+            # through a separately built engine. Production has no deletion
+            # bypass, but this isolated test database must be reusable. Remove
+            # and restore only the research guards around the test-only
+            # TRUNCATE; integration tests assert the guards reject mutation
+            # before this fixture's teardown runs.
+            guarded = ("attention_observation_member", "research_observation")
+            for table in guarded:
+                for operation in ("truncate", "delete", "update"):
+                    await cleanup.execute(
+                        text(f"DROP TRIGGER IF EXISTS {table}_no_{operation} ON {table}")
+                    )
             await cleanup.execute(
                 text(
                     "TRUNCATE daily_snapshot, outbox, example_tick, processed_event, "
                     "credential, principal, refresh_token, role, reference_instrument, "
                     "instrument_master_snapshot, daily_market_bar_revision, "
-                    "news_item_revision, news_analysis, news_entity_link CASCADE"
+                    "news_item_revision, news_analysis, news_entity_link, "
+                    "attention_observation_member, research_observation CASCADE"
                 )
             )
+            for table in guarded:
+                await cleanup.execute(
+                    text(
+                        f"CREATE TRIGGER {table}_no_update BEFORE UPDATE ON {table} "
+                        "FOR EACH ROW EXECUTE FUNCTION research_observation_reject_mutation()"
+                    )
+                )
+                await cleanup.execute(
+                    text(
+                        f"CREATE TRIGGER {table}_no_delete BEFORE DELETE ON {table} "
+                        "FOR EACH ROW EXECUTE FUNCTION research_observation_reject_mutation()"
+                    )
+                )
+                await cleanup.execute(
+                    text(
+                        f"CREATE TRIGGER {table}_no_truncate BEFORE TRUNCATE ON {table} "
+                        "FOR EACH STATEMENT EXECUTE FUNCTION "
+                        "research_observation_reject_mutation()"
+                    )
+                )
 
 
 @pytest_asyncio.fixture(loop_scope="session")

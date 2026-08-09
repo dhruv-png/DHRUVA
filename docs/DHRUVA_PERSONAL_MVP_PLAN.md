@@ -7,8 +7,8 @@ Private end-of-day research and paper-trading system for two family users
 | Field | Value |
 |---|---|
 | Document ID | DHRUVA-MPP-PERSONAL |
-| Version | **1.0 — APPROVED** |
-| Date | 2 August 2026 |
+| Version | **1.1 — APPROVED EVIDENCE ROADMAP** |
+| Date | 9 August 2026 |
 | Status | **ACTIVE ROADMAP** |
 | Authority | Product Owner approval recorded by AR-002 |
 | Foundation | Immutable `v0.6.0`; merged default-branch checkpoint `4202d73` |
@@ -128,8 +128,33 @@ gate change requires another owner-approved Architecture Revision.
 
 ## 5. Active roadmap
 
-There are exactly four product milestones. Engineering slices may be smaller but
-must roll up to one of these outcomes.
+The Product Owner-approved completion audit establishes this product sequence:
+
+`DATA → EVIDENCE → TESTED RESEARCH RANKING → RISK → EXPLANATION → HUMAN DECISION → HOUSEHOLD UI`
+
+Its critical path is:
+
+1. Evidence clock / research observation ledger.
+2. Historical market, benchmark and corporate-action foundation.
+3. Deterministic technical candidate baseline.
+4. Historical walk-forward evaluation.
+5. Point-in-time fundamentals.
+6. Integrated candidate rank v1 and improved news evidence.
+7. Risk and paper portfolios.
+8. Household HTTP API.
+9. Household UI.
+10. Routine operations.
+11. Forward-evidence readiness decision.
+
+The current P0 slice starts the evidence clock by automatically freezing the
+existing deterministic attention ranking after every valid refresh. These are
+`ATTENTION_OBSERVATION` facts: unusual observable activity, not research
+candidates, recommendations, risk conclusions, position sizes or orders. A
+future candidate model must earn a separate name through prospective and
+historical evaluation; DHRUVA will not backdate recommendations.
+
+The four product milestones below remain useful outcome groupings. Engineering
+slices follow the evidence critical path above and roll up to those outcomes.
 
 ### MVP 1 — Unified market, futures and news data
 
@@ -318,7 +343,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history, actual futures contract OHLCV/OI, the versioned continuous research series with its deterministic roll policy, the pure news domain, the append-only point-in-time news archive with idempotent ingestion, and the attributed GDELT DOC 2.0 metadata adapter with provider-neutral source health implemented. **NSE ingestion is deferred in full** pending written permission or a licensed data agreement (see `docs/decisions/news-source-selection.md`), so official filings are not a DHRUVA input. `dhruva-reference seed` writes the approved watchlist into the database from committed configuration with no network call, which every other command depends on. `dhruva-broker zerodha` enrols the Kite application credential and completes the manual browser login, sealing both under ADR-077's purpose-separated credential store. `dhruva-marketdata coverage` reads watchlist mapping and stored daily-bar coverage with zero network calls, and `dhruva-marketdata refresh` resolves the watchlist to Zerodha instrument identities and ingests only the bounded daily history a twenty-calendar-day bootstrap window still needs, reusing the broker session and inheriting `IngestDailyHistory`'s existing whole-batch atomic refusal — not yet exercised against a live, paid Kite session. An operator-facing `dhruva-news` command polls GDELT in deterministic watchlist-derived batches and reads the point-in-time archive back, and `dhruva-digest` composes a read-only point-in-time watchlist digest from it, with deterministic daily-bar market context beside each instrument and no network call, and `dhruva-export` writes that same point-in-time answer to a deterministic, self-describing JSON snapshot. Live GDELT payload schema verification and the first live Zerodha smoke test both remain outstanding |
+| MVP 1 / evidence clock | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history, actual futures contract OHLCV/OI, the versioned continuous research series with its deterministic roll policy, the pure news domain, append-only point-in-time news archive, and the attributed GDELT DOC 2.0 metadata adapter with provider-neutral source health are implemented. **NSE ingestion is deferred in full** pending written permission or a licensed data agreement (see `docs/decisions/news-source-selection.md`), so official filings are not a DHRUVA input. Local commands seed reference data, inspect market coverage, poll/read archived news, compose the PIT digest, render the deterministic attention-ranked brief, export its self-describing research packet and compare two saved packets. `dhruva-refresh` composes that same final state once and now freezes an immutable `ATTENTION_OBSERVATION`; `dhruva-research history` inspects the accumulating evidence clock without network access. Live GDELT payload schema verification and the first live Zerodha smoke test both remain outstanding. Historical depth, benchmark/corporate-action completeness and a tested candidate baseline are the next critical-path work; no investment candidate or recommendation exists yet. |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |

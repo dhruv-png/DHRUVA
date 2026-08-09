@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Self
 
 from sqlalchemy import text
 
-from dhruva.contexts.intelligence.infrastructure.persistence.repository import NewsRepository
+from dhruva.contexts.intelligence.infrastructure.persistence.repository import (
+    NewsRepository,
+    ResearchObservationRepository,
+)
 from dhruva.shared.errors import InvariantViolation
 
 if TYPE_CHECKING:
@@ -54,6 +57,11 @@ class SqlAlchemyIntelligenceUnitOfWork:
     def news(self) -> NewsRepository:
         """Return the news repository bound to this transaction."""
         return NewsRepository(self.session)
+
+    @property
+    def observations(self) -> ResearchObservationRepository:
+        """Return the account-scoped research-observation repository."""
+        return ResearchObservationRepository(self.session, account_id=self._account_id)
 
     async def __aenter__(self) -> Self:
         """Open a session and set transaction-local tenant context."""

@@ -20,6 +20,12 @@ from dhruva.contexts.intelligence.application.news_polling import (
     PollNewsFeedsCommand,
     PollNewsFeedsResult,
 )
+from dhruva.contexts.intelligence.application.research_observations import (
+    FreezeAttentionObservation,
+    FreezeAttentionObservationCommand,
+    ListResearchObservations,
+    ListResearchObservationsQuery,
+)
 from dhruva.contexts.intelligence.application.universe import linkable_universe
 from dhruva.contexts.intelligence.application.watchlist_digest import (
     BuildWatchlistDigest,
@@ -30,11 +36,15 @@ __all__ = [
     "BatchOutcome",
     "BuildWatchlistDigest",
     "BuildWatchlistDigestQuery",
+    "FreezeAttentionObservation",
+    "FreezeAttentionObservationCommand",
     "GetArchivedNews",
     "GetArchivedNewsQuery",
     "IngestNewsItems",
     "IngestNewsItemsCommand",
     "IngestNewsItemsResult",
+    "ListResearchObservations",
+    "ListResearchObservationsQuery",
     "NewsFeed",
     "PollNewsFeeds",
     "PollNewsFeedsCommand",

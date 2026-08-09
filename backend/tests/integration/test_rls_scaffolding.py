@@ -23,11 +23,13 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")
 TENANT_TABLES: Final = frozenset(
     {
         "audit_log",
+        "attention_observation_member",
         "credential",
         "daily_snapshot",
         "principal",
         "principal_role",
         "refresh_token",
+        "research_observation",
         "role",
         "role_permission",
         "watchlist_membership_revision",

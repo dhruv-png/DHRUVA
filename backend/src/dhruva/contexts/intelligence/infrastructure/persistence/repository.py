@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from dhruva.contexts.intelligence.domain.archive import (
@@ -26,6 +26,7 @@ from dhruva.contexts.intelligence.domain.archive import (
     NewsArchiveWrite,
     NewsRevision,
 )
+from dhruva.contexts.intelligence.domain.attention import AttentionBand
 from dhruva.contexts.intelligence.domain.entity_linking import (
     EntityLinkResult,
     EntityMatch,
@@ -43,27 +44,223 @@ from dhruva.contexts.intelligence.domain.news import (
     NewsSourceTier,
     PermittedText,
 )
+from dhruva.contexts.intelligence.domain.research_observation import (
+    AttentionObservationMember,
+    ObservationAppendResult,
+    ObservationProvenance,
+    ObservationSourceHealth,
+    ObservationSourceStatus,
+    ObservationType,
+    ResearchObservation,
+    StoredResearchObservation,
+)
 from dhruva.contexts.intelligence.domain.sentiment import (
     AbstentionReason,
     SentimentLabel,
     SentimentResult,
 )
 from dhruva.contexts.intelligence.infrastructure.persistence.models import (
+    AttentionObservationMemberModel,
     NewsAnalysisModel,
     NewsEntityLinkModel,
     NewsItemRevisionModel,
+    ResearchObservationModel,
 )
 from dhruva.shared.errors import ConflictError, ValidationError
-from dhruva.shared.identity import InstrumentId
+from dhruva.shared.identity import AccountId, InstrumentId
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["NewsRepository"]
+__all__ = ["NewsRepository", "ResearchObservationRepository"]
 
 _NEWS_NAMESPACE = UUID("b0f1c2d3-4e5a-4b6c-8d7e-9f0a1b2c3d4e")
+_RESEARCH_NAMESPACE = UUID("8c5b3d2a-09ec-47f7-a59b-945987f81a36")
+
+
+def _observation_id(observation: ResearchObservation) -> UUID:
+    """Derive stable row identity from the logical observation identity."""
+    return uuid5(
+        _RESEARCH_NAMESPACE,
+        "\x1f".join(
+            (
+                str(observation.account_id),
+                observation.observation_type.value,
+                observation.cutoff.isoformat(),
+                observation.observation_sha256,
+            )
+        ),
+    )
+
+
+class ResearchObservationRepository:
+    """Append immutable research facts and read only the bound account's history."""
+
+    __slots__ = ("_account_id", "_session")
+
+    def __init__(self, session: AsyncSession, *, account_id: AccountId) -> None:
+        """Bind persistence to one transaction and one tenant identity."""
+        self._session = session
+        self._account_id = account_id
+
+    async def append(self, observation: ResearchObservation) -> ObservationAppendResult:
+        """Append a new fingerprint or return the identical fact already stored."""
+        if observation.account_id != self._account_id:
+            raise ValidationError("research observation account does not match transaction")
+
+        # There may be no row to SELECT FOR UPDATE on the first write.  A
+        # transaction advisory lock serialises this one account/cutoff/type
+        # stream so two concurrent corrections cannot fork the supersession
+        # chain.  It releases automatically with the UoW transaction.
+        stream = "\x1f".join(
+            (
+                str(self._account_id),
+                observation.observation_type.value,
+                observation.cutoff.isoformat(),
+            )
+        )
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:stream, 0))"),
+            {"stream": stream},
+        )
+
+        existing = await self._existing(observation)
+        if existing is not None:
+            return ObservationAppendResult(stored=await self._stored(existing), created=False)
+
+        latest = await self._latest_in_stream(observation)
+        if latest is not None and observation.recorded_at < latest.recorded_at:
+            raise ConflictError(
+                "a correcting observation cannot be recorded before the fact it supersedes",
+                cutoff=observation.cutoff.isoformat(),
+            )
+
+        row_id = _observation_id(observation)
+        model = ResearchObservationModel(
+            **_observation_values(
+                row_id,
+                observation,
+                supersedes_id=None if latest is None else latest.id,
+            )
+        )
+        self._session.add(model)
+        # There is no ORM relationship on these persistence-only models.
+        # Flush the parent explicitly so SQLAlchemy cannot batch the member
+        # INSERTs ahead of the composite foreign-key target.
+        await self._session.flush()
+        self._session.add_all(
+            AttentionObservationMemberModel(
+                **_member_values(row_id, observation.account_id, member)
+            )
+            for member in observation.members
+        )
+        await self._session.flush()
+        return ObservationAppendResult(
+            stored=StoredResearchObservation(
+                observation=observation,
+                supersedes_sha256=None if latest is None else latest.observation_sha256,
+            ),
+            created=True,
+        )
+
+    async def list_recent(self, *, limit: int) -> tuple[StoredResearchObservation, ...]:
+        """Return recent observations for this account and no other."""
+        rows = (
+            (
+                await self._session.execute(
+                    select(ResearchObservationModel)
+                    .where(ResearchObservationModel.account_id == self._account_id.value)
+                    .order_by(
+                        ResearchObservationModel.cutoff.desc(),
+                        ResearchObservationModel.recorded_at.desc(),
+                        ResearchObservationModel.id.desc(),
+                    )
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return tuple([await self._stored(row) for row in rows])
+
+    async def _existing(self, observation: ResearchObservation) -> ResearchObservationModel | None:
+        """Find the one row with this complete logical identity."""
+        return (
+            (
+                await self._session.execute(
+                    select(ResearchObservationModel).where(
+                        ResearchObservationModel.account_id == self._account_id.value,
+                        ResearchObservationModel.observation_type
+                        == observation.observation_type.value,
+                        ResearchObservationModel.cutoff == observation.cutoff,
+                        ResearchObservationModel.observation_sha256
+                        == observation.observation_sha256,
+                    )
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+    async def _latest_in_stream(
+        self, observation: ResearchObservation
+    ) -> ResearchObservationModel | None:
+        """Return the fact a genuinely changed same-cutoff observation supersedes."""
+        return (
+            (
+                await self._session.execute(
+                    select(ResearchObservationModel)
+                    .where(
+                        ResearchObservationModel.account_id == self._account_id.value,
+                        ResearchObservationModel.observation_type
+                        == observation.observation_type.value,
+                        ResearchObservationModel.cutoff == observation.cutoff,
+                    )
+                    .order_by(
+                        ResearchObservationModel.recorded_at.desc(),
+                        ResearchObservationModel.id.desc(),
+                    )
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+
+    async def _stored(self, model: ResearchObservationModel) -> StoredResearchObservation:
+        """Reconstruct and revalidate a complete observation from primitive rows."""
+        members = (
+            (
+                await self._session.execute(
+                    select(AttentionObservationMemberModel)
+                    .where(
+                        AttentionObservationMemberModel.observation_id == model.id,
+                        AttentionObservationMemberModel.account_id == self._account_id.value,
+                    )
+                    .order_by(AttentionObservationMemberModel.rank)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        observation = _domain_observation(model, tuple(members))
+        if model.ranked_count != len(observation.members):
+            raise ConflictError("research observation member count does not match its header")
+        if model.attention_count != observation.attention_count:
+            raise ConflictError("research observation attention count does not match its members")
+        supersedes = None
+        if model.supersedes_id is not None:
+            supersedes = await self._session.scalar(
+                select(ResearchObservationModel.observation_sha256).where(
+                    ResearchObservationModel.id == model.supersedes_id,
+                    ResearchObservationModel.account_id == self._account_id.value,
+                )
+            )
+            if supersedes is None:
+                raise ConflictError("research observation supersession target is missing")
+        return StoredResearchObservation(observation=observation, supersedes_sha256=supersedes)
 
 
 def _revision_id(revision: NewsRevision) -> UUID:
@@ -539,4 +736,114 @@ def _domain_match(link: NewsEntityLinkModel) -> EntityMatch:
         kind=MatchKind(link.match_kind),
         relevance=link.relevance,
         reason=link.reason,
+    )
+
+
+def _observation_values(
+    row_id: UUID,
+    observation: ResearchObservation,
+    *,
+    supersedes_id: UUID | None,
+) -> dict[str, object]:
+    """Decompose one validated observation header into primitive columns."""
+    provenance = observation.provenance
+    health = observation.source_health
+    return {
+        "id": row_id,
+        "account_id": observation.account_id.value,
+        "observation_type": observation.observation_type.value,
+        "cutoff": observation.cutoff,
+        "recorded_at": observation.recorded_at,
+        "run_status": observation.status.value,
+        "market_source_status": health.market.value,
+        "news_source_status": health.news.value,
+        "degraded_reasons": list(health.degraded_reasons),
+        "attention_revision": provenance.attention_revision,
+        "digest_revision": provenance.digest_revision,
+        "digest_policy_revision": provenance.digest_policy_revision,
+        "entity_linking_revision": provenance.entity_linking_revision,
+        "event_classification_revision": provenance.event_classification_revision,
+        "market_context_revision": provenance.market_context_revision,
+        "news_identity_revision": provenance.news_identity_revision,
+        "sentiment_revision": provenance.sentiment_revision,
+        "packet_schema_revision": provenance.packet_schema_revision,
+        "observation_schema_revision": provenance.observation_schema_revision,
+        "universe_sha256": observation.universe_sha256,
+        "observation_sha256": observation.observation_sha256,
+        "packet_body_sha256": observation.packet_body_sha256,
+        "ranked_count": len(observation.members),
+        "attention_count": observation.attention_count,
+        "supersedes_id": supersedes_id,
+    }
+
+
+def _member_values(
+    observation_id: UUID,
+    account_id: AccountId,
+    member: AttentionObservationMember,
+) -> dict[str, object]:
+    """Decompose one validated ranked member into primitive columns."""
+    return {
+        "observation_id": observation_id,
+        "instrument_id": member.instrument_id.value,
+        "account_id": account_id.value,
+        "rank": member.rank,
+        "canonical_symbol": member.canonical_symbol,
+        "company_name": member.company_name,
+        "score": member.score,
+        "band": member.band.value,
+        "reasons": list(member.reasons),
+        "market_context_available": member.market_context_available,
+        "market_context_sha256": member.market_context_sha256,
+        "archived_news_revisions": list(member.archived_news_revisions),
+        "news_items_withheld": member.news_items_withheld,
+    }
+
+
+def _domain_observation(
+    model: ResearchObservationModel,
+    members: tuple[AttentionObservationMemberModel, ...],
+) -> ResearchObservation:
+    """Rebuild the domain fact so reads re-run every invariant and fingerprint."""
+    return ResearchObservation(
+        account_id=AccountId(model.account_id),
+        observation_type=ObservationType(model.observation_type),
+        cutoff=model.cutoff,
+        recorded_at=model.recorded_at,
+        provenance=ObservationProvenance(
+            attention_revision=model.attention_revision,
+            digest_revision=model.digest_revision,
+            digest_policy_revision=model.digest_policy_revision,
+            entity_linking_revision=model.entity_linking_revision,
+            event_classification_revision=model.event_classification_revision,
+            market_context_revision=model.market_context_revision,
+            news_identity_revision=model.news_identity_revision,
+            sentiment_revision=model.sentiment_revision,
+            packet_schema_revision=model.packet_schema_revision,
+            observation_schema_revision=model.observation_schema_revision,
+        ),
+        source_health=ObservationSourceHealth(
+            market=ObservationSourceStatus(model.market_source_status),
+            news=ObservationSourceStatus(model.news_source_status),
+            degraded_reasons=tuple(model.degraded_reasons),
+        ),
+        members=tuple(
+            AttentionObservationMember(
+                instrument_id=InstrumentId(member.instrument_id),
+                rank=member.rank,
+                canonical_symbol=member.canonical_symbol,
+                company_name=member.company_name,
+                score=member.score,
+                band=AttentionBand(member.band),
+                reasons=tuple(member.reasons),
+                market_context_available=member.market_context_available,
+                market_context_sha256=member.market_context_sha256,
+                archived_news_revisions=tuple(member.archived_news_revisions),
+                news_items_withheld=member.news_items_withheld,
+            )
+            for member in members
+        ),
+        universe_sha256=model.universe_sha256,
+        observation_sha256=model.observation_sha256,
+        packet_body_sha256=model.packet_body_sha256,
     )

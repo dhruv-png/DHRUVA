@@ -22,8 +22,18 @@ if TYPE_CHECKING:
         NewsRevision,
     )
     from dhruva.contexts.intelligence.domain.news import NewsFingerprints, NewsItemIdentity
+    from dhruva.contexts.intelligence.domain.research_observation import (
+        ObservationAppendResult,
+        ResearchObservation,
+        StoredResearchObservation,
+    )
 
-__all__ = ["IntelligenceUnitOfWork", "NewsStore"]
+__all__ = [
+    "IntelligenceUnitOfWork",
+    "NewsStore",
+    "ResearchObservationStore",
+    "ResearchObservationUnitOfWork",
+]
 
 
 @runtime_checkable
@@ -58,18 +68,26 @@ class NewsStore(Protocol):
         published_from: datetime,
         known_at: datetime,
     ) -> tuple[tuple[NewsItemIdentity, NewsFingerprints], ...]:
-        """Return stored fingerprints so a new poll can be deduplicated against them.
+        """Return stored fingerprints for bounded ingest deduplication."""
+        ...
 
-        Bounded by publication date on purpose: the headline rules only ever
-        compare within one day, so loading the whole archive to compare against
-        it would be work nothing can use.
-        """
+
+@runtime_checkable
+class ResearchObservationStore(Protocol):
+    """Append and inspect immutable, account-owned research observations."""
+
+    async def append(self, observation: ResearchObservation) -> ObservationAppendResult:
+        """Append a new logical fact or return the identical stored observation."""
+        ...
+
+    async def list_recent(self, *, limit: int) -> tuple[StoredResearchObservation, ...]:
+        """Return this Unit of Work's account observations, newest cutoff first."""
         ...
 
 
 @runtime_checkable
 class IntelligenceUnitOfWork(Protocol):
-    """One transaction containing news revisions and their analyses."""
+    """One transaction containing archived intelligence facts."""
 
     @property
     def news(self) -> NewsStore:
@@ -95,4 +113,35 @@ class IntelligenceUnitOfWork(Protocol):
 
     async def rollback(self) -> None:
         """Discard every staged news revision and analysis."""
+        ...
+
+
+@runtime_checkable
+class ResearchObservationUnitOfWork(Protocol):
+    """The narrow transaction required by the research evidence clock."""
+
+    @property
+    def observations(self) -> ResearchObservationStore:
+        """Return the account-scoped observation store."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Begin the transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Roll back unless commit succeeded."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit the appended observation."""
+        ...
+
+    async def rollback(self) -> None:
+        """Discard the appended observation."""
         ...

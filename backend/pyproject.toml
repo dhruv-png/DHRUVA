@@ -108,6 +108,9 @@ dhruva-marketdata = "dhruva.workers.marketdata:main"
 # their own application interfaces -- never a subprocess. No scheduler; the
 # owner runs it once per invocation.
 dhruva-refresh = "dhruva.workers.refresh:main"
+# Local-only inspection of the immutable research evidence clock. It never
+# rebuilds a score or contacts a provider.
+dhruva-research = "dhruva.workers.research:main"
 # File-to-file only: compares two already-exported research packets. No
 # database connection, no provider call -- it works even when both are
 # unreachable, because it never builds either.
