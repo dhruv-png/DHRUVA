@@ -108,6 +108,10 @@ dhruva-marketdata = "dhruva.workers.marketdata:main"
 # their own application interfaces -- never a subprocess. No scheduler; the
 # owner runs it once per invocation.
 dhruva-refresh = "dhruva.workers.refresh:main"
+# File-to-file only: compares two already-exported research packets. No
+# database connection, no provider call -- it works even when both are
+# unreachable, because it never builds either.
+dhruva-compare-packets = "dhruva.workers.compare_packets:main"
 
 [dependency-groups]
 dev = [
