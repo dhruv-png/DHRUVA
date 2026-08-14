@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from dhruva.contexts.intelligence.domain.attention import AttentionBand
+from dhruva.contexts.intelligence.domain.candidates import CandidateRanking
 from dhruva.contexts.intelligence.domain.research_observation import (
     AttentionObservationMember,
     ObservationProvenance,
@@ -124,6 +125,29 @@ def test_render_preserves_degraded_source_health() -> None:
 def test_empty_history_is_explicit() -> None:
     """No rows is stated as no evidence rather than an empty success screen."""
     assert "No research observations" in cli._render_history((), top=5)
+
+
+def test_candidate_command_is_explicitly_local_experimental_and_optionally_frozen() -> None:
+    """Manual inspection does not freeze unless the owner supplies the explicit flag."""
+    args = cli.build_parser().parse_args(
+        ["candidates", "--account", "owner-family", "--detail", "--freeze"]
+    )
+    ranking = CandidateRanking(
+        cutoff=CUTOFF,
+        entries=(),
+        benchmark_symbol="NIFTY 50",
+        benchmark_basis="PRICE_INDEX",
+        feature_revision="technical-features-v0",
+        limitations=("current watchlist is not survivorship-safe",),
+    )
+
+    rendered = cli._render_candidates(ranking, detail=args.detail)
+
+    assert args.freeze is True
+    assert "EXPERIMENTAL RESEARCH CANDIDATE" in rendered
+    assert "PRICE_INDEX" in rendered
+    assert "No instrument has the essential history" in rendered
+    assert "not survivorship-safe" in rendered
 
 
 def test_command_imports_no_provider_or_transport_module() -> None:

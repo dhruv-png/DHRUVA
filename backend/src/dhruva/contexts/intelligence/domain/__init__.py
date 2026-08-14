@@ -14,6 +14,22 @@ from dhruva.contexts.intelligence.domain.archive import (
     NewsRevision,
     content_revision,
 )
+from dhruva.contexts.intelligence.domain.candidate_observation import (
+    CANDIDATE_OBSERVATION_SCHEMA_REVISION,
+    CandidateObservation,
+    CandidateObservationAppendResult,
+    candidate_observation_fingerprint,
+    candidate_observation_payload,
+    candidate_universe_fingerprint,
+)
+from dhruva.contexts.intelligence.domain.candidates import (
+    CANDIDATE_RANKER_REVISION,
+    CandidateEligibility,
+    CandidateRanking,
+    CandidateResult,
+    CandidateTier,
+    EvidenceCompleteness,
+)
 from dhruva.contexts.intelligence.domain.digest import (
     DIGEST_REVISION,
     MAX_ITEMS_PER_INSTRUMENT,
@@ -56,6 +72,8 @@ from dhruva.contexts.intelligence.domain.news import (
     significant_tokens,
 )
 from dhruva.contexts.intelligence.domain.ports import (
+    CandidateObservationStore,
+    CandidateObservationUnitOfWork,
     IntelligenceUnitOfWork,
     NewsStore,
     ResearchObservationStore,
@@ -105,6 +123,8 @@ from dhruva.contexts.intelligence.domain.sources import (
 )
 
 __all__ = [
+    "CANDIDATE_OBSERVATION_SCHEMA_REVISION",
+    "CANDIDATE_RANKER_REVISION",
     "DEFAULT_BATCH_SIZE",
     "DIGEST_REVISION",
     "ENTITY_LINKING_REVISION",
@@ -123,6 +143,14 @@ __all__ = [
     "AbstentionReason",
     "ArchivedNewsItem",
     "AttentionObservationMember",
+    "CandidateEligibility",
+    "CandidateObservation",
+    "CandidateObservationAppendResult",
+    "CandidateObservationStore",
+    "CandidateObservationUnitOfWork",
+    "CandidateRanking",
+    "CandidateResult",
+    "CandidateTier",
     "DeduplicationDecision",
     "DeduplicationLedger",
     "DeduplicationRule",
@@ -132,6 +160,7 @@ __all__ = [
     "EntityMatch",
     "EventCategory",
     "EventClassification",
+    "EvidenceCompleteness",
     "HistoricalName",
     "IntelligenceUnitOfWork",
     "LinkableInstrument",
@@ -170,6 +199,9 @@ __all__ = [
     "UnqueryableInstrument",
     "WatchlistDigest",
     "build_digest",
+    "candidate_observation_fingerprint",
+    "candidate_observation_payload",
+    "candidate_universe_fingerprint",
     "canonical_url",
     "classify_event",
     "content_revision",

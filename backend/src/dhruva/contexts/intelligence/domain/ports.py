@@ -21,6 +21,10 @@ if TYPE_CHECKING:
         NewsArchiveWrite,
         NewsRevision,
     )
+    from dhruva.contexts.intelligence.domain.candidate_observation import (
+        CandidateObservation,
+        CandidateObservationAppendResult,
+    )
     from dhruva.contexts.intelligence.domain.news import NewsFingerprints, NewsItemIdentity
     from dhruva.contexts.intelligence.domain.research_observation import (
         ObservationAppendResult,
@@ -29,11 +33,53 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "CandidateObservationStore",
+    "CandidateObservationUnitOfWork",
     "IntelligenceUnitOfWork",
     "NewsStore",
     "ResearchObservationStore",
     "ResearchObservationUnitOfWork",
 ]
+
+
+@runtime_checkable
+class CandidateObservationStore(Protocol):
+    """Append complete immutable candidate-ranking freezes."""
+
+    async def append(self, observation: CandidateObservation) -> CandidateObservationAppendResult:
+        """Append a new candidate fact or return its identical prior row."""
+        ...
+
+
+@runtime_checkable
+class CandidateObservationUnitOfWork(Protocol):
+    """The narrow transaction required by an official candidate freeze."""
+
+    @property
+    def candidate_observations(self) -> CandidateObservationStore:
+        """Return the account-scoped candidate observation store."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Begin the transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Roll back unless commit succeeded."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit the appended candidate observation."""
+        ...
+
+    async def rollback(self) -> None:
+        """Discard the candidate observation."""
+        ...
 
 
 @runtime_checkable

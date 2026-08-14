@@ -34,6 +34,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 __all__ = [
     "AttentionObservationMemberModel",
+    "CandidateRankingObservationModel",
     "IntelligenceBase",
     "NewsAnalysisModel",
     "NewsEntityLinkModel",
@@ -228,6 +229,58 @@ class AttentionObservationMemberModel(IntelligenceBase):
         postgresql.ARRAY(String(64)), nullable=False
     )
     news_items_withheld: Mapped[int] = mapped_column(nullable=False)
+
+
+class CandidateRankingObservationModel(IntelligenceBase):
+    """One immutable account-owned experimental candidate-ranking freeze."""
+
+    __tablename__ = "candidate_ranking_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "cutoff",
+            "ranker_revision",
+            "observation_sha256",
+            name="uq_candidate_observation_logical_identity",
+        ),
+        CheckConstraint("recorded_at >= cutoff", name="ck_candidate_observation_chronology"),
+        CheckConstraint(
+            "universe_sha256 ~ '^[0-9a-f]{64}$' AND observation_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_candidate_observation_fingerprints",
+        ),
+        CheckConstraint(
+            "ranker_revision ~ '^[a-z][a-z0-9._-]{1,127}$' AND "
+            "feature_revision ~ '^[a-z][a-z0-9._-]{1,127}$' AND "
+            "schema_revision ~ '^[a-z][a-z0-9._-]{1,127}$'",
+            name="ck_candidate_observation_revisions",
+        ),
+        CheckConstraint(
+            "eligible_count >= 0 AND member_count >= eligible_count",
+            name="ck_candidate_observation_counts",
+        ),
+        Index(
+            "ix_candidate_observation_account_cutoff",
+            "account_id",
+            "cutoff",
+            "recorded_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ranker_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    feature_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    schema_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    benchmark_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    benchmark_basis: Mapped[str] = mapped_column(String(32), nullable=False)
+    universe_label: Mapped[str] = mapped_column(String(64), nullable=False)
+    universe_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    observation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    member_count: Mapped[int] = mapped_column(nullable=False)
+    eligible_count: Mapped[int] = mapped_column(nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(postgresql.JSONB, nullable=False)
 
 
 class NewsItemRevisionModel(IntelligenceBase):

@@ -27,6 +27,12 @@ from dhruva.contexts.intelligence.domain.archive import (
     NewsRevision,
 )
 from dhruva.contexts.intelligence.domain.attention import AttentionBand
+from dhruva.contexts.intelligence.domain.candidate_observation import (
+    CANDIDATE_OBSERVATION_SCHEMA_REVISION,
+    CandidateObservation,
+    CandidateObservationAppendResult,
+    candidate_observation_payload,
+)
 from dhruva.contexts.intelligence.domain.entity_linking import (
     EntityLinkResult,
     EntityMatch,
@@ -61,6 +67,7 @@ from dhruva.contexts.intelligence.domain.sentiment import (
 )
 from dhruva.contexts.intelligence.infrastructure.persistence.models import (
     AttentionObservationMemberModel,
+    CandidateRankingObservationModel,
     NewsAnalysisModel,
     NewsEntityLinkModel,
     NewsItemRevisionModel,
@@ -74,10 +81,63 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["NewsRepository", "ResearchObservationRepository"]
+__all__ = ["CandidateObservationRepository", "NewsRepository", "ResearchObservationRepository"]
 
 _NEWS_NAMESPACE = UUID("b0f1c2d3-4e5a-4b6c-8d7e-9f0a1b2c3d4e")
 _RESEARCH_NAMESPACE = UUID("8c5b3d2a-09ec-47f7-a59b-945987f81a36")
+_CANDIDATE_NAMESPACE = UUID("13b2e6c0-3f6c-4fdc-b7c3-35c45f6a2ed0")
+
+
+class CandidateObservationRepository:
+    """Append complete candidate payloads idempotently for one account."""
+
+    __slots__ = ("_account_id", "_session")
+
+    def __init__(self, session: AsyncSession, *, account_id: AccountId) -> None:
+        """Bind the append-only store to a transaction and account."""
+        self._session = session
+        self._account_id = account_id
+
+    async def append(self, observation: CandidateObservation) -> CandidateObservationAppendResult:
+        """Insert an unseen logical freeze or report an identical retry."""
+        if observation.account_id != self._account_id:
+            raise ValidationError("candidate observation account does not match transaction")
+        row_id = uuid5(
+            _CANDIDATE_NAMESPACE,
+            "\x1f".join(
+                (
+                    str(observation.account_id),
+                    observation.ranking.cutoff.isoformat(),
+                    observation.ranking.ranker_revision,
+                    observation.observation_sha256,
+                )
+            ),
+        )
+        ranking = observation.ranking
+        result = await self._session.execute(
+            insert(CandidateRankingObservationModel)
+            .values(
+                id=row_id,
+                account_id=observation.account_id.value,
+                cutoff=ranking.cutoff,
+                recorded_at=observation.recorded_at,
+                ranker_revision=ranking.ranker_revision,
+                feature_revision=ranking.feature_revision,
+                schema_revision=CANDIDATE_OBSERVATION_SCHEMA_REVISION,
+                benchmark_symbol=ranking.benchmark_symbol,
+                benchmark_basis=ranking.benchmark_basis,
+                universe_label=ranking.universe_label,
+                universe_sha256=observation.universe_sha256,
+                observation_sha256=observation.observation_sha256,
+                member_count=len(ranking.entries),
+                eligible_count=ranking.eligible_count,
+                payload=candidate_observation_payload(ranking),
+            )
+            .on_conflict_do_nothing(index_elements=[CandidateRankingObservationModel.id])
+            .returning(CandidateRankingObservationModel.id)
+        )
+        created = result.scalar_one_or_none() is not None
+        return CandidateObservationAppendResult(observation=observation, created=created)
 
 
 def _observation_id(observation: ResearchObservation) -> UUID:

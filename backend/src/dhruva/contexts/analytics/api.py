@@ -4,11 +4,39 @@ This module is the **only** import surface other contexts may use. Importing
 ``dhruva.contexts.analytics.domain``, ``.application``, ``.infrastructure`` or
 ``.interfaces`` from another context is a build failure.
 
-Re-export here the DTOs, ports and application services that other contexts are
-permitted to depend on. Nothing is exported yet -- this context has no
-behaviour until its subsystem is built.
+Re-export here the provider-neutral technical feature facts and pure calculator.
 """
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from dhruva.contexts.analytics.application import technical_series_from_daily_bars
+from dhruva.contexts.analytics.domain import (
+    TECHNICAL_FEATURE_REVISION,
+    AdjustmentEvidence,
+    BenchmarkBasis,
+    BenchmarkRegime,
+    FeatureName,
+    FeatureStatus,
+    TechnicalBar,
+    TechnicalFeature,
+    TechnicalFeatureSet,
+    TechnicalSeries,
+    compute_technical_features,
+    unavailable_technical_features,
+)
+
+__all__ = [
+    "TECHNICAL_FEATURE_REVISION",
+    "AdjustmentEvidence",
+    "BenchmarkBasis",
+    "BenchmarkRegime",
+    "FeatureName",
+    "FeatureStatus",
+    "TechnicalBar",
+    "TechnicalFeature",
+    "TechnicalFeatureSet",
+    "TechnicalSeries",
+    "compute_technical_features",
+    "technical_series_from_daily_bars",
+    "unavailable_technical_features",
+]

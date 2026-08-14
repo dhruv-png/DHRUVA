@@ -6,6 +6,14 @@ May import this context's ``domain`` and ``dhruva.shared``. May not import
 ``infrastructure`` or ``interfaces``.
 """
 
+from dhruva.contexts.intelligence.application.candidate_observations import (
+    FreezeCandidateObservation,
+    FreezeCandidateObservationCommand,
+)
+from dhruva.contexts.intelligence.application.candidate_ranking import (
+    CandidateInput,
+    rank_technical_candidates,
+)
 from dhruva.contexts.intelligence.application.news_ingestion import (
     GetArchivedNews,
     GetArchivedNewsQuery,
@@ -36,8 +44,11 @@ __all__ = [
     "BatchOutcome",
     "BuildWatchlistDigest",
     "BuildWatchlistDigestQuery",
+    "CandidateInput",
     "FreezeAttentionObservation",
     "FreezeAttentionObservationCommand",
+    "FreezeCandidateObservation",
+    "FreezeCandidateObservationCommand",
     "GetArchivedNews",
     "GetArchivedNewsQuery",
     "IngestNewsItems",
@@ -50,4 +61,5 @@ __all__ = [
     "PollNewsFeedsCommand",
     "PollNewsFeedsResult",
     "linkable_universe",
+    "rank_technical_candidates",
 ]

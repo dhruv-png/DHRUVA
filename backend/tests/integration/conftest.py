@@ -387,7 +387,11 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # and restore only the research guards around the test-only
             # TRUNCATE; integration tests assert the guards reject mutation
             # before this fixture's teardown runs.
-            guarded = ("attention_observation_member", "research_observation")
+            guarded = (
+                "candidate_ranking_observation",
+                "attention_observation_member",
+                "research_observation",
+            )
             for table in guarded:
                 for operation in ("truncate", "delete", "update"):
                     await cleanup.execute(
@@ -399,7 +403,8 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
                     "credential, principal, refresh_token, role, reference_instrument, "
                     "instrument_master_snapshot, daily_market_bar_revision, "
                     "news_item_revision, news_analysis, news_entity_link, "
-                    "attention_observation_member, research_observation CASCADE"
+                    "candidate_ranking_observation, attention_observation_member, "
+                    "research_observation CASCADE"
                 )
             )
             for table in guarded:

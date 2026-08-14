@@ -146,12 +146,12 @@ Its critical path is:
 10. Routine operations.
 11. Forward-evidence readiness decision.
 
-The current P0 slice starts the evidence clock by automatically freezing the
-existing deterministic attention ranking after every valid refresh. These are
-`ATTENTION_OBSERVATION` facts: unusual observable activity, not research
-candidates, recommendations, risk conclusions, position sizes or orders. A
-future candidate model must earn a separate name through prospective and
-historical evaluation; DHRUVA will not backdate recommendations.
+The evidence clock and historical acquisition foundation are shipped. The
+deterministic `technical-candidate-v0` baseline is also shipped as an
+**EXPERIMENTAL RESEARCH CANDIDATE** rank, separate from sign-neutral attention.
+It has not demonstrated alpha or passed a readiness gate. Historical
+walk-forward evaluation is the next P0 slice; DHRUVA will not backdate results
+or reinterpret attention observations as candidates.
 
 The four product milestones below remain useful outcome groupings. Engineering
 slices follow the evidence critical path above and roll up to those outcomes.
@@ -343,7 +343,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 / evidence clock | **In progress** — watchlist/reference, Kite discovery/archive, point-in-time cash/index daily history, actual futures contract OHLCV/OI, the versioned continuous research series with its deterministic roll policy, the pure news domain, append-only point-in-time news archive, and the attributed GDELT DOC 2.0 metadata adapter with provider-neutral source health are implemented. **NSE ingestion is deferred in full** pending written permission or a licensed data agreement (see `docs/decisions/news-source-selection.md`), so official filings are not a DHRUVA input. Local commands seed reference data, inspect market coverage, poll/read archived news, compose the PIT digest, render the deterministic attention-ranked brief, export its self-describing research packet and compare two saved packets. `dhruva-refresh` composes that same final state once and now freezes an immutable `ATTENTION_OBSERVATION`; `dhruva-research history` inspects the accumulating evidence clock without network access. Live GDELT payload schema verification and the first live Zerodha smoke test both remain outstanding. Historical depth, benchmark/corporate-action completeness and a tested candidate baseline are the next critical-path work; no investment candidate or recommendation exists yet. |
+| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition foundation, and deterministic `technical-candidate-v0` are implemented. `dhruva-research candidates` computes an owner-watchlist rank from local PIT archives; insufficient owner history remains an explicit exclusion, and `--freeze` appends a separate immutable candidate observation. The rank is **EXPERIMENTAL**, is not a recommendation, and has not passed walk-forward evaluation. NIFTY remains `PRICE_INDEX`; Zerodha adjustment evidence remains `UNKNOWN`; fundamentals are absent; today's watchlist is not survivorship-safe. **NSE ingestion remains deferred in full** pending permission or a licensed agreement. Live GDELT schema verification, the first live Zerodha smoke test, and the owner's two-year backfill remain outstanding. Historical evaluation is the next P0 slice. |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
@@ -366,3 +366,15 @@ and survivorship-safe evaluation. Deep history for today's twenty-stock owner
 watchlist enables feature development only. Reconstructed old bars retain their
 modern retrieval/knowledge time and never rewrite prospective frozen research
 observations. See ADR-079 and `docs/runbooks/marketdata-refresh.md`.
+
+### Deterministic technical candidate baseline (2026-08-14)
+
+Analytics now computes the compact PIT feature set and explicit availability
+states. Intelligence combines eligible facts through frozen, transparent
+cross-sectional weights into `technical-candidate-v0`, with deterministic
+supporting, counter, and missing evidence. Attention remains separate metadata.
+Manual inspection is network-free; an explicit weekly freeze is append-only and
+idempotent. The price-index, unknown-adjustment, missing-fundamentals, and
+current-universe limitations remain visible. See ADR-080 and
+`docs/runbooks/technical-candidates.md`. The next P0 slice is historical
+walk-forward evaluation, not weight optimization or ML.

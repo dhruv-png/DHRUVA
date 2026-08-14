@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self
 from sqlalchemy import text
 
 from dhruva.contexts.intelligence.infrastructure.persistence.repository import (
+    CandidateObservationRepository,
     NewsRepository,
     ResearchObservationRepository,
 )
@@ -62,6 +63,11 @@ class SqlAlchemyIntelligenceUnitOfWork:
     def observations(self) -> ResearchObservationRepository:
         """Return the account-scoped research-observation repository."""
         return ResearchObservationRepository(self.session, account_id=self._account_id)
+
+    @property
+    def candidate_observations(self) -> CandidateObservationRepository:
+        """Return the append-only experimental candidate freeze store."""
+        return CandidateObservationRepository(self.session, account_id=self._account_id)
 
     async def __aenter__(self) -> Self:
         """Open a session and set transaction-local tenant context."""
