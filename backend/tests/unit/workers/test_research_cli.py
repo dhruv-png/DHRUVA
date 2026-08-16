@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -148,6 +149,38 @@ def test_candidate_command_is_explicitly_local_experimental_and_optionally_froze
     assert "PRICE_INDEX" in rendered
     assert "No instrument has the essential history" in rendered
     assert "not survivorship-safe" in rendered
+
+
+def test_evaluation_and_outcome_commands_expose_explicit_methodology() -> None:
+    """The local evidence surface requires dates and states costs rather than hiding them."""
+    evaluate = cli.build_parser().parse_args(
+        [
+            "evaluate",
+            "--account",
+            "owner-family",
+            "--from",
+            "2025-01-01",
+            "--to",
+            "2026-01-01",
+            "--horizons",
+            "20",
+            "60",
+            "--cost-bps",
+            "25",
+            "--strict-pit",
+        ]
+    )
+    outcomes = cli.build_parser().parse_args(
+        ["outcomes", "--account", "owner-family", "--cost-bps", "20"]
+    )
+    evidence = cli.build_parser().parse_args(["evidence", "--account", "owner-family"])
+
+    assert evaluate.model == "technical-candidate-v0"
+    assert evaluate.horizons == [20, 60]
+    assert evaluate.cost_bps == Decimal(25)
+    assert evaluate.strict_pit is True
+    assert outcomes.cost_bps == Decimal(20)
+    assert evidence.command == "evidence"
 
 
 def test_command_imports_no_provider_or_transport_module() -> None:

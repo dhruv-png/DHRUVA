@@ -13,6 +13,7 @@ from dhruva.shared.invariants import invariant
 
 if TYPE_CHECKING:
     from datetime import datetime
+    from uuid import UUID
 
     from dhruva.contexts.intelligence.domain.candidates import CandidateRanking
     from dhruva.shared.identity import AccountId
@@ -21,6 +22,7 @@ __all__ = [
     "CANDIDATE_OBSERVATION_SCHEMA_REVISION",
     "CandidateObservation",
     "CandidateObservationAppendResult",
+    "StoredCandidateObservation",
     "candidate_observation_fingerprint",
     "candidate_observation_payload",
     "candidate_universe_fingerprint",
@@ -148,6 +150,14 @@ class CandidateObservationAppendResult:
 
     observation: CandidateObservation
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StoredCandidateObservation:
+    """Persistence identity beside the self-verifying frozen ranking fact."""
+
+    id: UUID
+    observation: CandidateObservation
 
 
 def _fingerprint(value: object) -> str:

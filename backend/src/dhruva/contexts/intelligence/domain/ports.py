@@ -24,6 +24,11 @@ if TYPE_CHECKING:
     from dhruva.contexts.intelligence.domain.candidate_observation import (
         CandidateObservation,
         CandidateObservationAppendResult,
+        StoredCandidateObservation,
+    )
+    from dhruva.contexts.intelligence.domain.candidate_outcome import (
+        CandidateOutcome,
+        CandidateOutcomeAppendResult,
     )
     from dhruva.contexts.intelligence.domain.news import NewsFingerprints, NewsItemIdentity
     from dhruva.contexts.intelligence.domain.research_observation import (
@@ -35,6 +40,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CandidateObservationStore",
     "CandidateObservationUnitOfWork",
+    "CandidateOutcomeStore",
     "IntelligenceUnitOfWork",
     "NewsStore",
     "ResearchObservationStore",
@@ -50,6 +56,23 @@ class CandidateObservationStore(Protocol):
         """Append a new candidate fact or return its identical prior row."""
         ...
 
+    async def list_recent(self, *, limit: int) -> tuple[StoredCandidateObservation, ...]:
+        """Return newest candidate freezes for the bound account."""
+        ...
+
+
+@runtime_checkable
+class CandidateOutcomeStore(Protocol):
+    """Append and inspect matured candidate outcomes for one account."""
+
+    async def append(self, outcome: CandidateOutcome) -> CandidateOutcomeAppendResult:
+        """Append a matured fact or return its identical prior row."""
+        ...
+
+    async def list_all(self) -> tuple[CandidateOutcome, ...]:
+        """Return all outcome facts for the bound account in stable order."""
+        ...
+
 
 @runtime_checkable
 class CandidateObservationUnitOfWork(Protocol):
@@ -58,6 +81,11 @@ class CandidateObservationUnitOfWork(Protocol):
     @property
     def candidate_observations(self) -> CandidateObservationStore:
         """Return the account-scoped candidate observation store."""
+        ...
+
+    @property
+    def candidate_outcomes(self) -> CandidateOutcomeStore:
+        """Return the account-scoped matured outcome store."""
         ...
 
     async def __aenter__(self) -> Self:

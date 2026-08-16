@@ -1,6 +1,7 @@
 """Primitive SQLAlchemy rows owned by the Intelligence context.
 
-Three append-only tables. ``news_item_revision`` is one observed version of one
+Append-only tables preserve news, research observations, candidate rankings,
+and matured outcomes. ``news_item_revision`` is one observed version of one
 item; ``news_analysis`` is one pass of the deterministic rulesets over it; and
 ``news_entity_link`` is the instruments that pass resolved. Nothing is ever
 updated, so a correction cannot overwrite the wording a backtest already read.
@@ -13,13 +14,14 @@ is a control an ad-hoc script can walk past.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -34,6 +36,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 __all__ = [
     "AttentionObservationMemberModel",
+    "CandidateOutcomeModel",
     "CandidateRankingObservationModel",
     "IntelligenceBase",
     "NewsAnalysisModel",
@@ -236,6 +239,7 @@ class CandidateRankingObservationModel(IntelligenceBase):
 
     __tablename__ = "candidate_ranking_observation"
     __table_args__ = (
+        UniqueConstraint("id", "account_id", name="uq_candidate_observation_id_account"),
         UniqueConstraint(
             "account_id",
             "cutoff",
@@ -281,6 +285,104 @@ class CandidateRankingObservationModel(IntelligenceBase):
     member_count: Mapped[int] = mapped_column(nullable=False)
     eligible_count: Mapped[int] = mapped_column(nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(postgresql.JSONB, nullable=False)
+
+
+class CandidateOutcomeModel(IntelligenceBase):
+    """One append-only matured paper outcome with complete provenance."""
+
+    __tablename__ = "candidate_outcome"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["candidate_observation_id", "account_id"],
+            ["candidate_ranking_observation.id", "candidate_ranking_observation.account_id"],
+            name="fk_candidate_outcome_observation_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "account_id",
+            "candidate_observation_id",
+            "instrument_id",
+            "horizon_sessions",
+            "outcome_revision",
+            "observable_through",
+            "outcome_sha256",
+            name="uq_candidate_outcome_logical_identity",
+        ),
+        CheckConstraint("horizon_sessions IN (20, 60)", name="ck_candidate_outcome_horizon"),
+        CheckConstraint("entry_date > signal_cutoff::date", name="ck_candidate_outcome_entry"),
+        CheckConstraint("exit_date >= entry_date", name="ck_candidate_outcome_exit"),
+        CheckConstraint(
+            "observable_through >= exit_date AND materialized_at::date >= observable_through",
+            name="ck_candidate_outcome_maturity",
+        ),
+        CheckConstraint("cost_bps >= 0", name="ck_candidate_outcome_cost"),
+        CheckConstraint(
+            "cardinality(stock_bar_revisions) > 0 AND cardinality(benchmark_bar_revisions) > 0",
+            name="ck_candidate_outcome_provenance",
+        ),
+        CheckConstraint(
+            "candidate_observation_sha256 ~ '^[0-9a-f]{64}$' AND outcome_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_candidate_outcome_fingerprints",
+        ),
+        CheckConstraint(
+            "ranker_revision ~ '^[a-z][a-z0-9._-]{1,127}$' AND "
+            "feature_revision ~ '^[a-z][a-z0-9._-]{1,127}$' AND "
+            "evaluation_revision ~ '^[a-z][a-z0-9._-]{1,127}$' AND "
+            "outcome_revision ~ '^[a-z][a-z0-9._-]{1,127}$' AND "
+            "schema_revision ~ '^[a-z][a-z0-9._-]{1,127}$'",
+            name="ck_candidate_outcome_revisions",
+        ),
+        Index(
+            "ix_candidate_outcome_account_cutoff_horizon",
+            "account_id",
+            "signal_cutoff",
+            "horizon_sessions",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    candidate_observation_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True), nullable=False
+    )
+    candidate_observation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    instrument_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    canonical_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    signal_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observable_through: Mapped[date] = mapped_column(Date, nullable=False)
+    materialized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    horizon_sessions: Mapped[int] = mapped_column(nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    exit_date: Mapped[date] = mapped_column(Date, nullable=False)
+    exit_price: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    absolute_return: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    benchmark_return: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    excess_return: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    net_return: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    net_excess_return: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    maximum_adverse_excursion: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    maximum_favorable_excursion: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    holding_period_drawdown: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    realized_volatility: Mapped[Decimal] = mapped_column(Numeric(50, 28), nullable=False)
+    ranker_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    feature_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    evaluation_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    outcome_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    schema_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    benchmark_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    benchmark_basis: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_timing: Mapped[str] = mapped_column(String(128), nullable=False)
+    cost_bps: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    adjustment_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    limitations: Mapped[list[str]] = mapped_column(postgresql.ARRAY(Text), nullable=False)
+    stock_bar_revisions: Mapped[list[str]] = mapped_column(
+        postgresql.ARRAY(String(64)), nullable=False
+    )
+    benchmark_bar_revisions: Mapped[list[str]] = mapped_column(
+        postgresql.ARRAY(String(64)), nullable=False
+    )
+    outcome_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class NewsItemRevisionModel(IntelligenceBase):

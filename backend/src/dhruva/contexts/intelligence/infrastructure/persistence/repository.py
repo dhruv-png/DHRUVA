@@ -14,6 +14,8 @@ cutoff.
 
 from __future__ import annotations
 
+from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid5
 
@@ -31,7 +33,19 @@ from dhruva.contexts.intelligence.domain.candidate_observation import (
     CANDIDATE_OBSERVATION_SCHEMA_REVISION,
     CandidateObservation,
     CandidateObservationAppendResult,
+    StoredCandidateObservation,
     candidate_observation_payload,
+)
+from dhruva.contexts.intelligence.domain.candidate_outcome import (
+    CandidateOutcome,
+    CandidateOutcomeAppendResult,
+)
+from dhruva.contexts.intelligence.domain.candidates import (
+    CandidateEligibility,
+    CandidateRanking,
+    CandidateResult,
+    CandidateTier,
+    EvidenceCompleteness,
 )
 from dhruva.contexts.intelligence.domain.entity_linking import (
     EntityLinkResult,
@@ -67,6 +81,7 @@ from dhruva.contexts.intelligence.domain.sentiment import (
 )
 from dhruva.contexts.intelligence.infrastructure.persistence.models import (
     AttentionObservationMemberModel,
+    CandidateOutcomeModel,
     CandidateRankingObservationModel,
     NewsAnalysisModel,
     NewsEntityLinkModel,
@@ -77,15 +92,20 @@ from dhruva.shared.errors import ConflictError, ValidationError
 from dhruva.shared.identity import AccountId, InstrumentId
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["CandidateObservationRepository", "NewsRepository", "ResearchObservationRepository"]
+__all__ = [
+    "CandidateObservationRepository",
+    "CandidateOutcomeRepository",
+    "NewsRepository",
+    "ResearchObservationRepository",
+]
 
 _NEWS_NAMESPACE = UUID("b0f1c2d3-4e5a-4b6c-8d7e-9f0a1b2c3d4e")
 _RESEARCH_NAMESPACE = UUID("8c5b3d2a-09ec-47f7-a59b-945987f81a36")
 _CANDIDATE_NAMESPACE = UUID("13b2e6c0-3f6c-4fdc-b7c3-35c45f6a2ed0")
+_OUTCOME_NAMESPACE = UUID("ec00e542-583a-4c25-a541-1516569517e5")
+_MAX_CANDIDATE_OBSERVATIONS = 10_000
 
 
 class CandidateObservationRepository:
@@ -138,6 +158,253 @@ class CandidateObservationRepository:
         )
         created = result.scalar_one_or_none() is not None
         return CandidateObservationAppendResult(observation=observation, created=created)
+
+    async def list_recent(self, *, limit: int) -> tuple[StoredCandidateObservation, ...]:
+        """Return newest complete freezes for the bound account."""
+        if not 1 <= limit <= _MAX_CANDIDATE_OBSERVATIONS:
+            raise ValidationError("candidate observation limit must be between 1 and 10000")
+        rows = (
+            await self._session.scalars(
+                select(CandidateRankingObservationModel)
+                .where(CandidateRankingObservationModel.account_id == self._account_id.value)
+                .order_by(
+                    CandidateRankingObservationModel.cutoff.desc(),
+                    CandidateRankingObservationModel.recorded_at.desc(),
+                    CandidateRankingObservationModel.id.desc(),
+                )
+                .limit(limit)
+            )
+        ).all()
+        return tuple(_stored_candidate(row) for row in rows)
+
+
+class CandidateOutcomeRepository:
+    """Append matured outcomes idempotently and read one account only."""
+
+    __slots__ = ("_account_id", "_session")
+
+    def __init__(self, session: AsyncSession, *, account_id: AccountId) -> None:
+        self._session = session
+        self._account_id = account_id
+
+    async def append(self, outcome: CandidateOutcome) -> CandidateOutcomeAppendResult:
+        """Insert an unseen exact fact using a deterministic row identity."""
+        if outcome.account_id != self._account_id:
+            raise ValidationError("candidate outcome account does not match transaction")
+        if not outcome.outcome_sha256:
+            raise ValidationError("candidate outcome has no fingerprint")
+        row_id = uuid5(
+            _OUTCOME_NAMESPACE,
+            "\x1f".join(
+                (
+                    str(outcome.account_id),
+                    str(outcome.candidate_observation_id),
+                    str(outcome.instrument_id),
+                    str(outcome.horizon_sessions),
+                    outcome.outcome_revision,
+                    outcome.observable_through.isoformat(),
+                    outcome.outcome_sha256,
+                )
+            ),
+        )
+        result = await self._session.execute(
+            insert(CandidateOutcomeModel)
+            .values(id=row_id, **_outcome_values(outcome))
+            .on_conflict_do_nothing(index_elements=[CandidateOutcomeModel.id])
+            .returning(CandidateOutcomeModel.id)
+        )
+        return CandidateOutcomeAppendResult(
+            outcome=outcome,
+            created=result.scalar_one_or_none() is not None,
+        )
+
+    async def list_all(self) -> tuple[CandidateOutcome, ...]:
+        """Return stable matured facts for the bound account."""
+        rows = (
+            await self._session.scalars(
+                select(CandidateOutcomeModel)
+                .where(CandidateOutcomeModel.account_id == self._account_id.value)
+                .order_by(
+                    CandidateOutcomeModel.signal_cutoff,
+                    CandidateOutcomeModel.horizon_sessions,
+                    CandidateOutcomeModel.canonical_symbol,
+                    CandidateOutcomeModel.materialized_at,
+                )
+            )
+        ).all()
+        return tuple(_outcome_domain(row) for row in rows)
+
+
+def _stored_candidate(model: CandidateRankingObservationModel) -> StoredCandidateObservation:
+    """Reconstruct and revalidate the canonical candidate payload."""
+    payload = model.payload
+    raw_entries = payload.get("entries")
+    if not isinstance(raw_entries, list):
+        raise ValidationError("stored candidate payload has no entries")
+    cutoff = datetime.fromisoformat(str(payload["cutoff"]))
+    entries: list[CandidateResult] = []
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            raise ValidationError("stored candidate payload member is malformed")
+        feature_availability = raw.get("feature_availability")
+        if not isinstance(feature_availability, dict):
+            raise ValidationError("stored candidate feature availability is malformed")
+        attention_score = raw.get("attention_score")
+        attention_band = raw.get("attention_band")
+        attention_cutoff = raw.get("attention_cutoff")
+        entries.append(
+            CandidateResult(
+                instrument_id=InstrumentId.parse(str(raw["instrument_id"])),
+                canonical_symbol=str(raw["canonical_symbol"]),
+                company_name=str(raw["company_name"]),
+                cutoff=cutoff,
+                eligibility=CandidateEligibility(str(raw["eligibility"])),
+                score=_optional_decimal(raw.get("score")),
+                rank=_optional_int(raw.get("rank")),
+                universe_percentile=_optional_decimal(raw.get("universe_percentile")),
+                relative_strength_60_percentile=_optional_decimal(
+                    raw.get("relative_strength_60_percentile")
+                ),
+                relative_strength_120_percentile=_optional_decimal(
+                    raw.get("relative_strength_120_percentile")
+                ),
+                tier=None if raw.get("tier") is None else CandidateTier(str(raw["tier"])),
+                evidence_completeness=EvidenceCompleteness(str(raw["evidence_completeness"])),
+                supporting_evidence=_string_tuple(raw.get("supporting_evidence")),
+                counterevidence=_string_tuple(raw.get("counterevidence")),
+                missing_evidence=_string_tuple(raw.get("missing_evidence")),
+                feature_availability=tuple(
+                    sorted((str(key), str(value)) for key, value in feature_availability.items())
+                ),
+                attention_score=_optional_int(attention_score),
+                attention_band=(
+                    None if attention_band is None else AttentionBand(str(attention_band))
+                ),
+                attention_cutoff=(
+                    None
+                    if attention_cutoff is None
+                    else datetime.fromisoformat(str(attention_cutoff))
+                ),
+                ranker_revision=model.ranker_revision,
+            )
+        )
+    ranking = CandidateRanking(
+        cutoff=cutoff,
+        entries=tuple(entries),
+        benchmark_symbol=model.benchmark_symbol,
+        benchmark_basis=model.benchmark_basis,
+        feature_revision=model.feature_revision,
+        limitations=_string_tuple(payload.get("limitations")),
+        ranker_revision=model.ranker_revision,
+        experimental_label=str(payload["experimental_label"]),
+        universe_label=model.universe_label,
+    )
+    observation = CandidateObservation(
+        account_id=AccountId(model.account_id),
+        ranking=ranking,
+        recorded_at=model.recorded_at,
+        universe_sha256=model.universe_sha256,
+        observation_sha256=model.observation_sha256,
+    )
+    return StoredCandidateObservation(id=model.id, observation=observation)
+
+
+def _outcome_values(outcome: CandidateOutcome) -> dict[str, object]:
+    """Decompose one validated outcome into primitive model values."""
+    return {
+        "account_id": outcome.account_id.value,
+        "candidate_observation_id": outcome.candidate_observation_id,
+        "candidate_observation_sha256": outcome.candidate_observation_sha256,
+        "instrument_id": outcome.instrument_id.value,
+        "canonical_symbol": outcome.canonical_symbol,
+        "signal_cutoff": outcome.signal_cutoff,
+        "observable_through": outcome.observable_through,
+        "materialized_at": outcome.materialized_at,
+        "horizon_sessions": outcome.horizon_sessions,
+        "entry_date": outcome.entry_date,
+        "entry_price": outcome.entry_price,
+        "exit_date": outcome.exit_date,
+        "exit_price": outcome.exit_price,
+        "absolute_return": outcome.absolute_return,
+        "benchmark_return": outcome.benchmark_return,
+        "excess_return": outcome.excess_return,
+        "net_return": outcome.net_return,
+        "net_excess_return": outcome.net_excess_return,
+        "maximum_adverse_excursion": outcome.maximum_adverse_excursion,
+        "maximum_favorable_excursion": outcome.maximum_favorable_excursion,
+        "holding_period_drawdown": outcome.holding_period_drawdown,
+        "realized_volatility": outcome.realized_volatility,
+        "ranker_revision": outcome.ranker_revision,
+        "feature_revision": outcome.feature_revision,
+        "evaluation_revision": outcome.evaluation_revision,
+        "outcome_revision": outcome.outcome_revision,
+        "schema_revision": outcome.schema_revision,
+        "benchmark_symbol": outcome.benchmark_symbol,
+        "benchmark_basis": outcome.benchmark_basis,
+        "execution_timing": outcome.execution_timing,
+        "cost_bps": outcome.cost_bps,
+        "adjustment_status": outcome.adjustment_status,
+        "limitations": list(outcome.limitations),
+        "stock_bar_revisions": list(outcome.stock_bar_revisions),
+        "benchmark_bar_revisions": list(outcome.benchmark_bar_revisions),
+        "outcome_sha256": outcome.outcome_sha256,
+    }
+
+
+def _outcome_domain(model: CandidateOutcomeModel) -> CandidateOutcome:
+    """Reconstruct and revalidate one append-only matured fact."""
+    return CandidateOutcome(
+        account_id=AccountId(model.account_id),
+        candidate_observation_id=model.candidate_observation_id,
+        candidate_observation_sha256=model.candidate_observation_sha256,
+        instrument_id=InstrumentId(model.instrument_id),
+        canonical_symbol=model.canonical_symbol,
+        signal_cutoff=model.signal_cutoff,
+        observable_through=model.observable_through,
+        materialized_at=model.materialized_at,
+        horizon_sessions=model.horizon_sessions,
+        entry_date=model.entry_date,
+        entry_price=model.entry_price,
+        exit_date=model.exit_date,
+        exit_price=model.exit_price,
+        absolute_return=model.absolute_return,
+        benchmark_return=model.benchmark_return,
+        excess_return=model.excess_return,
+        net_return=model.net_return,
+        net_excess_return=model.net_excess_return,
+        maximum_adverse_excursion=model.maximum_adverse_excursion,
+        maximum_favorable_excursion=model.maximum_favorable_excursion,
+        holding_period_drawdown=model.holding_period_drawdown,
+        realized_volatility=model.realized_volatility,
+        ranker_revision=model.ranker_revision,
+        feature_revision=model.feature_revision,
+        evaluation_revision=model.evaluation_revision,
+        outcome_revision=model.outcome_revision,
+        benchmark_symbol=model.benchmark_symbol,
+        benchmark_basis=model.benchmark_basis,
+        execution_timing=model.execution_timing,
+        cost_bps=model.cost_bps,
+        adjustment_status=model.adjustment_status,
+        limitations=tuple(model.limitations),
+        stock_bar_revisions=tuple(model.stock_bar_revisions),
+        benchmark_bar_revisions=tuple(model.benchmark_bar_revisions),
+        outcome_sha256=model.outcome_sha256,
+        schema_revision=model.schema_revision,
+    )
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+def _optional_int(value: object) -> int | None:
+    return None if value is None else int(str(value))
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ValidationError("stored candidate list field is malformed")
+    return tuple(str(item) for item in value)
 
 
 def _observation_id(observation: ResearchObservation) -> UUID:

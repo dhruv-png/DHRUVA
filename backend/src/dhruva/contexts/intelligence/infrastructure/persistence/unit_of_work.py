@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from dhruva.contexts.intelligence.infrastructure.persistence.repository import (
     CandidateObservationRepository,
+    CandidateOutcomeRepository,
     NewsRepository,
     ResearchObservationRepository,
 )
@@ -68,6 +69,11 @@ class SqlAlchemyIntelligenceUnitOfWork:
     def candidate_observations(self) -> CandidateObservationRepository:
         """Return the append-only experimental candidate freeze store."""
         return CandidateObservationRepository(self.session, account_id=self._account_id)
+
+    @property
+    def candidate_outcomes(self) -> CandidateOutcomeRepository:
+        """Return the append-only matured candidate outcome store."""
+        return CandidateOutcomeRepository(self.session, account_id=self._account_id)
 
     async def __aenter__(self) -> Self:
         """Open a session and set transaction-local tenant context."""

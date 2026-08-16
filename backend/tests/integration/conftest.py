@@ -388,6 +388,7 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
             # TRUNCATE; integration tests assert the guards reject mutation
             # before this fixture's teardown runs.
             guarded = (
+                "candidate_outcome",
                 "candidate_ranking_observation",
                 "attention_observation_member",
                 "research_observation",
@@ -403,7 +404,8 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
                     "credential, principal, refresh_token, role, reference_instrument, "
                     "instrument_master_snapshot, daily_market_bar_revision, "
                     "news_item_revision, news_analysis, news_entity_link, "
-                    "candidate_ranking_observation, attention_observation_member, "
+                    "candidate_outcome, candidate_ranking_observation, "
+                    "attention_observation_member, "
                     "research_observation CASCADE"
                 )
             )

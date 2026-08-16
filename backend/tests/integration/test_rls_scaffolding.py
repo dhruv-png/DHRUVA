@@ -24,6 +24,7 @@ TENANT_TABLES: Final = frozenset(
     {
         "audit_log",
         "attention_observation_member",
+        "candidate_outcome",
         "candidate_ranking_observation",
         "credential",
         "daily_snapshot",
