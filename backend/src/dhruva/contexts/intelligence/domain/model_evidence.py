@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from decimal import Decimal, localcontext
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from dhruva.shared.identity import InstrumentId
 
 __all__ = [
+    "EVALUATION_DATA_READINESS_SCHEMA",
     "MODEL_EVIDENCE_SCHEMA",
     "TECHNICAL_CANDIDATE_EVALUATION_REVISION",
     "BaselineMetric",
@@ -29,6 +30,7 @@ __all__ = [
     "EvaluationDataset",
     "EvaluationIdentity",
     "EvaluationMetrics",
+    "EvaluationProvenance",
     "EvaluationReadiness",
     "EvaluationRow",
     "EvidenceStatus",
@@ -42,6 +44,7 @@ __all__ = [
 
 TECHNICAL_CANDIDATE_EVALUATION_REVISION: Final = "technical-candidate-evaluation-v0"
 MODEL_EVIDENCE_SCHEMA: Final = "dhruva.model-evidence.v1"
+EVALUATION_DATA_READINESS_SCHEMA: Final = "dhruva.evaluation-data-readiness.v2"
 _SERIOUS_HISTORY_SESSIONS = 2_000
 _MIN_RANKING_PERIODS = 104
 _MIN_MATURE_ROWS_PER_HORIZON = 100
@@ -70,6 +73,11 @@ class EvidenceStatus(StrEnum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+def _empty_provenance() -> EvaluationProvenance:
+    """Build the default empty dependency set after module initialization."""
+    return EvaluationProvenance()
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluationIdentity:
     """Every immutable identity and assumption attached to an evaluation."""
@@ -91,6 +99,10 @@ class EvaluationIdentity:
     cost_bps: Decimal
     knowledge_cutoff: datetime
     limitations: tuple[str, ...]
+    universe_id: str = "current-owner-watchlist"
+    universe_source_revision: str = "current-owner-watchlist"
+    universe_fingerprint: str = ""
+    provenance: EvaluationProvenance = field(default_factory=_empty_provenance)
 
     def __post_init__(self) -> None:
         """Reject anonymous, reversed, or implicit evaluation semantics."""
@@ -100,6 +112,23 @@ class EvaluationIdentity:
         invariant(bool(self.horizons) and all(item > 0 for item in self.horizons), "bad horizons")
         invariant(len(set(self.horizons)) == len(self.horizons), "evaluation horizon repeated")
         invariant(self.cost_bps >= 0, "evaluation cost cannot be negative")
+        invariant(self.universe_id.strip() != "", "evaluation universe id cannot be blank")
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationProvenance:
+    """Deterministic dependency identifiers for an evidence export."""
+
+    universe_membership_revisions: tuple[str, ...] = ()
+    instrument_mapping_revisions: tuple[str, ...] = ()
+    market_bar_revisions: tuple[str, ...] = ()
+    benchmark_bar_revisions: tuple[str, ...] = ()
+    corporate_action_revisions: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Require canonical unique dependency order."""
+        for values in asdict(self).values():
+            invariant(tuple(values) == tuple(sorted(set(values))), "provenance is not canonical")
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +276,19 @@ class EvaluationReadiness:
     mature_60_outcomes: int
     status: EvidenceStatus
     reasons: tuple[str, ...]
+    schema: str = EVALUATION_DATA_READINESS_SCHEMA
+    historical_membership_available: bool = False
+    pit_known_at_available: bool = False
+    removals_included: bool = False
+    delistings_included: bool = False
+    instrument_lifecycle_available: bool = False
+    return_basis: str = "UNKNOWN"
+    benchmark_basis: str = "PRICE_INDEX"
+    corporate_action_integrity: str = "UNAVAILABLE"
+    source_status: str = "UNREVIEWED"
+    source_licensing_confirmed: bool = False
+    critical_provenance_gaps: tuple[str, ...] = ()
+    blockers: tuple[str, ...] = ()
 
 
 def build_evaluation_metrics(
@@ -310,6 +352,15 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
     benchmark_available: bool = True,
     adjustment_semantics: str = "UNKNOWN",
     corporate_action_semantics: str = "UNAVAILABLE",
+    historical_membership_available: bool = False,
+    pit_known_at_available: bool = False,
+    removals_included: bool = False,
+    delistings_included: bool = False,
+    instrument_lifecycle_available: bool = False,
+    return_basis: str = "UNKNOWN",
+    source_status: str = "UNREVIEWED",
+    source_licensing_confirmed: bool = False,
+    critical_provenance_gaps: tuple[str, ...] = (),
 ) -> EvaluationReadiness:
     """Classify serious-evaluation readiness without conflating it with warm-up."""
     ranking_periods = len({row.cutoff for row in dataset.rows})
@@ -317,8 +368,33 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
     mature60 = sum(
         row.mature and row.horizon_sessions == _SECONDARY_HORIZON for row in dataset.rows
     )
-    survivorship_safe = dataset.identity.universe_type is UniverseType.HISTORICAL_PIT_UNIVERSE
+    survivorship_safe = (
+        dataset.identity.universe_type is UniverseType.HISTORICAL_PIT_UNIVERSE
+        and historical_membership_available
+        and pit_known_at_available
+        and removals_included
+        and delistings_included
+        and instrument_lifecycle_available
+        and source_licensing_confirmed
+    )
     reasons: list[str] = []
+    blockers: list[str] = []
+    gates = (
+        (historical_membership_available, "HISTORICAL_UNIVERSE_UNAVAILABLE"),
+        (pit_known_at_available, "PIT_KNOWN_AT_UNAVAILABLE"),
+        (removals_included, "UNIVERSE_MEMBERSHIP_UNKNOWN: removals not covered"),
+        (delistings_included, "DELISTING_COVERAGE_UNKNOWN"),
+        (instrument_lifecycle_available, "INSTRUMENT_MAPPING_UNRESOLVED"),
+        (source_licensing_confirmed, "SOURCE_LICENSING_UNRESOLVED"),
+        (return_basis in {"PRICE_ADJUSTED", "TOTAL_RETURN"}, "ADJUSTMENT_UNKNOWN"),
+        (
+            corporate_action_semantics in {"VERIFIED", "COMPLETE"},
+            "CORPORATE_ACTION_UNVERIFIED",
+        ),
+        (dataset.identity.benchmark_basis != "", "BENCHMARK_RETURN_BASIS_UNAVAILABLE"),
+        (not critical_provenance_gaps, "CRITICAL_PROVENANCE_GAP"),
+    )
+    blockers.extend(reason for available, reason in gates if not available)
     if not benchmark_available:
         status = EvidenceStatus.UNSUPPORTED
         reasons.append("benchmark history is unavailable")
@@ -327,10 +403,13 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
         reasons.append("no ranking periods were generated")
     elif not survivorship_safe:
         status = EvidenceStatus.DIAGNOSTIC_ONLY
-        reasons.append("current-watchlist selection is not survivorship safe")
+        reasons.append("evaluation universe does not satisfy survivorship-safe criteria")
     elif adjustment_semantics not in {"ADJUSTED", "VERIFIED"}:
         status = EvidenceStatus.DEGRADED
         reasons.append("corporate-action adjustment semantics are not verified")
+    elif blockers:
+        status = EvidenceStatus.DEGRADED
+        reasons.append("historical data-integrity or provenance gates are not satisfied")
     elif (
         sessions_available < _SERIOUS_HISTORY_SESSIONS
         or ranking_periods < _MIN_RANKING_PERIODS
@@ -351,6 +430,10 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
         )
     if adjustment_semantics == "UNKNOWN":
         reasons.append("price adjustment semantics are UNKNOWN")
+    if dataset.identity.benchmark_basis == "PRICE_INDEX":
+        reasons.append("NIFTY 50 is PRICE_INDEX; dividends are excluded")
+    reasons.extend(blockers)
+    reasons.extend(f"critical provenance gap: {item}" for item in critical_provenance_gaps)
     return EvaluationReadiness(
         sessions_available=sessions_available,
         requested_warmup_sessions=requested_warmup_sessions,
@@ -365,6 +448,18 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
         mature_60_outcomes=mature60,
         status=status,
         reasons=tuple(reasons),
+        historical_membership_available=historical_membership_available,
+        pit_known_at_available=pit_known_at_available,
+        removals_included=removals_included,
+        delistings_included=delistings_included,
+        instrument_lifecycle_available=instrument_lifecycle_available,
+        return_basis=return_basis,
+        benchmark_basis=dataset.identity.benchmark_basis,
+        corporate_action_integrity=corporate_action_semantics,
+        source_status=source_status,
+        source_licensing_confirmed=source_licensing_confirmed,
+        critical_provenance_gaps=critical_provenance_gaps,
+        blockers=tuple(blockers),
     )
 
 

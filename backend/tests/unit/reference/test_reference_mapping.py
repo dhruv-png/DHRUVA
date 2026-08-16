@@ -107,8 +107,11 @@ def test_reference_metadata_contains_all_archive_and_watchlist_tables() -> None:
     """Alembic sees every reference table and cannot propose dropping one."""
     assert set(ReferenceBase.metadata.tables) == {
         "cash_instrument_mapping_revision",
+        "corporate_action_revision",
         "futures_contract",
         "futures_contract_revision",
+        "historical_universe_definition_revision",
+        "historical_universe_membership_revision",
         "instrument_identity_revision",
         "instrument_master_snapshot",
         "instrument_resolution_revision",

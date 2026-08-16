@@ -392,6 +392,9 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
                 "candidate_ranking_observation",
                 "attention_observation_member",
                 "research_observation",
+                "historical_universe_definition_revision",
+                "historical_universe_membership_revision",
+                "corporate_action_revision",
             )
             for table in guarded:
                 for operation in ("truncate", "delete", "update"):
@@ -402,6 +405,8 @@ async def truncated_after_test(migrated: AsyncEngine) -> AsyncIterator[None]:
                 text(
                     "TRUNCATE daily_snapshot, outbox, example_tick, processed_event, "
                     "credential, principal, refresh_token, role, reference_instrument, "
+                    "historical_universe_definition_revision, "
+                    "historical_universe_membership_revision, corporate_action_revision, "
                     "instrument_master_snapshot, daily_market_bar_revision, "
                     "news_item_revision, news_analysis, news_entity_link, "
                     "candidate_outcome, candidate_ranking_observation, "

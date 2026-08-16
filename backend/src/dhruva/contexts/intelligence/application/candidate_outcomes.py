@@ -70,6 +70,7 @@ class OutcomeClockStatus:
     mature_outcomes: int
     outcomes_created: int
     outcomes_already_present: int
+    degraded_outcomes: int
     unavailable_outcomes: int
 
 
@@ -91,6 +92,7 @@ class MaterializeCandidateOutcomes:
         created = 0
         existing = 0
         unavailable = 0
+        degraded = 0
         eligible_members = 0
         inspected = 0
         async with self._unit_of_work_factory(command.account_id) as unit_of_work:
@@ -108,6 +110,14 @@ class MaterializeCandidateOutcomes:
                     eligible_members += 1
                     stock = command.stocks.get(candidate.instrument_id)
                     for horizon in command.horizons:
+                        if _benchmark_horizon_is_pending(
+                            command.benchmark,
+                            signal_cutoff=ranking.cutoff,
+                            observable_through=command.observable_through,
+                            horizon_sessions=horizon,
+                        ):
+                            awaiting += 1
+                            continue
                         if stock is None:
                             unavailable += 1
                             continue
@@ -123,6 +133,12 @@ class MaterializeCandidateOutcomes:
                         )
                         if outcome.status is OutcomeStatus.PENDING:
                             awaiting += 1
+                            continue
+                        if outcome.status in {
+                            OutcomeStatus.CORPORATE_ACTION_UNVERIFIED,
+                            OutcomeStatus.UNSUPPORTED_ADJUSTMENT,
+                        }:
+                            degraded += 1
                             continue
                         if outcome.status is not OutcomeStatus.MATURE:
                             unavailable += 1
@@ -147,8 +163,30 @@ class MaterializeCandidateOutcomes:
             mature_outcomes=mature,
             outcomes_created=created,
             outcomes_already_present=existing,
+            degraded_outcomes=degraded,
             unavailable_outcomes=unavailable,
         )
+
+
+def _benchmark_horizon_is_pending(
+    benchmark: TechnicalSeries | None,
+    *,
+    signal_cutoff: datetime,
+    observable_through: date,
+    horizon_sessions: int,
+) -> bool:
+    """Give temporal immaturity precedence over member-data availability.
+
+    A newly frozen ranking cannot have a missing future stock path yet: the path
+    does not exist.  Once the benchmark calendar shows that the horizon has
+    matured, missing member observations become an actual availability failure.
+    """
+    if benchmark is None:
+        return False
+    observable = sum(
+        signal_cutoff.date() < bar.trading_date <= observable_through for bar in benchmark.bars
+    )
+    return observable < horizon_sessions
 
 
 def _outcome_fact(

@@ -26,8 +26,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 __all__ = [
     "CashInstrumentMappingRevisionModel",
+    "CorporateActionRevisionModel",
     "FuturesContractModel",
     "FuturesContractRevisionModel",
+    "HistoricalUniverseDefinitionRevisionModel",
+    "HistoricalUniverseMembershipRevisionModel",
     "InstrumentIdentityRevisionModel",
     "InstrumentMasterSnapshotModel",
     "InstrumentResolutionRevisionModel",
@@ -173,6 +176,158 @@ class WatchlistMembershipRevisionModel(ReferenceBase):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     source_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class HistoricalUniverseDefinitionRevisionModel(ReferenceBase):
+    """Append-only source and coverage claims for a logical evaluation universe."""
+
+    __tablename__ = "historical_universe_definition_revision"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "universe_id",
+            "source",
+            "source_revision",
+            name="uq_historical_universe_definition_source_revision",
+        ),
+        CheckConstraint("btrim(universe_id) <> ''", name="ck_historical_universe_id"),
+        CheckConstraint("btrim(label) <> ''", name="ck_historical_universe_label"),
+        CheckConstraint("btrim(source) <> ''", name="ck_historical_universe_source"),
+        CheckConstraint(
+            "pit_known_at_available = false OR historical_membership_available",
+            name="ck_historical_universe_pit_requires_history",
+        ),
+        Index(
+            "ix_historical_universe_definition_as_of",
+            "account_id",
+            "universe_id",
+            "known_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    universe_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    known_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    historical_membership_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    removals_included: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    delistings_included: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    pit_known_at_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    instrument_lifecycle_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    licensing_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class HistoricalUniverseMembershipRevisionModel(ReferenceBase):
+    """One bitemporal membership fact tied to a definition source revision."""
+
+    __tablename__ = "historical_universe_membership_revision"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "universe_id",
+            "instrument_id",
+            "effective_from",
+            "source",
+            "source_revision",
+            "source_member_key",
+            name="uq_historical_membership_source_fact",
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to >= effective_from",
+            name="ck_historical_membership_effectivity",
+        ),
+        CheckConstraint("btrim(source_member_key) <> ''", name="ck_historical_member_key"),
+        Index(
+            "ix_historical_membership_as_of",
+            "account_id",
+            "universe_id",
+            "effective_from",
+            "known_at",
+        ),
+        Index(
+            "ix_historical_membership_instrument",
+            "instrument_id",
+            "effective_from",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    definition_revision_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("historical_universe_definition_revision.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    universe_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    instrument_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("reference_instrument.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    known_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_member_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_delisted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class CorporateActionRevisionModel(ReferenceBase):
+    """Global append-only corporate-action observation for a stable instrument."""
+
+    __tablename__ = "corporate_action_revision"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id",
+            "source",
+            "source_revision",
+            name="uq_corporate_action_source_revision",
+        ),
+        CheckConstraint(
+            "(ratio_numerator IS NULL) = (ratio_denominator IS NULL)",
+            name="ck_corporate_action_ratio_pair",
+        ),
+        CheckConstraint(
+            "ratio_numerator IS NULL OR (ratio_numerator > 0 AND ratio_denominator > 0)",
+            name="ck_corporate_action_ratio_positive",
+        ),
+        CheckConstraint(
+            "(cash_value IS NULL) = (currency IS NULL)",
+            name="ck_corporate_action_cash_currency",
+        ),
+        Index("ix_corporate_action_pit", "instrument_id", "effective_date", "known_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("reference_instrument.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ex_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    record_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    known_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    verification: Mapped[str] = mapped_column(String(24), nullable=False)
+    ratio_numerator: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    ratio_denominator: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    cash_value: Mapped[Decimal | None] = mapped_column(Numeric(30, 12), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    related_instrument_id: Mapped[UUID | None] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("reference_instrument.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
 
 
 class InstrumentMasterSnapshotModel(ReferenceBase):

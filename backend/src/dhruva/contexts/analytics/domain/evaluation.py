@@ -59,6 +59,7 @@ class OutcomeStatus(StrEnum):
     DATA_UNAVAILABLE = "DATA_UNAVAILABLE"
     BENCHMARK_UNAVAILABLE = "BENCHMARK_UNAVAILABLE"
     UNSUPPORTED_ADJUSTMENT = "UNSUPPORTED_ADJUSTMENT"
+    CORPORATE_ACTION_UNVERIFIED = "CORPORATE_ACTION_UNVERIFIED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +189,17 @@ def calculate_future_outcome(  # noqa: PLR0913 - methodology inputs must remain 
             limitation=f"stock history is missing required session {missing.isoformat()}",
         )
     stock_window = tuple(stock_by_date[day] for day in required_dates)
+    if stock.adjustment_status is AdjustmentEvidence.UNKNOWN and _has_suspicious_discontinuity(
+        stock.bars, required_dates=required_dates
+    ):
+        return FutureOutcome(
+            **common,
+            status=OutcomeStatus.CORPORATE_ACTION_UNVERIFIED,
+            limitation=(
+                "suspicious price discontinuity crosses the holding window while "
+                "corporate-action adjustment semantics are UNKNOWN"
+            ),
+        )
     entry_price = stock_window[0].open
     exit_price = stock_window[-1].close
     benchmark_entry = benchmark_window[0].open
@@ -245,3 +257,22 @@ def _holding_drawdown(bars: tuple[TechnicalBar, ...], *, entry_price: Decimal) -
         worst = min(worst, bar.low / peak - Decimal(1))
         peak = max(peak, bar.high)
     return worst
+
+
+def _has_suspicious_discontinuity(
+    bars: tuple[TechnicalBar, ...], *, required_dates: tuple[date, ...]
+) -> bool:
+    """Detect, never repair, a split-like overnight discontinuity.
+
+    Forty percent is deliberately conservative: this is an evidence-quality
+    circuit breaker, not a corporate-action classifier or adjustment factor.
+    """
+    required = set(required_dates)
+    threshold = Decimal("0.40")
+    for previous, current in pairwise(bars):
+        if current.trading_date not in required:
+            continue
+        overnight = abs(current.open / previous.close - Decimal(1))
+        if overnight >= threshold:
+            return True
+    return False

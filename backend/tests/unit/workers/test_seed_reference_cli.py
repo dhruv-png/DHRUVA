@@ -141,6 +141,24 @@ def test_the_recorded_instant_can_be_supplied_explicitly() -> None:
     assert args.recorded_at == "2026-08-07T12:00:00+00:00"
 
 
+def test_universe_readiness_is_network_free_and_names_the_universe() -> None:
+    """Inspection is a distinct read command and never masquerades as seed."""
+    args = cli.build_parser().parse_args(
+        [
+            "universe-readiness",
+            "--account",
+            "owner-family",
+            "--universe",
+            "licensed-india-v1",
+            "--as-of",
+            "2020-01-03T10:00:00Z",
+        ]
+    )
+
+    assert args.command == "universe-readiness"
+    assert args.universe == "licensed-india-v1"
+
+
 # --------------------------------------------------------------------------- #
 # The account rule, shared with everything that reads
 # --------------------------------------------------------------------------- #

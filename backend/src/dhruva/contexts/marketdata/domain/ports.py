@@ -16,7 +16,12 @@ if TYPE_CHECKING:
     )
     from dhruva.shared.identity import InstrumentId
 
-__all__ = ["DailyBarStore", "DailyHistorySource", "MarketDataUnitOfWork"]
+__all__ = [
+    "DailyBarStore",
+    "DailyHistorySource",
+    "HistoricalMarketDataProvider",
+    "MarketDataUnitOfWork",
+]
 
 
 @runtime_checkable
@@ -26,6 +31,15 @@ class DailyHistorySource(Protocol):
     async def fetch(self, request: DailyHistoryRequest) -> DailyHistoryBatch:
         """Return one bounded, replayable provider response."""
         ...
+
+
+@runtime_checkable
+class HistoricalMarketDataProvider(DailyHistorySource, Protocol):
+    """Deep-history source using the same narrow daily request contract.
+
+    Coverage, delistings, adjustment semantics, and data rights are separate
+    readiness evidence; they do not belong on a giant generic adapter.
+    """
 
 
 @runtime_checkable

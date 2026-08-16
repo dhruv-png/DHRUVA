@@ -6,6 +6,15 @@ May import this context's ``domain`` and ``dhruva.shared``. May not import
 ``infrastructure`` or ``interfaces``.
 """
 
+from dhruva.contexts.reference.application.historical_universe import (
+    GetCorporateActions,
+    GetHistoricalUniverse,
+    RegisterCorporateActions,
+    RegisterCorporateActionsResult,
+    RegisterHistoricalUniverse,
+    RegisterHistoricalUniverseCommand,
+    RegisterHistoricalUniverseResult,
+)
 from dhruva.contexts.reference.application.instrument_archive import (
     ArchiveOwnerInstrumentMaster,
     ArchiveOwnerInstrumentMasterCommand,
@@ -35,7 +44,14 @@ __all__ = [
     "DiscoverOwnerInstruments",
     "DiscoverOwnerInstrumentsCommand",
     "GetArchivedInstrumentDiscovery",
+    "GetCorporateActions",
+    "GetHistoricalUniverse",
     "GetLatestArchivedInstrumentDiscovery",
     "GetSharedWatchlist",
+    "RegisterCorporateActions",
+    "RegisterCorporateActionsResult",
+    "RegisterHistoricalUniverse",
+    "RegisterHistoricalUniverseCommand",
+    "RegisterHistoricalUniverseResult",
     "UniverseDefinition",
 ]

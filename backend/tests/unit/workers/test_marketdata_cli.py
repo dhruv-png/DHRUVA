@@ -710,6 +710,11 @@ async def test_backfill_planning_has_no_provider_or_transport_collaborator(
 
     assert plan.provider_requests > 0
     assert plan.benchmark_basis.value == "PRICE_INDEX"
+    rendered = cli._render_backfill_plan(plan)
+    assert rendered == cli._render_backfill_plan(plan)
+    assert "expected_sessions_approx=" in rendered
+    assert "HISTORICAL_UNIVERSE_UNAVAILABLE" in rendered
+    assert "OWNER_WATCHLIST only" in rendered
 
 
 @pytest.mark.parametrize(

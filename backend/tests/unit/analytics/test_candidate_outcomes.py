@@ -125,3 +125,34 @@ def test_missing_benchmark_and_raw_adjustment_are_explicit() -> None:
 
     assert missing.status is OutcomeStatus.BENCHMARK_UNAVAILABLE
     assert raw.status is OutcomeStatus.UNSUPPORTED_ADJUSTMENT
+
+
+def test_unknown_split_like_discontinuity_refuses_a_return_claim() -> None:
+    """A suspicious jump is degraded, never silently repaired or treated as alpha."""
+    stock = _series(STOCK, sessions=20)
+    bars = list(stock.bars)
+    bars[10] = TechnicalBar(
+        trading_date=bars[10].trading_date,
+        open=bars[9].close / Decimal(2),
+        high=bars[9].close / Decimal(2) + Decimal(2),
+        low=bars[9].close / Decimal(2) - Decimal(2),
+        close=bars[9].close / Decimal(2) + Decimal(1),
+        volume=1_000,
+    )
+    outcome = calculate_future_outcome(
+        stock=TechnicalSeries(
+            instrument_id=STOCK,
+            bars=tuple(bars),
+            adjustment_status=AdjustmentEvidence.UNKNOWN,
+        ),
+        benchmark=_series(BENCHMARK, sessions=20),
+        signal_cutoff=SIGNAL,
+        observable_through=date(2026, 1, 22),
+        horizon_sessions=20,
+        benchmark_basis=BenchmarkBasis.PRICE_INDEX,
+        cost_bps=Decimal(0),
+    )
+
+    assert outcome.status is OutcomeStatus.CORPORATE_ACTION_UNVERIFIED
+    assert outcome.absolute_return is None
+    assert "UNKNOWN" in outcome.limitation

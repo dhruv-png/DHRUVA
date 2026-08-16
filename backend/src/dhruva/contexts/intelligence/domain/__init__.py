@@ -64,6 +64,7 @@ from dhruva.contexts.intelligence.domain.events import (
     event_precedence,
 )
 from dhruva.contexts.intelligence.domain.model_evidence import (
+    EVALUATION_DATA_READINESS_SCHEMA,
     MODEL_EVIDENCE_SCHEMA,
     TECHNICAL_CANDIDATE_EVALUATION_REVISION,
     BaselineMetric,
@@ -71,6 +72,7 @@ from dhruva.contexts.intelligence.domain.model_evidence import (
     EvaluationDataset,
     EvaluationIdentity,
     EvaluationMetrics,
+    EvaluationProvenance,
     EvaluationReadiness,
     EvaluationRow,
     EvidenceStatus,
@@ -155,6 +157,7 @@ __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DIGEST_REVISION",
     "ENTITY_LINKING_REVISION",
+    "EVALUATION_DATA_READINESS_SCHEMA",
     "EVENT_CLASSIFICATION_REVISION",
     "FORMER_NAME_GRACE",
     "MAX_BATCH_SIZE",
@@ -195,6 +198,7 @@ __all__ = [
     "EvaluationDataset",
     "EvaluationIdentity",
     "EvaluationMetrics",
+    "EvaluationProvenance",
     "EvaluationReadiness",
     "EvaluationRow",
     "EventCategory",

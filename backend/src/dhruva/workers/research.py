@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import sys
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -50,6 +51,7 @@ from dhruva.contexts.intelligence.domain.model_evidence import (
     EvaluationDataset,
     EvaluationIdentity,
     EvaluationMetrics,
+    EvaluationProvenance,
     EvaluationReadiness,
     UniverseType,
     build_evaluation_metrics,
@@ -65,7 +67,11 @@ from dhruva.contexts.platform.infrastructure.database.engine import (
     build_engine,
     build_session_factory,
 )
-from dhruva.contexts.reference.api import GetSharedWatchlist
+from dhruva.contexts.reference.api import (
+    GetHistoricalUniverse,
+    GetSharedWatchlist,
+    ResolvedHistoricalUniverse,
+)
 from dhruva.contexts.reference.infrastructure import SqlAlchemyReferenceUnitOfWork
 from dhruva.shared.config.settings import load_settings
 from dhruva.shared.errors import DhruvaError, ValidationError
@@ -168,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument(
         "--account", required=True, help="account whose current watchlist is used"
+    )
+    evaluate.add_argument(
+        "--universe",
+        default="current-owner-watchlist",
+        help=(
+            "evaluation universe id (default current-owner-watchlist; any other id "
+            "must have stored historical membership evidence)"
+        ),
     )
     evaluate.add_argument(
         "--model",
@@ -280,6 +294,7 @@ async def run(argv: Sequence[str] | None = None) -> int:
                 horizons=horizons,
                 cost_bps=args.cost_bps,
                 strict_pit=args.strict_pit,
+                universe_id=args.universe,
                 session_factory=session_factory,
             )
             if args.export is not None:
@@ -393,7 +408,7 @@ async def _build_candidates(
     return rank_technical_candidates(tuple(inputs), cutoff=cutoff)
 
 
-async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodology input
+async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orchestration
     *,
     account_id: AccountId,
     from_date: date,
@@ -402,9 +417,10 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
     horizons: tuple[int, ...],
     cost_bps: Decimal,
     strict_pit: bool,
+    universe_id: str,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> tuple[EvaluationDataset, EvaluationMetrics, EvaluationReadiness]:
-    """Replay the exact frozen ranker over today's watchlist, visibly biased."""
+    """Replay the frozen ranker over an explicit, fail-closed universe contract."""
 
     def reference_uow(account: AccountId) -> SqlAlchemyReferenceUnitOfWork:
         return SqlAlchemyReferenceUnitOfWork(session_factory, account_id=account)
@@ -412,10 +428,15 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
     def marketdata_uow(account: AccountId) -> SqlAlchemyMarketDataUnitOfWork:
         return SqlAlchemyMarketDataUnitOfWork(session_factory, account_id=account)
 
-    universe = await GetSharedWatchlist(reference_uow).execute(
-        account_id=account_id,
-        effective_on=knowledge_cutoff.date(),
-        known_at=knowledge_cutoff,
+    current_selection = universe_id == "current-owner-watchlist"
+    current_universe = (
+        await GetSharedWatchlist(reference_uow).execute(
+            account_id=account_id,
+            effective_on=knowledge_cutoff.date(),
+            known_at=knowledge_cutoff,
+        )
+        if current_selection
+        else ()
     )
     history = GetDailyBarSeries(marketdata_uow)
     start = from_date - timedelta(days=900)
@@ -435,31 +456,64 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
             "evaluation is unsupported without locally observable NIFTY 50 history"
         ) from error
     benchmark = technical_series_from_daily_bars(stored_benchmark)
-    stocks: dict[InstrumentId, TechnicalSeries] = {}
-    for member in universe:
-        try:
-            stored = await history.execute(
-                GetDailyBarSeriesQuery(
-                    account_id=account_id,
-                    instrument_id=member.identity.instrument_id,
-                    from_date=start,
-                    to_date=knowledge_cutoff.date(),
-                    known_at=knowledge_cutoff,
-                )
-            )
-            stocks[member.identity.instrument_id] = technical_series_from_daily_bars(stored)
-        except DhruvaError:
-            continue
-
+    benchmark_revisions = {bar.source_revision for bar in stored_benchmark.bars}
     cutoff_dates = select_weekly_cutoffs(
         tuple(bar.trading_date for bar in benchmark.bars),
         from_date=from_date,
         to_date=to_date,
     )
+    historical_by_day: dict[date, ResolvedHistoricalUniverse] = {}
+    if not current_selection:
+        historical_query = GetHistoricalUniverse(reference_uow)
+        for day in cutoff_dates:
+            cutoff = datetime.combine(day, time(10), tzinfo=UTC)
+            known_at = cutoff if strict_pit else knowledge_cutoff
+            resolved = await historical_query.execute(
+                account_id=account_id,
+                universe_id=universe_id,
+                effective_on=day,
+                known_at=known_at,
+            )
+            if strict_pit and not resolved.definition.pit_known_at_available:
+                raise ValidationError(
+                    "strict PIT evaluation requires source-observed membership known-at evidence"
+                )
+            historical_by_day[day] = resolved
+
+    member_identities: dict[InstrumentId, tuple[str, str]] = {
+        member.identity.instrument_id: (
+            member.identity.canonical_symbol,
+            member.identity.company_name,
+        )
+        for member in current_universe
+    }
+    for resolved in historical_by_day.values():
+        for member in resolved.members:
+            member_identities[member.membership.instrument_id] = (
+                member.canonical_symbol,
+                member.company_name,
+            )
+    stocks: dict[InstrumentId, TechnicalSeries] = {}
+    market_revisions: set[str] = set()
+    for instrument_id in sorted(member_identities, key=str):
+        try:
+            stored = await history.execute(
+                GetDailyBarSeriesQuery(
+                    account_id=account_id,
+                    instrument_id=instrument_id,
+                    from_date=start,
+                    to_date=knowledge_cutoff.date(),
+                    known_at=knowledge_cutoff,
+                )
+            )
+            stocks[instrument_id] = technical_series_from_daily_bars(stored)
+            market_revisions.update(bar.source_revision for bar in stored.bars)
+        except DhruvaError:
+            continue
     rankings: list[CandidateRanking] = []
     for day in cutoff_dates:
         cutoff = datetime.combine(day, time(10), tzinfo=UTC)
-        if strict_pit:
+        if strict_pit and current_selection:
             rankings.append(
                 await _build_candidates(
                     account_id=account_id,
@@ -468,13 +522,67 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
                 )
             )
             continue
+        if current_selection:
+            identities = tuple(
+                (
+                    member.identity.instrument_id,
+                    member.identity.canonical_symbol,
+                    member.identity.company_name,
+                )
+                for member in current_universe
+            )
+        else:
+            identities = tuple(
+                (
+                    member.membership.instrument_id,
+                    member.canonical_symbol,
+                    member.company_name,
+                )
+                for member in historical_by_day[day].members
+            )
+        cutoff_benchmark = benchmark
+        cutoff_stocks = stocks
+        if strict_pit:
+            try:
+                stored_at_cutoff = await history.execute(
+                    GetDailyBarSeriesQuery(
+                        account_id=account_id,
+                        instrument_id=benchmark_id,
+                        from_date=start,
+                        to_date=day,
+                        known_at=cutoff,
+                    )
+                )
+            except DhruvaError as error:
+                raise ValidationError(
+                    "strict PIT benchmark observations are unavailable at a historical cutoff"
+                ) from error
+            cutoff_benchmark = technical_series_from_daily_bars(stored_at_cutoff)
+            benchmark_revisions.update(bar.source_revision for bar in stored_at_cutoff.bars)
+            cutoff_stocks = {}
+            for instrument_id, _symbol, _name in identities:
+                try:
+                    stored_at_cutoff = await history.execute(
+                        GetDailyBarSeriesQuery(
+                            account_id=account_id,
+                            instrument_id=instrument_id,
+                            from_date=start,
+                            to_date=day,
+                            known_at=cutoff,
+                        )
+                    )
+                    cutoff_stocks[instrument_id] = technical_series_from_daily_bars(
+                        stored_at_cutoff
+                    )
+                    market_revisions.update(bar.source_revision for bar in stored_at_cutoff.bars)
+                except DhruvaError:
+                    continue
         inputs: list[CandidateInput] = []
-        for member in universe:
-            member_identity = member.identity
-            stock = stocks.get(member_identity.instrument_id)
+        for instrument_id, canonical_symbol, company_name in identities:
+            stock = cutoff_stocks.get(instrument_id)
             features = (
                 unavailable_technical_features(
-                    instrument_id=member_identity.instrument_id,
+                    instrument_id=instrument_id,
                     cutoff=cutoff,
                     status=FeatureStatus.DATA_UNAVAILABLE,
                     reason="stock daily history is unavailable at the evaluation knowledge cutoff",
@@ -482,16 +590,16 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
                 if stock is None
                 else compute_technical_features(
                     stock=stock,
-                    benchmark=benchmark,
+                    benchmark=cutoff_benchmark,
                     cutoff=cutoff,
                     benchmark_basis=BenchmarkBasis.PRICE_INDEX,
                 )
             )
             inputs.append(
                 CandidateInput(
-                    instrument_id=member_identity.instrument_id,
-                    canonical_symbol=member_identity.canonical_symbol,
-                    company_name=member_identity.company_name,
+                    instrument_id=instrument_id,
+                    canonical_symbol=canonical_symbol,
+                    company_name=company_name,
                     features=features,
                 )
             )
@@ -509,23 +617,85 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
                 )
             )
             stocks[instrument_id] = technical_series_from_daily_bars(stored)
+            market_revisions.update(bar.source_revision for bar in stored.bars)
         except DhruvaError:
             continue
-    universe_type = (
-        UniverseType.HISTORICAL_PIT_OWNER_WATCHLIST
-        if strict_pit
-        else UniverseType.RETROSPECTIVE_CURRENT_WATCHLIST
-    )
-    universe_label = (
-        "PIT OWNER WATCHLIST" if strict_pit else "CURRENT OWNER WATCHLIST (RETROSPECTIVE)"
-    )
-    selection_limitation = (
-        "owner watchlist membership is PIT-resolved but remains an owner-selected, "
-        "non-survivorship-safe evaluation universe"
-        if strict_pit
-        else "historical bars were reconstructed after their market dates, not observed by "
-        "DHRUVA prospectively at those ranking cutoffs"
-    )
+    if current_selection:
+        universe_type = (
+            UniverseType.HISTORICAL_PIT_OWNER_WATCHLIST
+            if strict_pit
+            else UniverseType.RETROSPECTIVE_CURRENT_WATCHLIST
+        )
+        universe_label = (
+            "PIT OWNER WATCHLIST" if strict_pit else "CURRENT OWNER WATCHLIST (RETROSPECTIVE)"
+        )
+        universe_source_revision = "current-owner-watchlist"
+        universe_fingerprint = ""
+        membership_revisions: tuple[str, ...] = ()
+        mapping_revisions = tuple(
+            sorted({member.identity.source_revision for member in current_universe})
+        )
+        historical_membership = pit_known_at = removals = delistings = lifecycle = False
+        licensing = False
+        source_status = "OWNER_SELECTION"
+        selection_limitation = (
+            "owner watchlist membership is PIT-resolved but remains an owner-selected, "
+            "non-survivorship-safe evaluation universe"
+            if strict_pit
+            else "historical bars were reconstructed after their market dates, not observed by "
+            "DHRUVA prospectively at those ranking cutoffs"
+        )
+    else:
+        resolved_universes = tuple(historical_by_day[day] for day in cutoff_dates)
+        definitions = tuple(item.definition for item in resolved_universes)
+        universe_type = UniverseType.HISTORICAL_PIT_UNIVERSE
+        universe_label = definitions[-1].label if definitions else universe_id
+        revisions = sorted({item.source_revision for item in definitions})
+        universe_source_revision = ",".join(revisions)
+        universe_fingerprint = hashlib.sha256(
+            "".join(item.fingerprint for item in resolved_universes).encode()
+        ).hexdigest()
+        membership_revisions = tuple(
+            sorted(
+                {
+                    f"{member.membership.source}:{member.membership.source_revision}:"
+                    f"{member.membership.source_member_key}:"
+                    f"{member.membership.effective_from.isoformat()}"
+                    for item in resolved_universes
+                    for member in item.members
+                }
+            )
+        )
+        mapping_revisions = tuple(
+            sorted(
+                {
+                    member.identity_source_revision
+                    for item in resolved_universes
+                    for member in item.members
+                }
+            )
+        )
+        historical_membership = bool(definitions) and all(
+            item.historical_membership_available for item in definitions
+        )
+        pit_known_at = (
+            strict_pit
+            and bool(definitions)
+            and all(item.pit_known_at_available for item in definitions)
+        )
+        removals = bool(definitions) and all(item.removals_included for item in definitions)
+        delistings = bool(definitions) and all(item.delistings_included for item in definitions)
+        lifecycle = bool(definitions) and all(
+            item.instrument_lifecycle_available for item in definitions
+        )
+        licensing = bool(definitions) and all(item.licensing_confirmed for item in definitions)
+        statuses = {item.source_status.value for item in definitions}
+        source_status = next(iter(statuses)) if len(statuses) == 1 else "MIXED"
+        selection_limitation = (
+            "strict PIT source membership and mapping revisions were resolved at every cutoff"
+            if strict_pit
+            else "historical membership was reconstructed using the evaluation knowledge cutoff"
+        )
     evaluation_identity = EvaluationIdentity(
         ranker_revision=CANDIDATE_RANKER_REVISION,
         feature_revision=TECHNICAL_FEATURE_REVISION,
@@ -546,12 +716,20 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
         cost_bps=cost_bps,
         knowledge_cutoff=knowledge_cutoff,
         limitations=(
-            "RETROSPECTIVE DIAGNOSTIC ONLY — current-watchlist selection introduces "
-            "survivorship/selection bias and cannot establish historical model efficacy",
+            "DIAGNOSTIC ONLY until all readiness-v2 gates are satisfied",
             selection_limitation,
             "Zerodha corporate-action adjustment semantics are UNKNOWN",
             "NIFTY 50 is PRICE_INDEX, not TRI; dividends are excluded",
             "fundamentals, news, and attention are absent from candidate score and baselines",
+        ),
+        universe_id=universe_id,
+        universe_source_revision=universe_source_revision,
+        universe_fingerprint=universe_fingerprint,
+        provenance=EvaluationProvenance(
+            universe_membership_revisions=membership_revisions,
+            instrument_mapping_revisions=mapping_revisions,
+            market_bar_revisions=tuple(sorted(market_revisions)),
+            benchmark_bar_revisions=tuple(sorted(benchmark_revisions)),
         ),
     )
     observable_through = benchmark.bars[-1].trading_date
@@ -565,12 +743,33 @@ async def _evaluate(  # noqa: PLR0913 - every parameter is an explicit methodolo
     metrics = build_evaluation_metrics(dataset)
     adjustment_states = {series.adjustment_status.value for series in stocks.values()}
     adjustment = next(iter(adjustment_states)) if len(adjustment_states) == 1 else "MIXED"
+    return_basis = {
+        "RAW": "RAW_PRICE",
+        "ADJUSTED": "PRICE_ADJUSTED",
+        "VERIFIED": "PRICE_ADJUSTED",
+    }.get(adjustment, "UNKNOWN")
     readiness = build_evaluation_readiness(
         dataset,
         sessions_available=len(benchmark.bars),
         benchmark_available=True,
         adjustment_semantics=adjustment,
         corporate_action_semantics="UNAVAILABLE",
+        historical_membership_available=historical_membership,
+        pit_known_at_available=pit_known_at,
+        removals_included=removals,
+        delistings_included=delistings,
+        instrument_lifecycle_available=lifecycle,
+        return_basis=return_basis,
+        source_status=source_status,
+        source_licensing_confirmed=licensing,
+        critical_provenance_gaps=(
+            "corporate-action revisions are unavailable",
+            *(
+                ("bar adjustment semantics are UNKNOWN",)
+                if adjustment in {"UNKNOWN", "MIXED"}
+                else ()
+            ),
+        ),
     )
     return dataset, metrics, readiness
 
@@ -595,6 +794,11 @@ async def _materialize_outcomes(
         return SqlAlchemyMarketDataUnitOfWork(session_factory, account_id=account)
 
     earliest = min(item.observation.ranking.cutoff.date() for item in visible)
+    # Include the latest pre-signal benchmark observation.  A freeze made on a
+    # weekend has no same-day bar; without this bounded lookback the loader
+    # cannot establish that zero future sessions have elapsed and the evidence
+    # clock would conflate temporal immaturity with unavailable data.
+    load_from = earliest - timedelta(days=14)
     instrument_ids = {
         candidate.instrument_id
         for item in visible
@@ -609,7 +813,7 @@ async def _materialize_outcomes(
             GetDailyBarSeriesQuery(
                 account_id=account_id,
                 instrument_id=benchmark_id,
-                from_date=earliest,
+                from_date=load_from,
                 to_date=observable_at.date(),
                 known_at=observable_at,
             )
@@ -628,7 +832,7 @@ async def _materialize_outcomes(
                 GetDailyBarSeriesQuery(
                     account_id=account_id,
                     instrument_id=instrument_id,
-                    from_date=earliest,
+                    from_date=load_from,
                     to_date=observable_at.date(),
                     known_at=observable_at,
                 )
@@ -662,7 +866,8 @@ async def _materialize_outcomes(
             f"Created: {result.outcomes_created}; already present: "
             f"{result.outcomes_already_present}",
             f"Awaiting future sessions: {result.awaiting_outcomes}",
-            f"Unavailable/degraded: {result.unavailable_outcomes}",
+            f"Degraded evidence quality: {result.degraded_outcomes}",
+            f"Unavailable required data: {result.unavailable_outcomes}",
             "Execution: next-session open to Nth-session close; paper research only.",
             "Benchmark: NIFTY 50 PRICE_INDEX. Adjustment semantics remain UNKNOWN.",
         )
@@ -715,19 +920,29 @@ def _render_evaluation(
 ) -> str:
     """Render a qualified nontechnical model-evidence diagnostic."""
     identity = dataset.identity
-    selection_warning = (
-        "RETROSPECTIVE DIAGNOSTIC ONLY — current-watchlist selection introduces "
-        "survivorship/selection bias and cannot establish historical model efficacy."
-        if identity.universe_type is UniverseType.RETROSPECTIVE_CURRENT_WATCHLIST
-        else "DIAGNOSTIC ONLY — PIT owner-watchlist membership remains owner-selected and "
-        "not survivorship-safe, so it cannot establish historical model efficacy."
-    )
+    if identity.universe_type is UniverseType.RETROSPECTIVE_CURRENT_WATCHLIST:
+        selection_warning = (
+            "RETROSPECTIVE DIAGNOSTIC ONLY — current-watchlist selection introduces "
+            "survivorship/selection bias and cannot establish historical model efficacy."
+        )
+    elif identity.universe_type is UniverseType.HISTORICAL_PIT_OWNER_WATCHLIST:
+        selection_warning = (
+            "DIAGNOSTIC ONLY — PIT owner-watchlist membership remains owner-selected and "
+            "not survivorship-safe, so it cannot establish historical model efficacy."
+        )
+    else:
+        selection_warning = (
+            "HISTORICAL UNIVERSE EVIDENCE — readiness remains fail-closed until every "
+            "survivorship, return-basis, corporate-action, depth, and provenance gate passes."
+        )
     lines = [
         "DHRUVA technical candidate model evidence",
         selection_warning,
         f"Model: {identity.ranker_revision}; features: {identity.feature_revision}; "
         f"evaluation: {identity.evaluation_revision}",
         f"Universe: {identity.universe_label} ({identity.universe_type.value})",
+        f"Universe id: {identity.universe_id}; source revision: "
+        f"{identity.universe_source_revision}",
         f"Window: {identity.from_cutoff} to {identity.to_cutoff}; cadence: {identity.cadence}",
         f"Benchmark: {identity.benchmark_symbol} {identity.benchmark_basis}",
         f"Execution: {identity.entry_price_basis} to {identity.exit_price_basis}; "
@@ -736,6 +951,12 @@ def _render_evaluation(
         f"ranking periods {readiness.ranking_periods}",
         f"Mature rows: 20-session {readiness.mature_20_outcomes}; "
         f"60-session {readiness.mature_60_outcomes}",
+        f"Survivorship-safe: {readiness.survivorship_safe}; removals: "
+        f"{readiness.removals_included}; delistings: {readiness.delistings_included}; "
+        f"PIT known-at: {readiness.pit_known_at_available}",
+        f"Return basis: {readiness.return_basis}; benchmark basis: "
+        f"{readiness.benchmark_basis}; corporate actions: "
+        f"{readiness.corporate_action_integrity}",
     ]
     lines.extend(f"Why: {reason}" for reason in readiness.reasons)
     lines.append("")

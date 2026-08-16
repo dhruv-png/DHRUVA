@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,7 @@ from dhruva.contexts.analytics.api import (
     calculate_future_outcome,
 )
 from dhruva.contexts.intelligence.application.candidate_outcomes import (
+    MaterializeCandidateOutcomes,
     MaterializeCandidateOutcomesCommand,
     _outcome_fact,
 )
@@ -33,6 +35,7 @@ from dhruva.contexts.intelligence.domain.candidates import (
     CandidateTier,
     EvidenceCompleteness,
 )
+from dhruva.contexts.intelligence.domain.ports import CandidateObservationUnitOfWork
 from dhruva.shared.identity import AccountId, InstrumentId
 
 pytestmark = pytest.mark.unit
@@ -154,3 +157,66 @@ def test_later_bars_do_not_change_an_already_mature_outcome_identity() -> None:
     assert first.outcome_sha256 == later.outcome_sha256
     assert len(first.stock_bar_revisions) == 20
     assert len(first.benchmark_bar_revisions) == 20
+
+
+@pytest.mark.asyncio
+async def test_temporal_immaturity_precedes_missing_member_data() -> None:
+    """A fresh weekend freeze is pending even when no future stock series can load yet."""
+    stored = _stored()
+
+    class Observations:
+        async def list_recent(self, *, limit: int) -> tuple[StoredCandidateObservation, ...]:
+            assert limit == 10_000
+            return (stored,)
+
+    class Outcomes:
+        async def append(self, _outcome: object) -> None:
+            raise AssertionError("pending evidence must not append an outcome")
+
+    class UnitOfWork:
+        candidate_observations = Observations()
+        candidate_outcomes = Outcomes()
+
+        async def __aenter__(self) -> UnitOfWork:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            return None
+
+    benchmark = TechnicalSeries(
+        instrument_id=BENCHMARK,
+        adjustment_status=AdjustmentEvidence.UNKNOWN,
+        bars=(
+            TechnicalBar(
+                trading_date=SIGNAL.date(),
+                open=Decimal(100),
+                high=Decimal(101),
+                low=Decimal(99),
+                close=Decimal(100),
+                volume=1_000,
+            ),
+        ),
+    )
+    result = await MaterializeCandidateOutcomes(
+        lambda _account: cast("CandidateObservationUnitOfWork", UnitOfWork())
+    ).execute(
+        MaterializeCandidateOutcomesCommand(
+            account_id=ACCOUNT,
+            stocks={},
+            stock_bar_revisions={},
+            benchmark=benchmark,
+            benchmark_bar_revisions={},
+            observable_through=SIGNAL.date(),
+            materialized_at=SIGNAL + timedelta(hours=1),
+        )
+    )
+
+    assert result.awaiting_outcomes == 2
+    assert result.degraded_outcomes == 0
+    assert result.unavailable_outcomes == 0

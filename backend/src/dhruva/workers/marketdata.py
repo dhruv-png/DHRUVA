@@ -853,9 +853,14 @@ def _backfill_instrument(
 
 
 def _render_backfill_plan(plan: HistoricalBackfillPlan) -> str:
+    target_years = (plan.completed_through - plan.target_from).days / 365.2425
+    expected_sessions = round(target_years * 252)
+    planned_instruments = len({chunk.target_instrument_id for chunk in plan.chunks})
     lines = [
         "historical backfill plan (network-free)",
         f"target={plan.target_from.isoformat()}..{plan.completed_through.isoformat()} ",
+        f"target_years={target_years:.2f} expected_sessions_approx={expected_sessions} "
+        f"evaluation_target_sessions=2000 instruments_planned={planned_instruments}",
         f"benchmark={_BENCHMARK_SYMBOL} basis={plan.benchmark_basis.value} "
         f"chunks={len(plan.chunks)} provider_requests={plan.provider_requests}",
         "atomicity=one target instrument plus benchmark per chunk; execution is sequential",
@@ -874,6 +879,10 @@ def _render_backfill_plan(plan: HistoricalBackfillPlan) -> str:
     )
     lines.append(
         "universe=OWNER_WATCHLIST only; this is not an unbiased historical evaluation universe"
+    )
+    lines.append(
+        "readiness blockers=HISTORICAL_UNIVERSE_UNAVAILABLE, DELISTING_COVERAGE_UNKNOWN, "
+        "CORPORATE_ACTION_UNVERIFIED, ADJUSTMENT_UNKNOWN, SOURCE_LICENSING_UNRESOLVED"
     )
     return "\n".join(lines)
 

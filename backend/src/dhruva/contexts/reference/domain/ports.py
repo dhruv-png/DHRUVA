@@ -8,6 +8,12 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 if TYPE_CHECKING:
     from datetime import date, datetime
 
+    from dhruva.contexts.reference.domain.corporate_actions import CorporateActionEvidence
+    from dhruva.contexts.reference.domain.historical_universe import (
+        HistoricalUniverseDefinition,
+        HistoricalUniverseMembershipRevision,
+        ResolvedHistoricalUniverse,
+    )
     from dhruva.contexts.reference.domain.instrument_master import (
         ArchivedInstrumentDiscovery,
         InstrumentArchiveWrite,
@@ -19,15 +25,53 @@ if TYPE_CHECKING:
         WatchlistInstrument,
         WatchlistMembershipRevision,
     )
-    from dhruva.shared.identity import AccountId
+    from dhruva.shared.identity import AccountId, InstrumentId
 
 __all__ = [
+    "CorporateActionProvider",
+    "HistoricalInstrumentLifecycleProvider",
+    "HistoricalReferenceStore",
+    "HistoricalReferenceUnitOfWork",
+    "HistoricalUniverseProvider",
     "InstrumentArchiveStore",
     "InstrumentArchiveUnitOfWork",
     "InstrumentMasterSource",
     "ReferenceStore",
     "ReferenceUnitOfWork",
 ]
+
+
+@runtime_checkable
+class HistoricalUniverseProvider(Protocol):
+    """Read a licensed/reviewed source's PIT membership revisions."""
+
+    async def fetch_universe(
+        self, *, universe_id: str, from_date: date, to_date: date
+    ) -> tuple[HistoricalUniverseDefinition, tuple[HistoricalUniverseMembershipRevision, ...]]:
+        """Return source facts without inventing absent constituents."""
+        ...
+
+
+@runtime_checkable
+class CorporateActionProvider(Protocol):
+    """Read revisioned corporate-action evidence for one instrument."""
+
+    async def fetch_actions(
+        self, *, instrument_id: InstrumentId, from_date: date, to_date: date
+    ) -> tuple[CorporateActionEvidence, ...]:
+        """Return only facts attributable to the provider."""
+        ...
+
+
+@runtime_checkable
+class HistoricalInstrumentLifecycleProvider(Protocol):
+    """Narrow capability for effective and known-at identity revisions."""
+
+    async def fetch_identity_revisions(
+        self, *, from_date: date, to_date: date
+    ) -> tuple[InstrumentIdentityRevision, ...]:
+        """Return symbol/mapping history without treating symbols as identity."""
+        ...
 
 
 @runtime_checkable
@@ -87,6 +131,80 @@ class ReferenceStore(Protocol):
         known_at: datetime,
     ) -> tuple[WatchlistInstrument, ...]:
         """Return the active watchlist using only knowledge available at ``known_at``."""
+        ...
+
+
+@runtime_checkable
+class HistoricalReferenceStore(Protocol):
+    """Append/query contract for licensed historical integrity evidence."""
+
+    async def add_historical_universe_definition(
+        self, definition: HistoricalUniverseDefinition
+    ) -> bool:
+        """Stage one append-only universe definition revision."""
+        ...
+
+    async def add_historical_universe_membership(
+        self, revision: HistoricalUniverseMembershipRevision
+    ) -> bool:
+        """Stage one append-only historical membership revision."""
+        ...
+
+    async def get_historical_universe(
+        self,
+        account_id: AccountId,
+        *,
+        universe_id: str,
+        effective_on: date,
+        known_at: datetime,
+    ) -> ResolvedHistoricalUniverse:
+        """Resolve membership and identity using no later knowledge."""
+        ...
+
+    async def add_corporate_action(self, action: CorporateActionEvidence) -> bool:
+        """Stage one immutable corporate-action source revision."""
+        ...
+
+    async def list_corporate_actions(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        effective_from: date,
+        effective_to: date,
+        known_at: datetime,
+    ) -> tuple[CorporateActionEvidence, ...]:
+        """Return effective actions observable by the knowledge cutoff."""
+        ...
+
+
+@runtime_checkable
+class HistoricalReferenceUnitOfWork(Protocol):
+    """Transaction boundary for historical reference and action evidence."""
+
+    @property
+    def reference(self) -> HistoricalReferenceStore:
+        """Return the historical evidence store."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Begin the transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Roll back unless committed."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit staged evidence."""
+        ...
+
+    async def rollback(self) -> None:
+        """Discard staged evidence."""
         ...
 
 

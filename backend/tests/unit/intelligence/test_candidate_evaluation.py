@@ -249,9 +249,86 @@ def test_dataset_metrics_readiness_and_export_are_deterministic() -> None:
     )
 
     assert readiness.status.value == "DIAGNOSTIC_ONLY"
+    assert readiness.schema == "dhruva.evaluation-data-readiness.v2"
+    assert not readiness.survivorship_safe
+    assert "HISTORICAL_UNIVERSE_UNAVAILABLE" in readiness.blockers
+    assert "SOURCE_LICENSING_UNRESOLVED" in readiness.blockers
     assert metrics.cross_sectional[0].observation_count == 2
     assert metrics.top_k[0].k == 1
     assert evidence_export_bytes(dataset, metrics, readiness) == evidence_export_bytes(
         dataset, metrics, readiness
     )
     assert b"dhruva.model-evidence.v1" in evidence_export_bytes(dataset, metrics, readiness)
+
+
+def test_current_watchlist_cannot_become_ready_even_if_other_gates_are_asserted() -> None:
+    """Universe provenance dominates attractive depth or quality claims."""
+    ranking, benchmark = _ranking()
+    stocks = {
+        entry.instrument_id: _series(entry.instrument_id, Decimal("0.001"))
+        for entry in ranking.entries
+    }
+    dataset = build_evaluation_dataset(
+        identity=_identity(),
+        rankings=(ranking,),
+        stocks=stocks,
+        benchmark=benchmark,
+        observable_through=CUTOFF.date() + timedelta(days=60),
+    )
+
+    readiness = build_evaluation_readiness(
+        dataset,
+        sessions_available=2_500,
+        adjustment_semantics="VERIFIED",
+        corporate_action_semantics="VERIFIED",
+        historical_membership_available=True,
+        pit_known_at_available=True,
+        removals_included=True,
+        delistings_included=True,
+        instrument_lifecycle_available=True,
+        return_basis="PRICE_ADJUSTED",
+        source_status="TECHNICALLY_SUITABLE",
+        source_licensing_confirmed=True,
+    )
+
+    assert readiness.status.value == "DIAGNOSTIC_ONLY"
+    assert not readiness.survivorship_safe
+
+
+def test_integrity_blocker_prevents_ready_historical_evidence() -> None:
+    """A strong PIT universe cannot conceal missing corporate-action evidence."""
+    ranking, benchmark = _ranking()
+    stocks = {
+        entry.instrument_id: _series(entry.instrument_id, Decimal("0.001"))
+        for entry in ranking.entries
+    }
+    dataset = build_evaluation_dataset(
+        identity=replace(
+            _identity(),
+            universe_type=UniverseType.HISTORICAL_PIT_UNIVERSE,
+            universe_id="licensed-historical-universe",
+        ),
+        rankings=(ranking,),
+        stocks=stocks,
+        benchmark=benchmark,
+        observable_through=CUTOFF.date() + timedelta(days=60),
+    )
+
+    readiness = build_evaluation_readiness(
+        dataset,
+        sessions_available=2_500,
+        adjustment_semantics="VERIFIED",
+        corporate_action_semantics="UNAVAILABLE",
+        historical_membership_available=True,
+        pit_known_at_available=True,
+        removals_included=True,
+        delistings_included=True,
+        instrument_lifecycle_available=True,
+        return_basis="PRICE_ADJUSTED",
+        source_status="TECHNICALLY_SUITABLE",
+        source_licensing_confirmed=True,
+    )
+
+    assert readiness.survivorship_safe
+    assert readiness.status.value == "DEGRADED"
+    assert "CORPORATE_ACTION_UNVERIFIED" in readiness.blockers

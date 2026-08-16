@@ -29,7 +29,11 @@ from dhruva.contexts.platform.infrastructure.database.engine import (
     build_engine,
     build_session_factory,
 )
-from dhruva.contexts.reference.api import ConfigureReferenceUniverse
+from dhruva.contexts.reference.api import (
+    ConfigureReferenceUniverse,
+    GetHistoricalUniverse,
+    GetSharedWatchlist,
+)
 from dhruva.contexts.reference.infrastructure import (
     SqlAlchemyReferenceUnitOfWork,
     load_owner_universe,
@@ -42,6 +46,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from dhruva.shared.identity import AccountId
 
 __all__ = ["build_parser", "main"]
 
@@ -92,6 +98,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="report what would be written and exit without touching the database",
     )
+    readiness = sub.add_parser(
+        "universe-readiness",
+        help="inspect PIT/survivorship evidence for an evaluation universe (local DB only)",
+    )
+    readiness.add_argument("--account", required=True)
+    readiness.add_argument(
+        "--universe",
+        default="current-owner-watchlist",
+        help="logical historical universe id (default current-owner-watchlist)",
+    )
+    readiness.add_argument("--as-of", help="UTC effective and knowledge cutoff")
     return parser
 
 
@@ -100,6 +117,63 @@ async def run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = load_settings()
     account_id = parse_account(args.account)
+    if args.command == "universe-readiness":
+        cutoff = parse_cutoff(args.as_of)
+        engine = build_engine(settings.db)
+        readiness_sessions: async_sessionmaker[AsyncSession] = build_session_factory(engine)
+
+        def factory(account: AccountId) -> SqlAlchemyReferenceUnitOfWork:
+            return SqlAlchemyReferenceUnitOfWork(readiness_sessions, account_id=account)
+
+        try:
+            if args.universe == "current-owner-watchlist":
+                members = await GetSharedWatchlist(factory).execute(
+                    account_id=account_id,
+                    effective_on=cutoff.date(),
+                    known_at=cutoff,
+                )
+                sys.stdout.write(
+                    "Evaluation universe readiness (local data only)\n"
+                    "Universe: current-owner-watchlist (CURRENT_OWNER_WATCHLIST)\n"
+                    f"Members at cutoff: {len(members)}\n"
+                    "Survivorship: CURRENT_SELECTION_ONLY; survivorship-safe: false\n"
+                    "Removals included: false; delistings included: false\n"
+                    "PIT membership known-at: false; adjustment/return basis: UNKNOWN\n"
+                    "Benchmark: NIFTY 50 PRICE_INDEX; dividends excluded\n"
+                    "Corporate actions: UNAVAILABLE\n"
+                    "Blockers: HISTORICAL_UNIVERSE_UNAVAILABLE, "
+                    "DELISTING_COVERAGE_UNKNOWN, PIT_KNOWN_AT_UNAVAILABLE, "
+                    "ADJUSTMENT_UNKNOWN, CORPORATE_ACTION_UNVERIFIED\n"
+                )
+            else:
+                resolved = await GetHistoricalUniverse(factory).execute(
+                    account_id=account_id,
+                    universe_id=args.universe,
+                    effective_on=cutoff.date(),
+                    known_at=cutoff,
+                )
+                sys.stdout.write(
+                    "Evaluation universe readiness (local data only)\n"
+                    f"Universe: {resolved.definition.label} ({resolved.definition.kind.value})\n"
+                    f"Universe id: {resolved.definition.universe_id}\n"
+                    f"Members at cutoff: {len(resolved.members)}\n"
+                    f"Source: {resolved.definition.source}; status: "
+                    f"{resolved.definition.source_status.value}\n"
+                    f"Survivorship: {resolved.survivorship.status.value}; survivorship-safe: "
+                    f"{str(resolved.survivorship.survivorship_safe).lower()}\n"
+                    f"Removals included: {str(resolved.definition.removals_included).lower()}; "
+                    f"delistings included: "
+                    f"{str(resolved.definition.delistings_included).lower()}\n"
+                    f"PIT membership known-at: "
+                    f"{str(resolved.definition.pit_known_at_available).lower()}\n"
+                    "Return basis: UNKNOWN until separate verified action/adjustment evidence\n"
+                    "Benchmark: NIFTY 50 PRICE_INDEX; dividends excluded\n"
+                    f"Fingerprint: {resolved.fingerprint}\n"
+                    f"Blockers: {', '.join(resolved.survivorship.blockers) or 'none'}\n"
+                )
+        finally:
+            await engine.dispose()
+        return _EXIT_OK
     recorded_at = parse_cutoff(args.recorded_at)
 
     # Built before any connection: a malformed configuration file should fail

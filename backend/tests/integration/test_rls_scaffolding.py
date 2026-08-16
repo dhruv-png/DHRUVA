@@ -28,6 +28,8 @@ TENANT_TABLES: Final = frozenset(
         "candidate_ranking_observation",
         "credential",
         "daily_snapshot",
+        "historical_universe_definition_revision",
+        "historical_universe_membership_revision",
         "principal",
         "principal_role",
         "refresh_token",

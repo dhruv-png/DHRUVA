@@ -197,8 +197,30 @@ def test_evaluation_and_outcome_commands_expose_explicit_methodology() -> None:
     assert evaluate.horizons == [20, 60]
     assert evaluate.cost_bps == Decimal(25)
     assert evaluate.strict_pit is True
+    assert evaluate.universe == "current-owner-watchlist"
     assert outcomes.cost_bps == Decimal(20)
     assert evidence.command == "evidence"
+
+
+def test_historical_evaluation_universe_is_an_explicit_contract() -> None:
+    """A named historical source is parsed distinctly and cannot imply fallback."""
+    args = cli.build_parser().parse_args(
+        [
+            "evaluate",
+            "--account",
+            "owner-family",
+            "--universe",
+            "licensed-india-v1",
+            "--from",
+            "2018-01-01",
+            "--to",
+            "2025-01-01",
+            "--strict-pit",
+        ]
+    )
+
+    assert args.universe == "licensed-india-v1"
+    assert args.strict_pit
 
 
 def test_evaluation_report_names_the_exact_pit_universe_limitation() -> None:
