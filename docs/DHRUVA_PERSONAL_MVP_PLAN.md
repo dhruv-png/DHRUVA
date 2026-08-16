@@ -343,7 +343,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, first-class PIT universe/corporate-action foundations, deterministic readiness-v2/model-evidence export and fail-closed historical-universe evaluation contract are implemented. Current owner data is deliberately `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe, NIFTY remains `PRICE_INDEX`, Zerodha adjustment evidence remains `UNKNOWN`, and reconstructed bars are not prospective observations. **NSE ingestion remains deferred in full** pending permission or a licensed agreement. A licensed PIT historical universe, corporate actions/TRI and roughly 8-10 years of history remain required for credible validation. |
+| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, first-class PIT universe/corporate-action foundations, deterministic readiness-v2/model-evidence export, fail-closed historical-universe evaluation, and licensed offline dataset intake are implemented. Current owner data is deliberately `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe, NIFTY remains `PRICE_INDEX`, Zerodha adjustment evidence remains `UNKNOWN`, and reconstructed bars are not prospective observations. **Provider acquisition and authenticated ingestion remain deferred** pending owner-confirmed permission/licensing. A real licensed PIT historical universe, corporate actions/TRI and roughly 8-10 years of history remain required for credible validation. |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
@@ -418,3 +418,23 @@ The prospective clock now classifies a fresh horizon as pending before member
 data availability, including weekend freezes. See ADR-082,
 `docs/runbooks/historical-evaluation-data.md`, and
 `docs/data/historical-source-diligence.md`.
+
+### Licensed offline historical dataset intake (2026-08-16)
+
+Public-source diligence now compares thirteen realistic exchange, institutional,
+India-specialist, and API providers without approving or contacting any of
+them. The owner-diligence shortlist is NSE Data/Indices, FactSet, LSEG, and
+Global Datafeeds; every option retains explicit PIT, inactive-security,
+revision, licensing, retention, or price unknowns and a written questionnaire.
+
+`dhruva.historical-dataset-manifest.v1` governs six exact canonical CSV roles.
+Network- and database-free preflight streams bounded input, verifies hashes,
+counts and semantic relationships, and returns deterministic READY,
+QUARANTINED, or REJECTED evidence. Only owner-confirmed local retention or
+automated analysis can reach one cross-context PostgreSQL apply transaction.
+Manifest/file/run ledgers and exact source-row provenance are append-only,
+RLS-scaffolded and idempotent; corrected source revisions append. A versioned
+offline mapper seam includes only canonical CSV and synthetic TEST DATA
+implementations. No real provider adapter, purchase, authentication, scraping,
+or download was added. See ADR-083 and
+`docs/data/historical-universe-import-format.md`.
