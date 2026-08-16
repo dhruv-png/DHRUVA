@@ -78,5 +78,6 @@
   "ADR-077-credential-purpose-separates-secret-lifecycles.md": "ab11765b3f5ad06b29b572e41bdf883743c9f1c6781422c3779fc72b2be3e65c",
   "ADR-078-research-observations-are-immutable-pit-facts.md": "43a7350302cdcb216c9435b644360f87587e6ef299ba46cb86dac70284dac901",
   "ADR-079-historical-daily-history-is-an-explicit-chunked-workflow.md": "2c72cd95230ee6d764122a0e4d7fb5f57d2eda5ecd330c3b1bc4fe61f6e7b403",
-  "ADR-080-technical-candidate-v0-is-an-experimental-frozen-baseline.md": "b8e43f075bd4a813c8129fc20ddf379cbb0606116daca668084e25fe77d608c4"
+  "ADR-080-technical-candidate-v0-is-an-experimental-frozen-baseline.md": "b8e43f075bd4a813c8129fc20ddf379cbb0606116daca668084e25fe77d608c4",
+  "ADR-081-candidate-evaluation-is-versioned-pit-and-append-only.md": "a7a3588238510f37fbd360358a4f4176f97d5e80f99aa8a847d86f97361d601c"
 }

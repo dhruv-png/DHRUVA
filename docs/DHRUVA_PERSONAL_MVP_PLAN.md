@@ -343,7 +343,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition foundation, and deterministic `technical-candidate-v0` are implemented. `dhruva-research candidates` computes an owner-watchlist rank from local PIT archives; insufficient owner history remains an explicit exclusion, and `--freeze` appends a separate immutable candidate observation. The rank is **EXPERIMENTAL**, is not a recommendation, and has not passed walk-forward evaluation. NIFTY remains `PRICE_INDEX`; Zerodha adjustment evidence remains `UNKNOWN`; fundamentals are absent; today's watchlist is not survivorship-safe. **NSE ingestion remains deferred in full** pending permission or a licensed agreement. Live GDELT schema verification, the first live Zerodha smoke test, and the owner's two-year backfill remain outstanding. Historical evaluation is the next P0 slice. |
+| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, deterministic metrics/readiness and `dhruva.model-evidence.v1` export are implemented. Current owner data is deliberately `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe, NIFTY remains `PRICE_INDEX`, Zerodha adjustment evidence remains `UNKNOWN`, and reconstructed bars are not prospective observations. **NSE ingestion remains deferred in full** pending permission or a licensed agreement. A licensed PIT historical universe, corporate actions/TRI and roughly 8-10 years of history remain required for credible validation. |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
@@ -378,3 +378,21 @@ idempotent. The price-index, unknown-adjustment, missing-fundamentals, and
 current-universe limitations remain visible. See ADR-080 and
 `docs/runbooks/technical-candidates.md`. The next P0 slice is historical
 walk-forward evaluation, not weight optimization or ML.
+
+### Candidate evaluation and prospective outcomes (2026-08-16)
+
+`technical-candidate-evaluation-v0` now reuses the exact frozen feature and
+ranker code at explicit weekly historical cutoffs. Outcomes use next-session
+open entry, 20th/60th holding-session close exit, aligned NIFTY 50
+`PRICE_INDEX`, explicit round-trip basis-point costs, and fail-closed missing
+session semantics. Per-date Spearman IC, top-1/3/5 cohorts, rank buckets, tiers,
+benchmark/equal-weight/momentum baselines, MAE/MFE/drawdown/volatility and
+readiness are deterministic. A versioned JSON export is byte deterministic.
+
+Official candidate freezes mature through a network-free idempotent command
+into a separate append-only, RLS-scaffolded outcome ledger; frozen observations
+never change. The present two-year current-watchlist replay remains a useful
+retrospective diagnostic only. Serious validation requires at least the
+documented 2,000-session depth, a historical PIT/survivorship-safe universe,
+verified adjustment/corporate-action evidence and NIFTY TRI or an explicitly
+approved alternative. See ADR-081 and `docs/runbooks/model-evidence.md`.

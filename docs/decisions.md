@@ -89,6 +89,7 @@ should not have been made gets caught.
 | [ADR-078](ADR-078-research-observations-are-immutable-pit-facts.md) | Research observations are immutable point-in-time facts | Accepted |
 | [ADR-079](ADR-079-historical-daily-history-is-an-explicit-chunked-workflow.md) | Historical daily history is an explicit chunked workflow | Accepted |
 | [ADR-080](ADR-080-technical-candidate-v0-is-an-experimental-frozen-baseline.md) | Technical candidate v0 is an experimental frozen baseline | Accepted |
+| [ADR-081](ADR-081-candidate-evaluation-is-versioned-pit-and-append-only.md) | Candidate evaluation is versioned, PIT-bounded, and append-only | Accepted |
 
 ## Reading order for someone new
 

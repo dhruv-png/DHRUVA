@@ -32,3 +32,8 @@ local database lacks essential history; it reports each instrument as
 the credential-vault key is available. Do not interpret the output as advice:
 the baseline remains experimental until walk-forward evaluation passes later
 readiness gates.
+
+Prospective freezes can now mature into separate append-only 20/60-session
+outcomes, and the frozen baseline can be replayed as a clearly biased local
+diagnostic. See `docs/runbooks/model-evidence.md` and ADR-081. Evaluation never
+tunes the v0 weights or turns the result into an instruction.
