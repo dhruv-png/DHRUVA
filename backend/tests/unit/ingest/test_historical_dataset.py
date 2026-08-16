@@ -10,6 +10,11 @@ from pathlib import Path
 import pytest
 
 from dhruva.ingest.historical_dataset import ImportDecision, preflight_dataset
+from dhruva.ingest.historical_mapper import (
+    CanonicalCsvMapper,
+    DatasetMapper,
+    SyntheticFixtureMapper,
+)
 from dhruva.ingest.provider_diligence import (
     PROVIDERS,
     ProviderDisposition,
@@ -38,6 +43,21 @@ def test_synthetic_pack_is_ready_and_deterministic(tmp_path: Path) -> None:
         "universe_definitions": 1,
         "universe_memberships": 7,
     }
+
+
+def test_offline_mapper_contract_has_canonical_and_synthetic_implementations(
+    tmp_path: Path,
+) -> None:
+    """Both required mapper implementations use the same versioned seam."""
+    synthetic: DatasetMapper = SyntheticFixtureMapper()
+    generated = synthetic.map(tmp_path / "mapped")
+    canonical: DatasetMapper = CanonicalCsvMapper()
+    selected = canonical.map(generated.manifest_path)
+
+    assert isinstance(synthetic, DatasetMapper)
+    assert isinstance(canonical, DatasetMapper)
+    assert generated.import_decision is ImportDecision.READY
+    assert selected.dataset_fingerprint == generated.dataset_fingerprint
 
 
 def test_corrupted_pack_is_rejected_before_semantic_import(tmp_path: Path) -> None:

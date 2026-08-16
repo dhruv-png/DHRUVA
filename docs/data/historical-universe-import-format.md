@@ -25,6 +25,12 @@ lowercase SHA-256, byte size, row count, schema, and `text/csv` media type.
 Paths may not be absolute, contain `..`/backslashes, leave the delivery root, or
 resolve through a symlink.
 
+`DatasetMapper` is the offline extension seam from provider-native files to
+this contract. This milestone supplies `CanonicalCsvMapper` (identity mapping
+for already-canonical deliveries) and `SyntheticFixtureMapper`. Both carry a
+stable mapping revision in provenance. No live-provider mapper or transport is
+implemented; Parquet requires a future versioned mapper/schema.
+
 The manifest identifies provider/product, owner-reviewed licence reference and
 status, acquisition instant, coverage, source revision, INR/NSE-or-BSE market,
 Asia/Kolkata timezone, price/adjustment/return/benchmark bases, exact

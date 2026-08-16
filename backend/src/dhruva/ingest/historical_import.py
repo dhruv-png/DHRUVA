@@ -71,7 +71,7 @@ __all__ = ["IMPORT_RESULT_SCHEMA", "HistoricalImportResult", "import_historical_
 
 IMPORT_RESULT_SCHEMA: Final = "dhruva.historical-import-result.v1"
 _IMPORT_NAMESPACE = UUID("5d45bead-4acd-463e-8be4-8e81afecaa21")
-_MAPPING_REVISION = "historical_import_v1"
+_DEFAULT_MAPPING_REVISION = "canonical_csv_v1"
 _PROVENANCE_BATCH_SIZE = 1000
 _BAR_BATCH_SIZE = 1000
 
@@ -126,8 +126,8 @@ def _bar_revision(provider: str, revision: str) -> str:
     return hashlib.sha256(f"{provider}\x1f{revision}".encode()).hexdigest()
 
 
-def _mapping_revision(provider: str, security: str) -> str:
-    return hashlib.sha256(f"{_MAPPING_REVISION}\x1f{provider}\x1f{security}".encode()).hexdigest()
+def _mapping_revision(provider: str, security: str, mapper_revision: str) -> str:
+    return hashlib.sha256(f"{mapper_revision}\x1f{provider}\x1f{security}".encode()).hexdigest()
 
 
 def _file_records(
@@ -189,7 +189,14 @@ def _dataset_record(
 
 
 class _ProvenanceBuffer:
-    __slots__ = ("_file", "_items", "_manifest", "_repository", "_revision")
+    __slots__ = (
+        "_file",
+        "_items",
+        "_manifest",
+        "_mapper_revision",
+        "_repository",
+        "_revision",
+    )
 
     def __init__(
         self,
@@ -197,11 +204,13 @@ class _ProvenanceBuffer:
         manifest: DatasetManifest,
         revision: DatasetRevisionRecord,
         file: DatasetFileRecord,
+        mapper_revision: str,
     ) -> None:
         self._repository = repository
         self._manifest = manifest
         self._revision = revision
         self._file = file
+        self._mapper_revision = mapper_revision
         self._items: list[FactProvenanceRecord] = []
 
     async def add(
@@ -225,7 +234,11 @@ class _ProvenanceBuffer:
                 imported_at=self._manifest.acquired_at,
                 file_sha256=self._file.sha256,
                 schema_revision=self._file.schema_revision,
-                mapping_revision=_mapping_revision(self._manifest.provider_id, source_security_id),
+                mapping_revision=_mapping_revision(
+                    self._manifest.provider_id,
+                    source_security_id,
+                    self._mapper_revision,
+                ),
                 fact_revision=row["source_revision"],
             )
         )
@@ -242,6 +255,7 @@ async def import_historical_dataset(  # noqa: PLR0912, PLR0915
     *,
     account_id: AccountId,
     session_factory: async_sessionmaker[AsyncSession],
+    mapping_revision: str = _DEFAULT_MAPPING_REVISION,
 ) -> HistoricalImportResult:
     """Apply one accepted NSE delivery atomically; never performs network I/O."""
     report = preflight_dataset(manifest_path)
@@ -281,7 +295,13 @@ async def import_historical_dataset(  # noqa: PLR0912, PLR0915
             counts["files_unchanged"] = len(files) - files_added
 
             for item in manifest.files:
-                buffer = _ProvenanceBuffer(ledger, manifest, revision, file_by_role[item.role])
+                buffer = _ProvenanceBuffer(
+                    ledger,
+                    manifest,
+                    revision,
+                    file_by_role[item.role],
+                    mapping_revision,
+                )
                 added = unchanged = provenance_added = provenance_unchanged = 0
                 bar_batch: list[DailyBarRevision] = []
                 for _, row in iter_dataset_rows(root, item):
@@ -451,7 +471,7 @@ async def import_historical_dataset(  # noqa: PLR0912, PLR0915
                                 manifest.provider_id, row["source_revision"]
                             ),
                             batch_sha256=item.sha256,
-                            quality_revision=_MAPPING_REVISION,
+                            quality_revision=mapping_revision,
                         )
                         if bar_batch and (
                             len(bar_batch) >= _BAR_BATCH_SIZE
