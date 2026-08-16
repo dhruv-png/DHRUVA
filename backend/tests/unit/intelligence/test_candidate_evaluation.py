@@ -11,6 +11,8 @@ import pytest
 from dhruva.contexts.analytics.api import (
     AdjustmentEvidence,
     BenchmarkBasis,
+    FeatureName,
+    FeatureStatus,
     TechnicalBar,
     TechnicalSeries,
     compute_technical_features,
@@ -23,7 +25,7 @@ from dhruva.contexts.intelligence.application.candidate_ranking import (
     CandidateInput,
     rank_technical_candidates,
 )
-from dhruva.contexts.intelligence.domain.candidates import CandidateRanking
+from dhruva.contexts.intelligence.domain.candidates import CandidateEligibility, CandidateRanking
 from dhruva.contexts.intelligence.domain.model_evidence import (
     TECHNICAL_CANDIDATE_EVALUATION_REVISION,
     EvaluationIdentity,
@@ -118,6 +120,93 @@ def test_future_bars_cannot_change_historical_features_scores_or_ranks() -> None
     jumped, _jumped_benchmark = _ranking(future_jump=True)
 
     assert normal == jumped
+
+
+def test_historical_replay_ranks_partial_optional_history_without_leakage() -> None:
+    """The replay ranker keeps an eligible stock whose MA200 factor is not yet observable."""
+
+    def observed_series(
+        identity: InstrumentId,
+        daily: Decimal,
+        *,
+        sessions: int,
+        future_jump: bool = False,
+    ) -> TechnicalSeries:
+        prices = [Decimal(100)]
+        for _index in range(sessions - 1):
+            prices.append(prices[-1] * (Decimal(1) + daily))
+        start = CUTOFF.date() - timedelta(days=sessions - 1)
+        bars = [
+            TechnicalBar(
+                trading_date=start + timedelta(days=index),
+                open=price,
+                high=price * Decimal("1.01"),
+                low=price * Decimal("0.99"),
+                close=price,
+                volume=100_000,
+            )
+            for index, price in enumerate(prices)
+        ]
+        if future_jump:
+            price = bars[-1].close * Decimal(100)
+            bars.append(
+                TechnicalBar(
+                    trading_date=CUTOFF.date() + timedelta(days=1),
+                    open=price,
+                    high=price,
+                    low=price,
+                    close=price,
+                    volume=100_000,
+                )
+            )
+        return TechnicalSeries(
+            instrument_id=identity,
+            bars=tuple(bars),
+            adjustment_status=AdjustmentEvidence.UNKNOWN,
+        )
+
+    benchmark = observed_series(BENCHMARK_ID, Decimal("0.0004"), sessions=220)
+    identities = {
+        "PARTIAL": InstrumentId.deterministic("reference", "partial"),
+        "COMPLETE": InstrumentId.deterministic("reference", "complete"),
+    }
+
+    def replay(*, future_jump: bool) -> CandidateRanking:
+        inputs = []
+        for symbol, sessions, daily in (
+            ("PARTIAL", 150, Decimal("0.0015")),
+            ("COMPLETE", 220, Decimal("0.0008")),
+        ):
+            stock = observed_series(
+                identities[symbol], daily, sessions=sessions, future_jump=future_jump
+            )
+            inputs.append(
+                CandidateInput(
+                    instrument_id=identities[symbol],
+                    canonical_symbol=symbol,
+                    company_name=f"{symbol} Limited",
+                    features=compute_technical_features(
+                        stock=stock,
+                        benchmark=benchmark,
+                        cutoff=CUTOFF,
+                        benchmark_basis=BenchmarkBasis.PRICE_INDEX,
+                    ),
+                )
+            )
+        return rank_technical_candidates(tuple(inputs), cutoff=CUTOFF)
+
+    ranking = replay(future_jump=False)
+    partial = next(item for item in ranking.entries if item.canonical_symbol == "PARTIAL")
+
+    assert partial.eligibility is CandidateEligibility.ELIGIBLE
+    assert partial.score is not None
+    assert partial.relative_strength_120_percentile is not None
+    assert (
+        FeatureName.MA50_VS_MA200.value,
+        FeatureStatus.INSUFFICIENT_HISTORY.value,
+    ) in partial.feature_availability
+    assert any("MA50_VS_MA200: INSUFFICIENT_HISTORY" in item for item in partial.missing_evidence)
+    assert ranking == replay(future_jump=True)
 
 
 def test_weekly_cutoff_is_last_observed_session_not_calendar_friday() -> None:

@@ -18,6 +18,7 @@ from dhruva.contexts.analytics.api import (
     TechnicalSeries,
     compute_technical_features,
 )
+from dhruva.contexts.intelligence.application import candidate_ranking as ranking_module
 from dhruva.contexts.intelligence.application.candidate_ranking import (
     CandidateInput,
     rank_technical_candidates,
@@ -149,7 +150,93 @@ def test_cross_sectional_order_percentiles_and_ties_are_deterministic() -> None:
         Decimal("75.0"),
         Decimal("0.0"),
     ]
+    assert [item.score for item in first.entries] == [
+        Decimal("45.00"),
+        Decimal("45.00"),
+        Decimal("-75.00"),
+    ]
     assert first.entries[0].tier in {CandidateTier.CANDIDATE, CandidateTier.STRONG_CANDIDATE}
+
+
+def test_optional_factor_percentiles_are_factor_specific_and_renormalized() -> None:
+    """An eligible stock without MA200 stays missing rather than crashing or becoming zero."""
+    inputs: list[CandidateInput] = []
+    settings = (
+        ("LOW", Decimal("0.1"), Decimal("0.3"), Decimal("0.01")),
+        ("HIGH", Decimal("0.3"), Decimal("0.1"), None),
+        ("MID", Decimal("0.2"), Decimal("0.2"), Decimal("0.02")),
+    )
+    for symbol, level, volatility, trend200 in settings:
+        base = _input(symbol, Decimal("0.001"))
+        values = {
+            FeatureName.RETURN_120: level,
+            FeatureName.EXCESS_RETURN_60: level,
+            FeatureName.EXCESS_RETURN_120: level,
+            FeatureName.CLOSE_VS_MA50: level,
+            FeatureName.REALIZED_VOL_60: volatility,
+            FeatureName.VOLUME_RATIO_20_MEDIAN: level,
+            FeatureName.MEDIAN_RUPEE_TURNOVER_20: level,
+            FeatureName.DRAWDOWN_126: -volatility,
+        }
+        features = tuple(
+            replace(feature, value=values[feature.name], status=FeatureStatus.AVAILABLE, reason="")
+            if feature.name in values
+            else (
+                replace(
+                    feature,
+                    value=trend200,
+                    status=(
+                        FeatureStatus.AVAILABLE
+                        if trend200 is not None
+                        else FeatureStatus.INSUFFICIENT_HISTORY
+                    ),
+                    reason="" if trend200 is not None else "200 sessions required; 150 available",
+                )
+                if feature.name is FeatureName.MA50_VS_MA200
+                else feature
+            )
+            for feature in base.features.features
+        )
+        inputs.append(replace(base, features=replace(base.features, features=features)))
+
+    metrics = ranking_module._metrics(tuple(inputs))
+    high_id = next(item.instrument_id for item in inputs if item.canonical_symbol == "HIGH")
+    assert high_id not in metrics["trend200"]
+    assert all(high_id in values for name, values in metrics.items() if name != "trend200")
+
+    first = rank_technical_candidates(tuple(inputs), cutoff=CUTOFF)
+    second = rank_technical_candidates(tuple(reversed(inputs)), cutoff=CUTOFF)
+    high = next(item for item in first.entries if item.canonical_symbol == "HIGH")
+
+    assert first == second
+    assert high.eligibility is CandidateEligibility.ELIGIBLE
+    assert high.score == Decimal("100.00")
+    assert high.relative_strength_60_percentile == Decimal("100.0")
+    assert high.relative_strength_120_percentile == Decimal("100.0")
+    assert any("MA50_VS_MA200: INSUFFICIENT_HISTORY" in item for item in high.missing_evidence)
+
+    zero_filled = tuple(
+        replace(
+            item,
+            features=replace(
+                item.features,
+                features=tuple(
+                    replace(feature, status=FeatureStatus.AVAILABLE, value=Decimal(0), reason="")
+                    if item.instrument_id == high_id and feature.name is FeatureName.MA50_VS_MA200
+                    else feature
+                    for feature in item.features.features
+                ),
+            ),
+        )
+        for item in inputs
+    )
+    zero_filled_high = next(
+        item
+        for item in rank_technical_candidates(zero_filled, cutoff=CUTOFF).entries
+        if item.canonical_symbol == "HIGH"
+    )
+    assert zero_filled_high.score == Decimal("80.00")
+    assert zero_filled_high.score != high.score
 
 
 def test_attention_metadata_never_changes_candidate_score_or_rank() -> None:

@@ -4,14 +4,24 @@ from __future__ import annotations
 
 import ast
 import inspect
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from dhruva.contexts.analytics.api import (
+    AdjustmentEvidence,
+    FeatureName,
+    FeatureStatus,
+    TechnicalBar,
+    TechnicalSeries,
+)
 from dhruva.contexts.intelligence.domain.attention import AttentionBand
-from dhruva.contexts.intelligence.domain.candidates import CandidateRanking
+from dhruva.contexts.intelligence.domain.candidates import CandidateEligibility, CandidateRanking
 from dhruva.contexts.intelligence.domain.model_evidence import (
     EvaluationDataset,
     EvaluationIdentity,
@@ -238,6 +248,91 @@ def test_evaluation_report_names_the_exact_pit_universe_limitation() -> None:
     assert "HISTORICAL_PIT_OWNER_WATCHLIST" in rendered
     assert "PIT owner-watchlist membership remains owner-selected" in rendered
     assert "current-watchlist selection" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_strict_pit_builder_ranks_partial_optional_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The strict-PIT composition path sends factor-level absence to the shared ranker."""
+
+    def series(identity: InstrumentId, *, sessions: int, daily: Decimal) -> TechnicalSeries:
+        prices = [Decimal(100)]
+        for _index in range(sessions - 1):
+            prices.append(prices[-1] * (Decimal(1) + daily))
+        start = CUTOFF.date() - timedelta(days=sessions - 1)
+        return TechnicalSeries(
+            instrument_id=identity,
+            adjustment_status=AdjustmentEvidence.UNKNOWN,
+            bars=tuple(
+                TechnicalBar(
+                    trading_date=start + timedelta(days=index),
+                    open=price,
+                    high=price * Decimal("1.01"),
+                    low=price * Decimal("0.99"),
+                    close=price,
+                    volume=100_000,
+                )
+                for index, price in enumerate(prices)
+            ),
+        )
+
+    partial_id = InstrumentId.deterministic("reference", "partial-strict-pit")
+    benchmark_id = InstrumentId.deterministic("reference", "nse-index-nifty-50")
+    stored = {
+        benchmark_id: series(benchmark_id, sessions=220, daily=Decimal("0.0004")),
+        partial_id: series(partial_id, sessions=150, daily=Decimal("0.0015")),
+    }
+
+    class FakeWatchlist:
+        def __init__(self, _factory: object) -> None:
+            pass
+
+        async def execute(self, **_kwargs: object) -> tuple[SimpleNamespace]:
+            return (
+                SimpleNamespace(
+                    identity=SimpleNamespace(
+                        instrument_id=partial_id,
+                        canonical_symbol="PARTIAL",
+                        company_name="Partial Limited",
+                    )
+                ),
+            )
+
+    class FakeHistory:
+        def __init__(self, _factory: object) -> None:
+            pass
+
+        async def execute(self, query: object) -> TechnicalSeries:
+            instrument_id = cast(InstrumentId, cast(SimpleNamespace, query).instrument_id)
+            return stored[instrument_id]
+
+    class FakeObservations:
+        def __init__(self, _factory: object) -> None:
+            pass
+
+        async def execute(self, _query: object) -> tuple[()]:
+            return ()
+
+    monkeypatch.setattr(cli, "GetSharedWatchlist", FakeWatchlist)
+    monkeypatch.setattr(cli, "GetDailyBarSeries", FakeHistory)
+    monkeypatch.setattr(cli, "ListResearchObservations", FakeObservations)
+    monkeypatch.setattr(cli, "technical_series_from_daily_bars", lambda value: value)
+
+    ranking = await cli._build_candidates(
+        account_id=ACCOUNT,
+        cutoff=CUTOFF,
+        session_factory=cast(async_sessionmaker[AsyncSession], object()),
+    )
+    result = ranking.entries[0]
+
+    assert result.eligibility is CandidateEligibility.ELIGIBLE
+    assert result.score is not None
+    assert (
+        FeatureName.MA50_VS_MA200.value,
+        FeatureStatus.INSUFFICIENT_HISTORY.value,
+    ) in result.feature_availability
+    assert any("MA50_VS_MA200: INSUFFICIENT_HISTORY" in item for item in result.missing_evidence)
 
 
 def test_command_imports_no_provider_or_transport_module() -> None:

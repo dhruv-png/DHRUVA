@@ -89,10 +89,9 @@ def rank_technical_candidates(
         item for item in ordered if eligibility[item.instrument_id] is CandidateEligibility.ELIGIBLE
     )
     metrics = _metrics(eligible)
-    percentiles = {
-        name: _percentiles({item.instrument_id: values[item.instrument_id] for item in eligible})
-        for name, values in metrics.items()
-    }
+    # Optional factors deliberately omit instruments without a value.  Each
+    # percentile distribution therefore has its own PIT-observable membership.
+    percentiles = {name: _percentiles(values) for name, values in metrics.items()}
 
     provisional: list[CandidateResult] = []
     for item in eligible:
