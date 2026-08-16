@@ -1,126 +1,91 @@
-# Historical universe licensed-dataset import format
+# Historical dataset manifest and canonical import format
 
-Status: format contract only. DHRUVA has no approved historical dataset and no
-production importer. This specification is for a future owner-approved,
-network-free CSV or Parquet delivery; it does not authorize acquisition, use,
-storage, or redistribution.
+Status: executable offline contract. Manifest schema is
+`dhruva.historical-dataset-manifest.v1`; all canonical payloads are UTF-8 CSV
+v1. The importer performs no network I/O and does not grant acquisition,
+retention, redistribution, or provider approval.
 
-## Dataset envelope
+## Immutable delivery
 
-One delivery is an immutable directory containing:
+One directory contains `manifest.json` plus exactly these six roles:
 
-```text
-manifest.json
-universe_definitions.csv | universe_definitions.parquet
-universe_memberships.csv | universe_memberships.parquet
-instrument_identities.csv | instrument_identities.parquet
-corporate_actions.csv | corporate_actions.parquet   # optional only when absent is declared
+| Role | Schema |
+|---|---|
+| `instrument_identities` | `dhruva.instrument-lifecycle.csv.v1` |
+| `universe_definitions` | `dhruva.historical-universe-definition.csv.v1` |
+| `universe_memberships` | `dhruva.historical-universe-membership.csv.v1` |
+| `corporate_actions` | `dhruva.corporate-action.csv.v1` |
+| `daily_bars` | `dhruva.daily-market-bar.csv.v1` |
+| `benchmark_bars` | `dhruva.benchmark-history.csv.v1` |
+
+Exact ordered columns are exported in
+`dhruva.ingest.historical_dataset.CANONICAL_SCHEMAS`. Extra, missing, reordered,
+or duplicate roles/columns fail. Every file carries its relative POSIX path,
+lowercase SHA-256, byte size, row count, schema, and `text/csv` media type.
+Paths may not be absolute, contain `..`/backslashes, leave the delivery root, or
+resolve through a symlink.
+
+The manifest identifies provider/product, owner-reviewed licence reference and
+status, acquisition instant, coverage, source revision, INR/NSE-or-BSE market,
+Asia/Kolkata timezone, price/adjustment/return/benchmark bases, exact
+`SOURCE_OBSERVED_AT` semantics, `APPEND_ONLY` policy, capability claims, files,
+and notes. BSE bytes can be preflighted, but authoritative apply currently
+refuses BSE because the personal-MVP identity domain remains NSE-only.
+
+Only `LOCAL_RETENTION_CONFIRMED` and `AUTOMATED_ANALYSIS_CONFIRMED` permit an
+authoritative import. Provider identity and marketing claims cannot elevate the
+licence state. `EVALUATION_ONLY`, unverified, restricted, and rejected content
+stays quarantined.
+
+## Validation and staging
+
+`dhruva-data preflight` opens no database. It streams bounded fields, verifies
+bytes/hashes/counts/headers, and validates:
+
+- UTC known-at and inclusive effective intervals;
+- identity and membership non-overlap, re-entry, inactive/delisted references,
+  and definition/revision alignment;
+- stable security/action/related-security references;
+- action ratios, cash/currency pairs, verification, and dates;
+- positive Decimal OHLC, valid relationships/volume, coverage, market, return,
+  benchmark, and adjustment claims;
+- ordered bar revisions; a same-day correction needs a later known-at and a new
+  source revision;
+- suspicious 40% discontinuities; verified adjusted series require matching
+  action evidence, while unknown/raw series receive a warning and no repair;
+- all readiness claims: membership, removals, delistings, inactive securities,
+  lifecycle, actions/dividends, publication timestamps, corrections, PIT,
+  benchmark history, and owner licensing.
+
+The deterministic report is `dhruva.dataset-preflight.v1` and ends in `READY`,
+`QUARANTINED`, or `REJECTED`. Only `READY` can enter the apply transaction.
+
+## Atomic import and provenance
+
+`dhruva-data import --apply` uses one PostgreSQL transaction spanning the
+Reference and Market Data repositories from the `dhruva.ingest` composition
+root. It registers manifest/file revisions, stable internal instruments,
+effective identity and membership revisions, action evidence, stock and
+benchmark bar revisions, and one exact provenance link per source row. A
+failure rolls back all of them.
+
+Dataset, file, fact-provenance, and import-run ledgers are account-scoped,
+RLS-enrolled, append-only, content-conflict detecting, and deterministically
+identified. Identical retry adds nothing. A correction must use a new source
+revision and appends a new fact; no old value is updated. Reports contain no
+wall-clock-dependent values.
+
+## Synthetic pack
+
+```powershell
+& .venv\Scripts\dhruva-data.exe sample --output .local\historical-test
+& .venv\Scripts\dhruva-data.exe preflight `
+  --manifest .local\historical-test\manifest.json `
+  --report .local\historical-test\preflight.json
 ```
 
-`manifest.json` uses UTF-8 canonical JSON and contains:
-
-- `schema`: `dhruva.historical-evaluation-dataset.v1`;
-- `dataset_id` and provider `source_revision`;
-- provider/legal source name and contract reference;
-- generated-at timestamp in UTC;
-- effective coverage dates and knowledge-time coverage dates;
-- declared capabilities for removals, delistings, suspended securities,
-  identity lifecycle, publication timestamps, corporate actions, dividends,
-  adjusted prices, TRI, and correction history;
-- licence/retention review reference and owner approval reference;
-- every payload filename, media type, row count, byte count, and lowercase
-  SHA-256 digest;
-- a SHA-256 digest of the canonical manifest with its own digest field omitted.
-
-All identifiers and source revisions are strings supplied by the source. DHRUVA
-derives internal UUIDs deterministically only after validation. A corrected
-delivery has a new dataset/source revision; it never overwrites an accepted
-delivery.
-
-## Universe definitions
-
-Required columns:
-
-```text
-universe_id,label,kind,known_at,source,source_revision,
-historical_membership_available,removals_included,delistings_included,
-pit_known_at_available,instrument_lifecycle_available,licensing_confirmed
-```
-
-Every definition revision is a complete snapshot contract for its referenced
-membership rows. Boolean coverage claims must agree with the manifest and the
-retained diligence/contract evidence. An importer must never infer `true` from
-the mere presence of rows.
-
-## Universe memberships
-
-Required columns:
-
-```text
-universe_id,source_security_id,effective_from,effective_to,known_at,
-source,source_revision,membership_reason,is_delisted
-```
-
-`effective_to` is inclusive and may be empty for an open interval. `known_at`
-is the earliest source-observable UTC instant, not download time. Re-entry uses
-a new effective interval. Removed and delisted rows remain in the delivery.
-
-## Instrument identities
-
-Required columns:
-
-```text
-source_security_id,canonical_symbol,company_name,isin,exchange,
-provider_instrument_token,valid_from,valid_to,known_at,source,source_revision
-```
-
-`source_security_id` represents stable economic/security identity. Symbol,
-ISIN, exchange mapping, and provider token are effective revisions and must not
-be used as eternal identity. Mergers/demergers may reference related stable
-identities through corporate-action rows; they must not splice unrelated price
-histories.
-
-## Corporate actions
-
-Required columns when the file is present:
-
-```text
-source_security_id,event_type,effective_date,ex_date,record_date,known_at,
-ratio_numerator,ratio_denominator,cash_value,currency,
-related_source_security_id,verification,source,source_revision
-```
-
-Supported event types are `SPLIT`, `BONUS`, `DIVIDEND`, `RIGHTS_ISSUE`,
-`MERGER`, `DEMERGER`, `SYMBOL_CHANGE`, `DELISTING`, and `OTHER`. Empty optional
-values remain unknown; they are never replaced with invented ratios or dates.
-The presence of an action file does not by itself prove that adjusted prices or
-total returns are correct.
-
-## Fail-closed validation sequence
-
-Before a future importer opens a database transaction it must:
-
-1. validate the manifest schema and owner approval reference;
-2. verify every byte count and SHA-256 digest;
-3. reject duplicate logical source revisions with conflicting content;
-4. validate UTC knowledge timestamps and effective intervals;
-5. resolve every membership/action security id to exactly one immutable
-   instrument identity at the relevant effective and knowledge time;
-6. reject overlapping membership or identity intervals unless the source
-   contract explicitly models a revision supersession;
-7. reconcile manifest counts, coverage flags, and declared return semantics;
-8. produce a deterministic dry-run report and dataset fingerprint;
-9. append all accepted source facts atomically and idempotently;
-10. emit readiness blockers for every absent or unproven capability.
-
-CSV must be UTF-8 with a header and RFC 4180 quoting. Parquet columns use the
-same names and logical meanings. Dates use ISO `YYYY-MM-DD`; instants use ISO
-8601 UTC with `Z`. Decimal ratios and cash values must not pass through binary
-floating point.
-
-## Explicit non-capabilities
-
-This contract does not define market-bar delivery, adjustment-factor
-calculation, total-return construction, authenticated vendor transport, or
-automatic acceptance. Those require separate source evidence and owner-approved
-licensing. Until then, current evaluation remains `DIAGNOSTIC_ONLY`.
+The generated three-year, six-security pack is conspicuously TEST DATA and
+includes an IPO, delisting, symbol change, removal/re-entry, split, bonus,
+dividend, merger, price-index benchmark, and corrected bar revision. Add
+`--corrupt` to generate the negative hash fixture. It is not market data and
+must never support investment conclusions.

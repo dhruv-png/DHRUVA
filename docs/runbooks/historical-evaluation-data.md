@@ -1,8 +1,42 @@
 # Historical evaluation universe and integrity runbook
 
-This workflow is network-free. It inspects locally persisted source revisions;
-it does not download data, authenticate to a vendor, scrape an exchange, or
-create missing constituents/actions.
+This workflow is network-free. It researches only retained public evidence,
+validates owner-supplied files, and applies only a manifest whose licence and
+integrity gates are READY. It does not download data, authenticate to a vendor,
+scrape an exchange, purchase anything, or create missing facts.
+
+## Research and preflight
+
+```powershell
+& .venv\Scripts\dhruva-data.exe providers
+& .venv\Scripts\dhruva-data.exe preflight `
+  --manifest C:\retained-delivery\manifest.json `
+  --report C:\retained-delivery\preflight.json
+```
+
+Exit 0 and `import_decision=READY` require exact hashes/schemas, every critical
+PIT/lifecycle/action/revision capability, and owner-confirmed local retention.
+`QUARANTINED` or `REJECTED` is terminal for those bytes; do not edit an accepted
+delivery in place or infer missing facts.
+
+After reviewing the report, apply is a separate explicit local write:
+
+```powershell
+& .venv\Scripts\dhruva-data.exe import --apply `
+  --account owner-family `
+  --manifest C:\retained-delivery\manifest.json `
+  --report C:\retained-delivery\import-result.json
+
+& .venv\Scripts\dhruva-data.exe dataset-status `
+  --account owner-family --dataset licensed-india-v1
+
+& .venv\Scripts\dhruva-data.exe provenance `
+  --account owner-family --dataset licensed-india-v1 --limit 100
+```
+
+The import is one transaction. Any identity, membership, action, bar,
+provenance, or ledger failure rolls the whole delivery back. Identical retry is
+a no-op. A corrected delivery uses a new source revision.
 
 ## Inspect current truth
 
@@ -17,9 +51,9 @@ Expected classification is `CURRENT_SELECTION_ONLY`, not survivorship-safe,
 with UNKNOWN return/adjustment basis, unavailable corporate actions, NIFTY 50
 `PRICE_INDEX`, and explicit blockers.
 
-After an approved licensed dataset has been validated and imported through the
-application port, inspect its logical id. Absence fails explicitly; it never
-selects the current watchlist instead.
+After a licensed dataset has been validated and imported, inspect its logical
+universe id. Absence fails explicitly; it never selects the current watchlist
+instead.
 
 ```powershell
 & .venv\Scripts\dhruva-reference.exe universe-readiness `
@@ -45,10 +79,9 @@ The deterministic model-evidence export carries universe identity/source,
 membership and mapping revisions, market/benchmark revisions, readiness-v2
 fields, blockers, and a fingerprint. No graph database is involved.
 
-The network-free shape expected from a future approved delivery is documented
-in [the licensed-dataset import format](../data/historical-universe-import-format.md).
-It is a format and validation contract, not an implemented importer or source
-approval.
+The executable delivery contract is documented in
+[the licensed-dataset import format](../data/historical-universe-import-format.md).
+Its existence is not source approval.
 
 ## Stored semantics
 

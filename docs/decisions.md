@@ -91,6 +91,7 @@ should not have been made gets caught.
 | [ADR-080](ADR-080-technical-candidate-v0-is-an-experimental-frozen-baseline.md) | Technical candidate v0 is an experimental frozen baseline | Accepted |
 | [ADR-081](ADR-081-candidate-evaluation-is-versioned-pit-and-append-only.md) | Candidate evaluation is versioned, PIT-bounded, and append-only | Accepted |
 | [ADR-082](ADR-082-historical-evaluation-data-must-be-pit-survivorship-and-return-basis-explicit.md) | Historical evaluation data must be PIT, survivorship-aware, and return-basis explicit | Accepted |
+| [ADR-083](ADR-083-offline-historical-imports-require-a-licensed-manifest-and-row-provenance.md) | Offline historical imports require a licensed manifest and row provenance | Accepted |
 
 ## Reading order for someone new
 
