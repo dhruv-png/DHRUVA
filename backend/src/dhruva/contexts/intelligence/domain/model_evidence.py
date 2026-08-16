@@ -44,7 +44,7 @@ __all__ = [
 
 TECHNICAL_CANDIDATE_EVALUATION_REVISION: Final = "technical-candidate-evaluation-v0"
 MODEL_EVIDENCE_SCHEMA: Final = "dhruva.model-evidence.v1"
-EVALUATION_DATA_READINESS_SCHEMA: Final = "dhruva.evaluation-data-readiness.v2"
+EVALUATION_DATA_READINESS_SCHEMA: Final = "dhruva.evaluation-data-readiness.v3"
 _SERIOUS_HISTORY_SESSIONS = 2_000
 _MIN_RANKING_PERIODS = 104
 _MIN_MATURE_ROWS_PER_HORIZON = 100
@@ -68,6 +68,8 @@ class EvidenceStatus(StrEnum):
 
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
     DIAGNOSTIC_ONLY = "DIAGNOSTIC_ONLY"
+    PUBLIC_RECONSTRUCTED = "PUBLIC_RECONSTRUCTED"
+    PARTIAL_PIT = "PARTIAL_PIT"
     EVALUATION_READY = "EVALUATION_READY"
     DEGRADED = "DEGRADED"
     UNSUPPORTED = "UNSUPPORTED"
@@ -289,6 +291,12 @@ class EvaluationReadiness:
     source_licensing_confirmed: bool = False
     critical_provenance_gaps: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
+    evidence_class: str = "OWNER_PROVIDED"
+    known_at_semantics: str = "UNKNOWN"
+    inactive_securities_retained: bool = False
+    archive_gaps: str = "UNKNOWN"
+    universe_reconstruction_revision: str = ""
+    licensing_terms_status: str = "UNKNOWN"
 
 
 def build_evaluation_metrics(
@@ -361,6 +369,12 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
     source_status: str = "UNREVIEWED",
     source_licensing_confirmed: bool = False,
     critical_provenance_gaps: tuple[str, ...] = (),
+    evidence_class: str = "OWNER_PROVIDED",
+    known_at_semantics: str = "UNKNOWN",
+    inactive_securities_retained: bool = False,
+    archive_gaps: str = "UNKNOWN",
+    universe_reconstruction_revision: str = "",
+    licensing_terms_status: str = "UNKNOWN",
 ) -> EvaluationReadiness:
     """Classify serious-evaluation readiness without conflating it with warm-up."""
     ranking_periods = len({row.cutoff for row in dataset.rows})
@@ -395,12 +409,22 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
         (not critical_provenance_gaps, "CRITICAL_PROVENANCE_GAP"),
     )
     blockers.extend(reason for available, reason in gates if not available)
+    public_reconstructed = evidence_class == "PUBLIC_RECONSTRUCTED"
     if not benchmark_available:
         status = EvidenceStatus.UNSUPPORTED
         reasons.append("benchmark history is unavailable")
     elif not dataset.rows or ranking_periods == 0:
         status = EvidenceStatus.INSUFFICIENT_DATA
         reasons.append("no ranking periods were generated")
+    elif public_reconstructed and known_at_semantics != "PROSPECTIVE_ARCHIVE":
+        status = EvidenceStatus.PUBLIC_RECONSTRUCTED
+        reasons.append(
+            "public event-time history was reconstructed after the fact; "
+            "prospective known-at is unavailable"
+        )
+    elif public_reconstructed and not survivorship_safe:
+        status = EvidenceStatus.PARTIAL_PIT
+        reasons.append("public reconstruction does not satisfy every institutional PIT gate")
     elif not survivorship_safe:
         status = EvidenceStatus.DIAGNOSTIC_ONLY
         reasons.append("evaluation universe does not satisfy survivorship-safe criteria")
@@ -460,6 +484,12 @@ def build_evaluation_readiness(  # noqa: PLR0913 - readiness gates are explicit 
         source_licensing_confirmed=source_licensing_confirmed,
         critical_provenance_gaps=critical_provenance_gaps,
         blockers=tuple(blockers),
+        evidence_class=evidence_class,
+        known_at_semantics=known_at_semantics,
+        inactive_securities_retained=inactive_securities_retained,
+        archive_gaps=archive_gaps,
+        universe_reconstruction_revision=universe_reconstruction_revision,
+        licensing_terms_status=licensing_terms_status,
     )
 
 

@@ -377,6 +377,9 @@ class HistoricalDatasetModel(ReferenceBase):
     provider_product: Mapped[str] = mapped_column(String(200), nullable=False)
     license_reference: Mapped[str] = mapped_column(String(256), nullable=False)
     licensing_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    evidence_class: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="LICENSED_VENDOR"
+    )
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     coverage_start: Mapped[date] = mapped_column(Date, nullable=False)

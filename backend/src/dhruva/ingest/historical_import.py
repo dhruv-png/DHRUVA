@@ -165,6 +165,7 @@ def _dataset_record(
         provider_product=manifest.provider_product,
         license_reference=manifest.license_reference,
         licensing_status=manifest.licensing_status.value,
+        evidence_class=manifest.evidence_class.value,
         acquired_at=manifest.acquired_at,
         imported_at=manifest.acquired_at,
         coverage_start=manifest.coverage_start,

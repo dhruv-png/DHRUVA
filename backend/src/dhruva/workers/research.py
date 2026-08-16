@@ -642,6 +642,10 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         declared_return_basis = "UNKNOWN"
         declared_benchmark_basis = "PRICE_INDEX"
         source_status = "OWNER_SELECTION"
+        evidence_class = "OWNER_PROVIDED"
+        known_at_semantics = "PROSPECTIVE_ARCHIVE" if strict_pit else "RETRIEVED_LATER"
+        inactive_retained = False
+        reconstruction_revision = ""
         selection_limitation = (
             "owner watchlist membership is PIT-resolved but remains an owner-selected, "
             "non-survivorship-safe evaluation universe"
@@ -705,6 +709,13 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         declared_benchmark_basis = next(iter(benchmark_bases)) if len(benchmark_bases) == 1 else ""
         statuses = {item.source_status.value for item in definitions}
         source_status = next(iter(statuses)) if len(statuses) == 1 else "MIXED"
+        public_reconstructed = bool(definitions) and all(
+            item.source == "nse_public" for item in definitions
+        )
+        evidence_class = "PUBLIC_RECONSTRUCTED" if public_reconstructed else "LICENSED_VENDOR"
+        known_at_semantics = "RETRIEVED_LATER" if public_reconstructed else "SOURCE_OBSERVED_AT"
+        inactive_retained = public_reconstructed or delistings
+        reconstruction_revision = "public_liquid_nse_universe_v0" if public_reconstructed else ""
         selection_limitation = (
             "strict PIT source membership and mapping revisions were resolved at every cutoff"
             if strict_pit
@@ -730,7 +741,7 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         cost_bps=cost_bps,
         knowledge_cutoff=knowledge_cutoff,
         limitations=(
-            "DIAGNOSTIC ONLY until all readiness-v2 gates are satisfied",
+            "DIAGNOSTIC ONLY until all readiness-v3 gates are satisfied",
             selection_limitation,
             f"source return basis is {declared_return_basis}",
             f"benchmark basis is {declared_benchmark_basis or 'UNKNOWN'}",
@@ -793,6 +804,14 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         source_status=source_status,
         source_licensing_confirmed=licensing,
         critical_provenance_gaps=critical_gaps,
+        evidence_class=evidence_class,
+        known_at_semantics=known_at_semantics,
+        inactive_securities_retained=inactive_retained,
+        archive_gaps="UNKNOWN",
+        universe_reconstruction_revision=reconstruction_revision,
+        licensing_terms_status="LOCAL_RESEARCH_ONLY"
+        if evidence_class == "PUBLIC_RECONSTRUCTED"
+        else source_status,
     )
     return dataset, metrics, readiness
 
@@ -953,6 +972,11 @@ def _render_evaluation(
             "DIAGNOSTIC ONLY — PIT owner-watchlist membership remains owner-selected and "
             "not survivorship-safe, so it cannot establish historical model efficacy."
         )
+    elif identity.universe_id == "public-liquid-nse-v0":
+        selection_warning = (
+            "PUBLIC RECONSTRUCTED HISTORICAL UNIVERSE — event-time history was retained "
+            "later and is diagnostic, not prospective PIT or survivorship-safe evidence."
+        )
     else:
         selection_warning = (
             "HISTORICAL UNIVERSE EVIDENCE — readiness remains fail-closed until every "
@@ -980,6 +1004,9 @@ def _render_evaluation(
         f"Return basis: {readiness.return_basis}; benchmark basis: "
         f"{readiness.benchmark_basis}; corporate actions: "
         f"{readiness.corporate_action_integrity}",
+        f"Evidence class: {readiness.evidence_class}; known-at: "
+        f"{readiness.known_at_semantics}; inactive retained: "
+        f"{readiness.inactive_securities_retained}",
     ]
     lines.extend(f"Why: {reason}" for reason in readiness.reasons)
     lines.append("")

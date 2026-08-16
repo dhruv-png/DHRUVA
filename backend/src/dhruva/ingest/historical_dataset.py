@@ -19,6 +19,8 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Final, cast
 
+from dhruva.ingest.public_exchange import EvidenceClass
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
@@ -28,6 +30,7 @@ __all__ = [
     "CapabilityCoverage",
     "DatasetFile",
     "DatasetManifest",
+    "EvidenceClass",
     "ImportDecision",
     "LicensingStatus",
     "PreflightFinding",
@@ -62,6 +65,7 @@ class LicensingStatus(StrEnum):
     PERSONAL_USE_CONFIRMED = "PERSONAL_USE_CONFIRMED"
     LOCAL_RETENTION_CONFIRMED = "LOCAL_RETENTION_CONFIRMED"
     AUTOMATED_ANALYSIS_CONFIRMED = "AUTOMATED_ANALYSIS_CONFIRMED"
+    PUBLIC_RESEARCH_LOCAL_USE = "PUBLIC_RESEARCH_LOCAL_USE"
     RESTRICTED = "RESTRICTED"
     REJECTED = "REJECTED"
 
@@ -71,6 +75,7 @@ class LicensingStatus(StrEnum):
         return self in {
             LicensingStatus.LOCAL_RETENTION_CONFIRMED,
             LicensingStatus.AUTOMATED_ANALYSIS_CONFIRMED,
+            LicensingStatus.PUBLIC_RESEARCH_LOCAL_USE,
         }
 
 
@@ -134,6 +139,7 @@ class DatasetManifest:
     provider_product: str
     license_reference: str
     licensing_status: LicensingStatus
+    evidence_class: EvidenceClass
     acquired_at: datetime
     coverage_start: date
     coverage_end: date
@@ -371,6 +377,7 @@ def _manifest(value: Mapping[str, object], *, manifest_sha: str) -> DatasetManif
         provider_product=_text(provider.get("product"), field="provider.product"),
         license_reference=_text(license_data.get("reference"), field="license.reference"),
         licensing_status=_enum(LicensingStatus, license_data.get("status"), field="license.status"),
+        evidence_class=_evidence_class(value.get("evidence_class"), provider.get("id")),
         acquired_at=_instant(value.get("acquired_at"), field="acquired_at"),
         coverage_start=_date(coverage.get("start"), field="coverage.start"),
         coverage_end=_date(coverage.get("end"), field="coverage.end"),
@@ -437,9 +444,20 @@ def _validate_manifest_contract(  # noqa: PLR0912, PLR0915 - fail-closed contrac
         raise DatasetContractError("UNSUPPORTED_RETURN_BASIS", manifest.return_basis)
     if manifest.benchmark_basis not in {"PRICE_INDEX", "TOTAL_RETURN_INDEX"}:
         raise DatasetContractError("UNSUPPORTED_BENCHMARK_BASIS", manifest.benchmark_basis)
-    if manifest.known_at_semantics != "SOURCE_OBSERVED_AT":
+    if manifest.known_at_semantics not in {"SOURCE_OBSERVED_AT", "RETRIEVED_LATER"}:
         raise DatasetContractError(
-            "UNSUPPORTED_KNOWN_AT", "known_at_semantics must be SOURCE_OBSERVED_AT"
+            "UNSUPPORTED_KNOWN_AT",
+            "known_at_semantics must be SOURCE_OBSERVED_AT or RETRIEVED_LATER",
+        )
+    if manifest.evidence_class is EvidenceClass.PUBLIC_RECONSTRUCTED and (
+        manifest.licensing_status is not LicensingStatus.PUBLIC_RESEARCH_LOCAL_USE
+        or manifest.known_at_semantics != "RETRIEVED_LATER"
+        or manifest.capabilities.pit_known_at
+    ):
+        raise DatasetContractError(
+            "PUBLIC_EVIDENCE_OVERCLAIM",
+            "public reconstruction requires local-research rights, RETRIEVED_LATER, "
+            "and no PIT claim",
         )
     if manifest.import_policy != "APPEND_ONLY":
         raise DatasetContractError("UNSUPPORTED_IMPORT_POLICY", "only APPEND_ONLY is accepted")
@@ -579,8 +597,12 @@ def preflight_dataset(  # noqa: PLR0915 - report assembles every validation stag
                 )
             )
     blockers = _readiness_blockers(manifest)
+    import_blockers = (
+        [] if manifest.evidence_class is EvidenceClass.PUBLIC_RECONSTRUCTED else list(blockers)
+    )
     if not manifest.licensing_status.permits_import:
         blockers.append("OWNER_LOCAL_RETENTION_NOT_CONFIRMED")
+        import_blockers.append("OWNER_LOCAL_RETENTION_NOT_CONFIRMED")
     if failures:
         decision = (
             ImportDecision.REJECTED
@@ -592,7 +614,7 @@ def preflight_dataset(  # noqa: PLR0915 - report assembles every validation stag
             if decision is ImportDecision.REJECTED
             else IntegrityStatus.QUARANTINED
         )
-    elif blockers:
+    elif import_blockers:
         decision = ImportDecision.QUARANTINED
         integrity = IntegrityStatus.QUARANTINED
     else:
@@ -954,6 +976,19 @@ def _enum(enum_type: type[LicensingStatus], value: object, *, field: str) -> Lic
         return enum_type(_text(value, field=field))
     except ValueError as error:
         raise DatasetContractError("MANIFEST_ENUM", field) from error
+
+
+def _evidence_class(value: object, provider_id: object) -> EvidenceClass:
+    if value is None:
+        return (
+            EvidenceClass.SYNTHETIC_TEST
+            if provider_id == "synthetic"
+            else EvidenceClass.LICENSED_VENDOR
+        )
+    try:
+        return EvidenceClass(_text(value, field="evidence_class"))
+    except ValueError as error:
+        raise DatasetContractError("MANIFEST_ENUM", "evidence_class") from error
 
 
 def _date(value: object, *, field: str) -> date:

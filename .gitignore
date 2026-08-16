@@ -29,6 +29,12 @@ secrets/
 # Research output is reproducible and often large; the notebook is the artefact
 research/output/
 research/data/
+# Owner-retained exchange archives and generated canonical reconstruction packs.
+# Raw public files are immutable local evidence, not repository source.
+data-drop/
+public-data-output/
+backend/data-drop/
+backend/public-data-output/
 *.ipynb_checkpoints/
 
 # Node / frontend

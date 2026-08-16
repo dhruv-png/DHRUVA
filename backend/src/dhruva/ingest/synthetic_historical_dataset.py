@@ -267,6 +267,7 @@ def generate_synthetic_dataset(root: Path, *, corrupt: bool = False) -> Path:
         )
     manifest = {
         "schema": MANIFEST_SCHEMA,
+        "evidence_class": "SYNTHETIC_TEST",
         "dataset_id": "synthetic-india-pit-2020-2022",
         "provider": {
             "id": "fixture_provider",

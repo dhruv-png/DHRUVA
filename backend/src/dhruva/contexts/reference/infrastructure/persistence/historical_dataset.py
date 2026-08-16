@@ -50,6 +50,7 @@ class DatasetRevisionRecord:
     provider_product: str
     license_reference: str
     licensing_status: str
+    evidence_class: str
     acquired_at: datetime
     imported_at: datetime
     coverage_start: date
@@ -151,6 +152,7 @@ class DatasetStatusRecord:
     source_revision: str
     provider_id: str
     licensing_status: str
+    evidence_class: str
     integrity_status: str
     dataset_fingerprint: str
     coverage_start: date
@@ -295,6 +297,7 @@ class HistoricalDatasetRepository:
             source_revision=model.source_revision,
             provider_id=model.provider_id,
             licensing_status=model.licensing_status,
+            evidence_class=model.evidence_class,
             integrity_status=model.integrity_status,
             dataset_fingerprint=model.dataset_fingerprint,
             coverage_start=model.coverage_start,

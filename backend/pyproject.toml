@@ -112,6 +112,9 @@ dhruva-refresh = "dhruva.workers.refresh:main"
 # rebuilds a score or contacts a provider.
 dhruva-research = "dhruva.workers.research:main"
 dhruva-data = "dhruva.workers.data:main"
+# Manual-drop-first public exchange reconstruction. No subcommand implements
+# exchange HTTP or browser automation; import alone can write local PostgreSQL.
+dhruva-public = "dhruva.workers.public_data:main"
 # File-to-file only: compares two already-exported research packets. No
 # database connection, no provider call -- it works even when both are
 # unreachable, because it never builds either.
