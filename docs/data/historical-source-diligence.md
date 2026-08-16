@@ -6,6 +6,12 @@ source was called. Product pages establish only the claims they state. Contract
 rights, omitted capabilities, PIT integrity, price, and sample quality remain
 unknown until written evidence is retained.
 
+The separate low-cost public reconstruction review is executable through
+`dhruva-public sources --json` and documented in
+[public exchange reconstruction](public-exchange-reconstruction.md). It approves
+no downloader or redistribution: NSE is manual-drop with explicit limitations;
+BSE bulk historical schema/terms remain `TERMS_REVIEW_REQUIRED`.
+
 The canonical machine-readable matrix and questionnaire are emitted by:
 
 ```powershell
@@ -102,3 +108,8 @@ No acquisition is authorized. The smallest safe next owner action is a
 non-binding written proposal and representative sample from NSE Data/Indices,
 FactSet, LSEG, and Global Datafeeds using the questionnaire above. DHRUVA must
 not scrape missing data or infer retention rights from public access.
+
+For owner-retained official public reports, local research import uses the
+narrow `PUBLIC_RESEARCH_LOCAL_USE` state established by the cited SEBI/NSE
+public-report policy evidence. Scientific gaps remain readiness blockers, raw
+files are not redistributed, and access uncertainty forces manual download.

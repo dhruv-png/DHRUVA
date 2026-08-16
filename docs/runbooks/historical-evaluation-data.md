@@ -76,7 +76,7 @@ not masquerade as contemporaneous evidence. An insufficient-data refusal is the
 correct result until the source provides genuine PIT observations.
 
 The deterministic model-evidence export carries universe identity/source,
-membership and mapping revisions, market/benchmark revisions, readiness-v2
+membership and mapping revisions, market/benchmark revisions, readiness-v3
 fields, blockers, and a fingerprint. No graph database is involved.
 
 The executable delivery contract is documented in
@@ -98,7 +98,7 @@ Its existence is not source approval.
 - `TOTAL_RETURN` requires verified adjustment and complete dividends;
 - NIFTY 50 remains `PRICE_INDEX`; current output excludes dividends.
 
-## Readiness v2
+## Readiness v3
 
 `EVALUATION_READY` additionally requires at least 2,000 sessions, warm-up, 104
 ranking periods, mature 20/60-session outcomes, historical membership,
@@ -106,3 +106,10 @@ PIT-known-at, removals, delistings, instrument lifecycle, verified return basis,
 benchmark history/basis, corporate-action integrity, licensing, and no critical
 provenance gaps. Today's twenty names remain `DIAGNOSTIC_ONLY` even after a
 ten-year price backfill.
+
+`PUBLIC_RECONSTRUCTED` and `PARTIAL_PIT` state a useful but lower evidence
+class explicitly. Readiness also carries known-at semantics, inactive-security
+retention, archive gaps, reconstruction revision, and terms status. A later
+manual download cannot become institutional `EVALUATION_READY`; use the
+[public-data runbook](public-data-reconstruction.md) and select
+`--universe public-liquid-nse-v0` explicitly.

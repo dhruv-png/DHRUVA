@@ -81,5 +81,6 @@
   "ADR-080-technical-candidate-v0-is-an-experimental-frozen-baseline.md": "b8e43f075bd4a813c8129fc20ddf379cbb0606116daca668084e25fe77d608c4",
   "ADR-081-candidate-evaluation-is-versioned-pit-and-append-only.md": "a7a3588238510f37fbd360358a4f4176f97d5e80f99aa8a847d86f97361d601c",
   "ADR-082-historical-evaluation-data-must-be-pit-survivorship-and-return-basis-explicit.md": "907422d0f2d5e72bc297352e9fc92ad04980e360bc470bc1d822db16a10f8a36",
-  "ADR-083-offline-historical-imports-require-a-licensed-manifest-and-row-provenance.md": "0d91832d7091ebba96e0f49a0843756f6ef0badfa030507c1294901224c2f3e8"
+  "ADR-083-offline-historical-imports-require-a-licensed-manifest-and-row-provenance.md": "0d91832d7091ebba96e0f49a0843756f6ef0badfa030507c1294901224c2f3e8",
+  "ADR-084-public-exchange-reconstruction-is-manual-drop-event-time-and-diagnostic-only.md": "e1eb0643685f4606f737ebfe2f3978d62086cb6a2e37c96acfa32216f00f705b"
 }

@@ -38,10 +38,24 @@ Asia/Kolkata timezone, price/adjustment/return/benchmark bases, exact
 and notes. BSE bytes can be preflighted, but authoritative apply currently
 refuses BSE because the personal-MVP identity domain remains NSE-only.
 
+The optional `evidence_class` distinguishes `LICENSED_VENDOR`,
+`PUBLIC_EXCHANGE_ARCHIVE`, `PUBLIC_RECONSTRUCTED`, `OWNER_PROVIDED`, and
+`SYNTHETIC_TEST`. Legacy manifests infer only the prior licensed/synthetic
+class; new public packs state it explicitly. Public reconstruction uses
+`RETRIEVED_LATER`, never `SOURCE_OBSERVED_AT`, and persists evidence class in
+the dataset ledger (Alembic `0023_public_evidence_class`).
+
 Only `LOCAL_RETENTION_CONFIRMED` and `AUTOMATED_ANALYSIS_CONFIRMED` permit an
 authoritative import. Provider identity and marketing claims cannot elevate the
 licence state. `EVALUATION_ONLY`, unverified, restricted, and rejected content
 stays quarantined.
+
+`PUBLIC_RESEARCH_LOCAL_USE` additionally permits an explicit local import only
+for a `PUBLIC_RECONSTRUCTED` manifest that declares `RETRIEVED_LATER` and makes
+no PIT-known-at claim. Scientific incompleteness remains in `blockers`, while
+hash/schema/semantic/source-selection/identity/licensing defects still refuse
+the import. See the
+[public reconstruction contract](public-exchange-reconstruction.md).
 
 ## Validation and staging
 

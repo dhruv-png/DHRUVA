@@ -343,7 +343,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, first-class PIT universe/corporate-action foundations, deterministic readiness-v2/model-evidence export, fail-closed historical-universe evaluation, and licensed offline dataset intake are implemented. Current owner data is deliberately `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe, NIFTY remains `PRICE_INDEX`, Zerodha adjustment evidence remains `UNKNOWN`, and reconstructed bars are not prospective observations. **Provider acquisition and authenticated ingestion remain deferred** pending owner-confirmed permission/licensing. A real licensed PIT historical universe, corporate actions/TRI and roughly 8-10 years of history remain required for credible validation. |
+| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, first-class PIT universe/corporate-action foundations, deterministic readiness-v3/model-evidence export, fail-closed historical-universe evaluation, licensed offline intake, and manual-drop public NSE reconstruction are implemented. Current owner data remains `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe and later-retrieved public files are event-time reconstruction, not prospective PIT. **Provider acquisition and authenticated ingestion remain deferred** pending owner-confirmed permission/licensing. A real licensed/prospectively archived PIT universe and roughly 8-10 years of reviewed coverage remain required for promotion beyond public diagnostics. |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
@@ -411,7 +411,7 @@ to the current watchlist.
 Corporate-action evidence and return basis are provider-neutral and explicit.
 UNKNOWN Zerodha semantics stay UNKNOWN, `TOTAL_RETURN` cannot exist without
 verified adjustments and dividends, and suspicious discontinuities refuse an
-outcome rather than inventing an adjustment. Readiness v2 includes historical
+outcome rather than inventing an adjustment. Readiness v3 includes historical
 membership, known-at, removals, delistings, lifecycle, return/benchmark basis,
 corporate actions, source status, depth/maturity, and critical provenance gaps.
 The prospective clock now classifies a fresh horizon as pending before member
@@ -438,3 +438,23 @@ offline mapper seam includes only canonical CSV and synthetic TEST DATA
 implementations. No real provider adapter, purchase, authentication, scraping,
 or download was added. See ADR-083 and
 `docs/data/historical-universe-import-format.md`.
+
+### Public exchange historical reconstruction (2026-08-16)
+
+`dhruva-public` adds a network-free, manual-drop path for reviewed NSE UDiFF,
+legacy/full bhavcopy, MII security, corporate-action, NIFTY price-index and TRI
+schemas. Exact headers select versioned mappers; unknown BSE/public schemas,
+duplicate corrections and ambiguous symbol identities fail closed. Original
+bytes are hash-addressed and ignored by Git. No downloader or access-control
+bypass exists.
+
+The generated pack is explicitly `PUBLIC_RECONSTRUCTED`, `RETRIEVED_LATER`,
+`RAW_PRICE`, diagnostic-only and not survivorship-safe. ISIN continuity,
+inactive retention, disappearance states, raw action purpose, separate NIFTY
+price/TRI identities, deterministic preflight/bias/scorecard, and 5/8/10-year
+manual acquisition plans are available. `PUBLIC_LIQUID_NSE_UNIVERSE_V0` freezes
+a 60-session series/participation/median-turnover/price rule before evaluation;
+future rows cannot revise old membership. Readiness v3 prevents promotion to
+institutional PIT. See ADR-084,
+`docs/data/public-exchange-reconstruction.md`, and
+`docs/runbooks/public-data-reconstruction.md`.

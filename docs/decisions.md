@@ -4,7 +4,7 @@ Master index of every Architecture Decision Record. Generated content is not
 acceptable here -- this file is reviewed, and reviewing it is how a decision that
 should not have been made gets caught.
 
-**82 decisions — 81 accepted, 1 superseded.** Records are immutable once accepted
+**84 decisions — 83 accepted, 1 superseded.** Records are immutable once accepted
 (ADR-027); see [`adr/README.md`](adr/README.md) for the lifecycle.
 
 | # | Decision | Status |
@@ -92,6 +92,7 @@ should not have been made gets caught.
 | [ADR-081](ADR-081-candidate-evaluation-is-versioned-pit-and-append-only.md) | Candidate evaluation is versioned, PIT-bounded, and append-only | Accepted |
 | [ADR-082](ADR-082-historical-evaluation-data-must-be-pit-survivorship-and-return-basis-explicit.md) | Historical evaluation data must be PIT, survivorship-aware, and return-basis explicit | Accepted |
 | [ADR-083](ADR-083-offline-historical-imports-require-a-licensed-manifest-and-row-provenance.md) | Offline historical imports require a licensed manifest and row provenance | Accepted |
+| [ADR-084](ADR-084-public-exchange-reconstruction-is-manual-drop-event-time-and-diagnostic-only.md) | Public exchange reconstruction is manual-drop, event-time, and diagnostic-only | Accepted |
 
 ## Reading order for someone new
 

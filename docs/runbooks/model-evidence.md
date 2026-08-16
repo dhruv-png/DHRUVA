@@ -48,7 +48,7 @@ $evidencePath = Join-Path ([System.IO.Path]::GetTempPath()) 'dhruva-model-eviden
 ```
 
 The `dhruva.model-evidence.v1` envelope contains a content SHA-256 and embeds
-`dhruva.evaluation-data-readiness.v2`. It names the universe id/source,
+`dhruva.evaluation-data-readiness.v3`. It names the universe id/source,
 membership and mapping revisions, bar/benchmark revisions, return and benchmark
 bases, source status, survivorship fields, provenance gaps, and blockers.
 Identical persisted state and explicit options produce identical bytes.
