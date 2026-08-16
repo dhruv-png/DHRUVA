@@ -124,6 +124,10 @@ class HistoricalUniverseDefinition:
     pit_known_at_available: bool
     instrument_lifecycle_available: bool
     licensing_confirmed: bool
+    corporate_action_coverage_available: bool = False
+    return_basis: str = "UNKNOWN"
+    benchmark_basis: str = "PRICE_INDEX"
+    benchmark_history_available: bool = False
 
     def __post_init__(self) -> None:
         """Reject anonymous or internally contradictory source claims."""
@@ -140,6 +144,14 @@ class HistoricalUniverseDefinition:
                 self.historical_membership_available,
                 "PIT known-at requires historical membership",
             )
+        invariant(
+            self.return_basis in {"RAW_PRICE", "PRICE_ADJUSTED", "TOTAL_RETURN", "UNKNOWN"},
+            "invalid historical-universe return basis",
+        )
+        invariant(
+            self.benchmark_basis in {"PRICE_INDEX", "TOTAL_RETURN_INDEX"},
+            "invalid historical-universe benchmark basis",
+        )
 
 
 @dataclass(frozen=True, slots=True)

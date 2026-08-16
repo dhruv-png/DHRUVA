@@ -602,6 +602,10 @@ def _definition_values(definition: HistoricalUniverseDefinition) -> dict[str, An
         "pit_known_at_available": definition.pit_known_at_available,
         "instrument_lifecycle_available": definition.instrument_lifecycle_available,
         "licensing_confirmed": definition.licensing_confirmed,
+        "corporate_action_coverage_available": definition.corporate_action_coverage_available,
+        "return_basis": definition.return_basis,
+        "benchmark_basis": definition.benchmark_basis,
+        "benchmark_history_available": definition.benchmark_history_available,
     }
 
 
@@ -625,6 +629,10 @@ def _definition_from_model(
         pit_known_at_available=model.pit_known_at_available,
         instrument_lifecycle_available=model.instrument_lifecycle_available,
         licensing_confirmed=model.licensing_confirmed,
+        corporate_action_coverage_available=model.corporate_action_coverage_available,
+        return_basis=model.return_basis,
+        benchmark_basis=model.benchmark_basis,
+        benchmark_history_available=model.benchmark_history_available,
     )
 
 

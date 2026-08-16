@@ -637,6 +637,10 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         )
         historical_membership = pit_known_at = removals = delistings = lifecycle = False
         licensing = False
+        corporate_coverage = False
+        benchmark_history = False
+        declared_return_basis = "UNKNOWN"
+        declared_benchmark_basis = "PRICE_INDEX"
         source_status = "OWNER_SELECTION"
         selection_limitation = (
             "owner watchlist membership is PIT-resolved but remains an owner-selected, "
@@ -689,6 +693,16 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
             item.instrument_lifecycle_available for item in definitions
         )
         licensing = bool(definitions) and all(item.licensing_confirmed for item in definitions)
+        corporate_coverage = bool(definitions) and all(
+            item.corporate_action_coverage_available for item in definitions
+        )
+        benchmark_history = bool(definitions) and all(
+            item.benchmark_history_available for item in definitions
+        )
+        return_bases = {item.return_basis for item in definitions}
+        declared_return_basis = next(iter(return_bases)) if len(return_bases) == 1 else "UNKNOWN"
+        benchmark_bases = {item.benchmark_basis for item in definitions}
+        declared_benchmark_basis = next(iter(benchmark_bases)) if len(benchmark_bases) == 1 else ""
         statuses = {item.source_status.value for item in definitions}
         source_status = next(iter(statuses)) if len(statuses) == 1 else "MIXED"
         selection_limitation = (
@@ -701,7 +715,7 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         feature_revision=TECHNICAL_FEATURE_REVISION,
         evaluation_revision=TECHNICAL_CANDIDATE_EVALUATION_REVISION,
         benchmark_symbol="NIFTY 50",
-        benchmark_basis=BenchmarkBasis.PRICE_INDEX.value,
+        benchmark_basis=declared_benchmark_basis,
         universe_label=universe_label,
         universe_type=universe_type,
         from_cutoff=from_date,
@@ -718,8 +732,8 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         limitations=(
             "DIAGNOSTIC ONLY until all readiness-v2 gates are satisfied",
             selection_limitation,
-            "Zerodha corporate-action adjustment semantics are UNKNOWN",
-            "NIFTY 50 is PRICE_INDEX, not TRI; dividends are excluded",
+            f"source return basis is {declared_return_basis}",
+            f"benchmark basis is {declared_benchmark_basis or 'UNKNOWN'}",
             "fundamentals, news, and attention are absent from candidate score and baselines",
         ),
         universe_id=universe_id,
@@ -743,17 +757,33 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
     metrics = build_evaluation_metrics(dataset)
     adjustment_states = {series.adjustment_status.value for series in stocks.values()}
     adjustment = next(iter(adjustment_states)) if len(adjustment_states) == 1 else "MIXED"
-    return_basis = {
+    observed_return_basis = {
         "RAW": "RAW_PRICE",
         "ADJUSTED": "PRICE_ADJUSTED",
         "VERIFIED": "PRICE_ADJUSTED",
     }.get(adjustment, "UNKNOWN")
+    return_basis = (
+        declared_return_basis
+        if declared_return_basis == observed_return_basis
+        or (
+            declared_return_basis == "TOTAL_RETURN"
+            and adjustment in {"ADJUSTED", "VERIFIED"}
+            and corporate_coverage
+        )
+        else "UNKNOWN"
+    )
+    critical_gaps = (
+        *(("corporate-action revisions are unavailable",) if not corporate_coverage else ()),
+        *(("benchmark history is not declared complete",) if not benchmark_history else ()),
+        *(("bar adjustment semantics are UNKNOWN",) if adjustment in {"UNKNOWN", "MIXED"} else ()),
+        *(("declared and observed return bases differ",) if return_basis == "UNKNOWN" else ()),
+    )
     readiness = build_evaluation_readiness(
         dataset,
         sessions_available=len(benchmark.bars),
-        benchmark_available=True,
+        benchmark_available=benchmark_history,
         adjustment_semantics=adjustment,
-        corporate_action_semantics="UNAVAILABLE",
+        corporate_action_semantics="COMPLETE" if corporate_coverage else "UNAVAILABLE",
         historical_membership_available=historical_membership,
         pit_known_at_available=pit_known_at,
         removals_included=removals,
@@ -762,14 +792,7 @@ async def _evaluate(  # noqa: PLR0912, PLR0913, PLR0915 - explicit evidence orch
         return_basis=return_basis,
         source_status=source_status,
         source_licensing_confirmed=licensing,
-        critical_provenance_gaps=(
-            "corporate-action revisions are unavailable",
-            *(
-                ("bar adjustment semantics are UNKNOWN",)
-                if adjustment in {"UNKNOWN", "MIXED"}
-                else ()
-            ),
-        ),
+        critical_provenance_gaps=critical_gaps,
     )
     return dataset, metrics, readiness
 

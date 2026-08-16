@@ -29,6 +29,10 @@ __all__ = [
     "CorporateActionRevisionModel",
     "FuturesContractModel",
     "FuturesContractRevisionModel",
+    "HistoricalDatasetFactProvenanceModel",
+    "HistoricalDatasetFileModel",
+    "HistoricalDatasetModel",
+    "HistoricalImportRunModel",
     "HistoricalUniverseDefinitionRevisionModel",
     "HistoricalUniverseMembershipRevisionModel",
     "InstrumentIdentityRevisionModel",
@@ -197,6 +201,14 @@ class HistoricalUniverseDefinitionRevisionModel(ReferenceBase):
             "pit_known_at_available = false OR historical_membership_available",
             name="ck_historical_universe_pit_requires_history",
         ),
+        CheckConstraint(
+            "return_basis IN ('RAW_PRICE','PRICE_ADJUSTED','TOTAL_RETURN','UNKNOWN')",
+            name="ck_historical_universe_return_basis",
+        ),
+        CheckConstraint(
+            "benchmark_basis IN ('PRICE_INDEX','TOTAL_RETURN_INDEX')",
+            name="ck_historical_universe_benchmark_basis",
+        ),
         Index(
             "ix_historical_universe_definition_as_of",
             "account_id",
@@ -220,6 +232,16 @@ class HistoricalUniverseDefinitionRevisionModel(ReferenceBase):
     pit_known_at_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
     instrument_lifecycle_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
     licensing_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    corporate_action_coverage_available: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    return_basis: Mapped[str] = mapped_column(String(24), nullable=False, server_default="UNKNOWN")
+    benchmark_basis: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="PRICE_INDEX"
+    )
+    benchmark_history_available: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
 
 
 class HistoricalUniverseMembershipRevisionModel(ReferenceBase):
@@ -328,6 +350,148 @@ class CorporateActionRevisionModel(ReferenceBase):
         ForeignKey("reference_instrument.id", ondelete="RESTRICT"),
         nullable=True,
     )
+
+
+class HistoricalDatasetModel(ReferenceBase):
+    """Immutable accepted-manifest revision and its owner-controlled licence state."""
+
+    __tablename__ = "historical_dataset"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "dataset_id",
+            "source_revision",
+            name="uq_historical_dataset_source_revision",
+        ),
+        CheckConstraint("btrim(dataset_id) <> ''", name="ck_historical_dataset_id"),
+        CheckConstraint("manifest_sha256 ~ '^[0-9a-f]{64}$'", name="ck_historical_dataset_sha"),
+        CheckConstraint("coverage_end >= coverage_start", name="ck_historical_dataset_coverage"),
+        Index("ix_historical_dataset_account", "account_id", "dataset_id", "imported_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    provider_product: Mapped[str] = mapped_column(String(200), nullable=False)
+    license_reference: Mapped[str] = mapped_column(String(256), nullable=False)
+    licensing_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    coverage_start: Mapped[date] = mapped_column(Date, nullable=False)
+    coverage_end: Mapped[date] = mapped_column(Date, nullable=False)
+    source_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    manifest_schema: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    integrity_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    import_policy: Mapped[str] = mapped_column(String(24), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(8), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(40), nullable=False)
+    price_basis: Mapped[str] = mapped_column(String(24), nullable=False)
+    adjustment_basis: Mapped[str] = mapped_column(String(32), nullable=False)
+    return_basis: Mapped[str] = mapped_column(String(24), nullable=False)
+    benchmark_basis: Mapped[str] = mapped_column(String(24), nullable=False)
+    known_at_semantics: Mapped[str] = mapped_column(String(32), nullable=False)
+    capability_claims: Mapped[dict[str, bool]] = mapped_column(postgresql.JSONB, nullable=False)
+    notes: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class HistoricalDatasetFileModel(ReferenceBase):
+    """One hash-addressed canonical payload belonging to a manifest revision."""
+
+    __tablename__ = "historical_dataset_file"
+    __table_args__ = (
+        UniqueConstraint("dataset_revision_id", "role", name="uq_historical_dataset_file_role"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_historical_dataset_file_sha"),
+        CheckConstraint("size_bytes > 0", name="ck_historical_dataset_file_size"),
+        CheckConstraint("row_count >= 0", name="ck_historical_dataset_file_rows"),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    dataset_revision_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("historical_dataset.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    relative_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    row_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    schema_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class HistoricalDatasetFactProvenanceModel(ReferenceBase):
+    """Reproducible link from one canonical fact to its exact source row and file."""
+
+    __tablename__ = "historical_dataset_fact_provenance"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_revision_id",
+            "fact_role",
+            "source_row_id",
+            name="uq_historical_fact_source_row",
+        ),
+        Index("ix_historical_fact_key", "account_id", "fact_role", "fact_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    dataset_revision_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("historical_dataset.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    dataset_file_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("historical_dataset_file.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    fact_role: Mapped[str] = mapped_column(String(40), nullable=False)
+    fact_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_row_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_known_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    mapping_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    fact_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class HistoricalImportRunModel(ReferenceBase):
+    """Append-only outcome of one explicit apply attempt."""
+
+    __tablename__ = "historical_import_run"
+    __table_args__ = (
+        Index(
+            "ix_historical_import_run_dataset",
+            "account_id",
+            "dataset_revision_id",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    dataset_revision_id: Mapped[UUID] = mapped_column(
+        postgresql.UUID(as_uuid=True),
+        ForeignKey("historical_dataset.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    account_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    preflight_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    counts: Mapped[dict[str, int]] = mapped_column(postgresql.JSONB, nullable=False)
 
 
 class InstrumentMasterSnapshotModel(ReferenceBase):

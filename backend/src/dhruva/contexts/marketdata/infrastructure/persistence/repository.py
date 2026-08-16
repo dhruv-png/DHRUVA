@@ -49,10 +49,25 @@ class DailyBarRepository:
         """Stage every new revision and verify all idempotent collisions."""
         records = tuple(_record(bar) for bar in series.bars)
         inserted = await self._storage.append(records)
-        for record in records:
-            if record.id in inserted:
-                continue
-            existing = await self._session.get(DailyMarketBarRevisionModel, record.id)
+        unchanged_records = tuple(record for record in records if record.id not in inserted)
+        existing_by_id = {
+            model.id: model
+            for model in (
+                (
+                    await self._session.execute(
+                        select(DailyMarketBarRevisionModel).where(
+                            DailyMarketBarRevisionModel.id.in_(
+                                tuple(record.id for record in unchanged_records)
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        }
+        for record in unchanged_records:
+            existing = existing_by_id.get(record.id)
             if existing is None or not _same_record(_model_record(existing), record):
                 raise ConflictError(
                     "daily bar revision was reused with different content",
