@@ -12,6 +12,14 @@ import pytest
 
 from dhruva.contexts.intelligence.domain.attention import AttentionBand
 from dhruva.contexts.intelligence.domain.candidates import CandidateRanking
+from dhruva.contexts.intelligence.domain.model_evidence import (
+    EvaluationDataset,
+    EvaluationIdentity,
+    EvaluationMetrics,
+    EvaluationReadiness,
+    EvidenceStatus,
+    UniverseType,
+)
 from dhruva.contexts.intelligence.domain.research_observation import (
     AttentionObservationMember,
     ObservationProvenance,
@@ -181,6 +189,55 @@ def test_evaluation_and_outcome_commands_expose_explicit_methodology() -> None:
     assert evaluate.strict_pit is True
     assert outcomes.cost_bps == Decimal(20)
     assert evidence.command == "evidence"
+
+
+def test_evaluation_report_names_the_exact_pit_universe_limitation() -> None:
+    """Strict PIT output must not mislabel historical owner membership as today's universe."""
+    identity = EvaluationIdentity(
+        ranker_revision="technical-candidate-v0",
+        feature_revision="technical-features-v0",
+        evaluation_revision="technical-candidate-evaluation-v0",
+        benchmark_symbol="NIFTY 50",
+        benchmark_basis="PRICE_INDEX",
+        universe_label="PIT OWNER WATCHLIST",
+        universe_type=UniverseType.HISTORICAL_PIT_OWNER_WATCHLIST,
+        from_cutoff=CUTOFF.date(),
+        to_cutoff=CUTOFF.date(),
+        cadence="WEEKLY_FINAL_SESSION",
+        horizons=(20, 60),
+        execution_timing="AFTER_SIGNAL_SESSION",
+        entry_price_basis="NEXT_SESSION_OPEN",
+        exit_price_basis="HOLDING_SESSION_N_CLOSE",
+        cost_bps=Decimal(20),
+        knowledge_cutoff=CUTOFF,
+        limitations=("owner-selected universe",),
+    )
+    readiness = EvaluationReadiness(
+        sessions_available=496,
+        requested_warmup_sessions=252,
+        evaluation_span_sessions=244,
+        universe_type=identity.universe_type,
+        benchmark_available=True,
+        adjustment_semantics="UNKNOWN",
+        corporate_action_semantics="UNAVAILABLE",
+        survivorship_safe=False,
+        ranking_periods=1,
+        mature_20_outcomes=0,
+        mature_60_outcomes=0,
+        status=EvidenceStatus.DIAGNOSTIC_ONLY,
+        reasons=("owner watchlist is not survivorship safe",),
+    )
+
+    rendered = cli._render_evaluation(
+        EvaluationDataset(identity=identity, rows=()),
+        EvaluationMetrics(cross_sectional=(), top_k=(), buckets=(), tiers=(), baselines=()),
+        readiness,
+        export_path=None,
+    )
+
+    assert "HISTORICAL_PIT_OWNER_WATCHLIST" in rendered
+    assert "PIT owner-watchlist membership remains owner-selected" in rendered
+    assert "current-watchlist selection" not in rendered
 
 
 def test_command_imports_no_provider_or_transport_module() -> None:

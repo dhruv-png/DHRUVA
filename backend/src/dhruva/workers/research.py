@@ -715,12 +715,19 @@ def _render_evaluation(
 ) -> str:
     """Render a qualified nontechnical model-evidence diagnostic."""
     identity = dataset.identity
+    selection_warning = (
+        "RETROSPECTIVE DIAGNOSTIC ONLY — current-watchlist selection introduces "
+        "survivorship/selection bias and cannot establish historical model efficacy."
+        if identity.universe_type is UniverseType.RETROSPECTIVE_CURRENT_WATCHLIST
+        else "DIAGNOSTIC ONLY — PIT owner-watchlist membership remains owner-selected and "
+        "not survivorship-safe, so it cannot establish historical model efficacy."
+    )
     lines = [
         "DHRUVA technical candidate model evidence",
-        "RETROSPECTIVE DIAGNOSTIC ONLY — current-watchlist selection introduces "
-        "survivorship/selection bias and cannot establish historical model efficacy.",
+        selection_warning,
         f"Model: {identity.ranker_revision}; features: {identity.feature_revision}; "
         f"evaluation: {identity.evaluation_revision}",
+        f"Universe: {identity.universe_label} ({identity.universe_type.value})",
         f"Window: {identity.from_cutoff} to {identity.to_cutoff}; cadence: {identity.cadence}",
         f"Benchmark: {identity.benchmark_symbol} {identity.benchmark_basis}",
         f"Execution: {identity.entry_price_basis} to {identity.exit_price_basis}; "
