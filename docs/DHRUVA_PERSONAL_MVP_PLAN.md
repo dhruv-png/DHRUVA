@@ -343,7 +343,7 @@ conditions.
 | Milestone | State |
 |---|---|
 | Repository and roadmap transition | **Complete** — S06 and `5179a31` preserved on `main`; MVP branch created |
-| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, deterministic metrics/readiness and `dhruva.model-evidence.v1` export are implemented. Current owner data is deliberately `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe, NIFTY remains `PRICE_INDEX`, Zerodha adjustment evidence remains `UNKNOWN`, and reconstructed bars are not prospective observations. **NSE ingestion remains deferred in full** pending permission or a licensed agreement. A licensed PIT historical universe, corporate actions/TRI and roughly 8-10 years of history remain required for credible validation. |
+| MVP 1 / evidence and candidate baseline | **In progress** — the evidence clock, explicit historical acquisition, frozen `technical-candidate-v0`, versioned historical replay, append-only 20/60-session outcomes, first-class PIT universe/corporate-action foundations, deterministic readiness-v2/model-evidence export and fail-closed historical-universe evaluation contract are implemented. Current owner data is deliberately `DIAGNOSTIC_ONLY`: today's watchlist is not survivorship-safe, NIFTY remains `PRICE_INDEX`, Zerodha adjustment evidence remains `UNKNOWN`, and reconstructed bars are not prospective observations. **NSE ingestion remains deferred in full** pending permission or a licensed agreement. A licensed PIT historical universe, corporate actions/TRI and roughly 8-10 years of history remain required for credible validation. |
 | MVP 2 | Not started |
 | MVP 3 | Not started |
 | MVP 4 | Not started |
@@ -396,3 +396,25 @@ retrospective diagnostic only. Serious validation requires at least the
 documented 2,000-session depth, a historical PIT/survivorship-safe universe,
 verified adjustment/corporate-action evidence and NIFTY TRI or an explicitly
 approved alternative. See ADR-081 and `docs/runbooks/model-evidence.md`.
+
+### Historical PIT universe and return-integrity foundation (2026-08-16)
+
+Reference data now represents a named historical evaluation universe through
+append-only definition and membership revisions carrying effective intervals,
+source-observed knowledge time, provenance, removal/delisting coverage, source
+status, and licensing evidence. Resolution joins the PIT-effective symbol and
+provider mapping to the same immutable instrument identity, so removals,
+delistings, re-entry, and symbol changes do not disappear into today's provider
+dump. Strict-PIT evaluation accepts an explicit universe id and never falls back
+to the current watchlist.
+
+Corporate-action evidence and return basis are provider-neutral and explicit.
+UNKNOWN Zerodha semantics stay UNKNOWN, `TOTAL_RETURN` cannot exist without
+verified adjustments and dividends, and suspicious discontinuities refuse an
+outcome rather than inventing an adjustment. Readiness v2 includes historical
+membership, known-at, removals, delistings, lifecycle, return/benchmark basis,
+corporate actions, source status, depth/maturity, and critical provenance gaps.
+The prospective clock now classifies a fresh horizon as pending before member
+data availability, including weekend freezes. See ADR-082,
+`docs/runbooks/historical-evaluation-data.md`, and
+`docs/data/historical-source-diligence.md`.
