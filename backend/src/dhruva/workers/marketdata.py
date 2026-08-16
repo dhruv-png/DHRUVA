@@ -2,7 +2,9 @@
 
 ``coverage`` reads full locally visible history and makes **no external network
 call of any kind**. ``refresh`` resolves the owner watchlist and fetches only a
-twenty-calendar-day routine bootstrap when current context needs it.
+twenty-calendar-day routine bootstrap when current context needs it.  Routine
+freshness ends at the latest configured trading session whose close is at or
+before the refresh cutoff; a weekend is never itself demanded as a bar.
 ``backfill-plan`` is a separate network-free historical dry run; ``backfill``
 executes its bounded deterministic chunks. Only the two execution commands need
 a live logged-in session, and neither accepts a secret or exposes an order API.
@@ -48,7 +50,6 @@ import httpx2
 
 from dhruva.contexts.marketdata.api import (
     DEFAULT_MULTI_DAY_SESSIONS,
-    DEFAULT_STALE_AFTER_DAYS,
     AdjustmentStatus,
     DailyHistoryRequest,
     GetDailyBarSeries,
@@ -103,6 +104,7 @@ from dhruva.contexts.reference.application.instrument_archive import (
     ArchiveOwnerInstrumentMasterCommand,
 )
 from dhruva.contexts.reference.infrastructure import (
+    ConfiguredNseCashCalendar,
     KiteInstrumentMasterAdapter,
     SqlAlchemyReferenceUnitOfWork,
     load_owner_universe,
@@ -110,6 +112,7 @@ from dhruva.contexts.reference.infrastructure import (
 from dhruva.shared.config.settings import load_settings
 from dhruva.shared.errors import DhruvaError, MissingDataError, ValidationError
 from dhruva.shared.identity import AccountId, InstrumentId
+from dhruva.shared.time import DateRange, TradingCalendar
 from dhruva.shared.time.clock import SystemClock
 from dhruva.workers.cli_arguments import parse_account, parse_cutoff
 
@@ -175,6 +178,10 @@ _COVERAGE_FROM = date(1900, 1, 1)
 _IST_OFFSET = timedelta(hours=5, minutes=30)
 _HTTP_TIMEOUT_SECONDS = 30.0
 _MAX_BACKFILL_YEARS = 10
+#: A calendar returning no completed session across this range is unusable for
+#: routine freshness.  The bound is only a query span handed to the calendar;
+#: session selection itself remains calendar-owned.
+_COMPLETED_SESSION_SEARCH_DAYS = 32
 
 _SAFETY = (
     "Reads and writes daily cash/index history only: no order placement, no "
@@ -266,6 +273,14 @@ class CoverageSummary:
             ),
             "stale": sum(item.status is CoverageStatus.STALE for item in entries),
         }
+
+
+def _coverage_is_ready(summary: CoverageSummary) -> bool:
+    """Return whether owner symbols and the available benchmark are current."""
+    benchmark_ready = summary.benchmark is None or summary.benchmark.status is CoverageStatus.READY
+    return benchmark_ready and all(
+        entry.status is CoverageStatus.READY for entry in summary.entries
+    )
 
 
 class MarketDataRefreshStatus(StrEnum):
@@ -398,6 +413,7 @@ async def run(
     instrument_source: InstrumentMasterSource | None = None,
     history_source: DailyHistorySource | None = None,
     clock: Clock | None = None,
+    trading_calendar: TradingCalendar | None = None,
 ) -> int:
     """Dispatch one subcommand against a freshly built engine.
 
@@ -412,6 +428,7 @@ async def run(
     as_of = parse_cutoff(args.as_of)
     settings = load_settings()
     active_clock: Clock = clock if clock is not None else SystemClock()
+    active_calendar = trading_calendar or ConfiguredNseCashCalendar()
 
     engine = build_engine(settings.db)
     session_factory: async_sessionmaker[AsyncSession] = build_session_factory(engine)
@@ -432,6 +449,7 @@ async def run(
                 as_of=as_of,
                 reference_uow_factory=reference_uow,
                 marketdata_uow_factory=marketdata_uow,
+                trading_calendar=active_calendar,
             )
             sys.stdout.write(_render_coverage(summary) + "\n")
             return _EXIT_OK
@@ -460,6 +478,7 @@ async def run(
             clock=active_clock,
             instrument_source=instrument_source,
             history_source=history_source,
+            trading_calendar=active_calendar,
         )
     finally:
         await engine.dispose()
@@ -471,8 +490,11 @@ async def read_coverage(
     as_of: datetime,
     reference_uow_factory: Callable[[AccountId], SqlAlchemyReferenceUnitOfWork],
     marketdata_uow_factory: Callable[[AccountId], SqlAlchemyMarketDataUnitOfWork],
+    trading_calendar: TradingCalendar | None = None,
 ) -> CoverageSummary:
     """Read watchlist mapping and stored-bar coverage; no network call."""
+    active_calendar = trading_calendar or ConfiguredNseCashCalendar()
+    required_through = _required_through(as_of, active_calendar)
     watchlist = await GetSharedWatchlist(reference_uow_factory).execute(
         account_id=account_id, effective_on=as_of.date(), known_at=as_of
     )
@@ -487,12 +509,14 @@ async def read_coverage(
         read=read,
         account_id=account_id,
         as_of=as_of,
+        required_through=required_through,
     )
     benchmark = await _benchmark_coverage(
         mapped=mapped,
         read=read,
         account_id=account_id,
         as_of=as_of,
+        required_through=required_through,
     )
     return CoverageSummary(as_of=as_of, entries=entries, benchmark=benchmark)
 
@@ -503,6 +527,7 @@ async def _benchmark_coverage(
     read: GetDailyBarSeries,
     account_id: AccountId,
     as_of: datetime,
+    required_through: date,
 ) -> InstrumentCoverage:
     benchmark_id = InstrumentId.deterministic("reference", _BENCHMARK_IDENTITY_KEY)
     cash = mapped.get(benchmark_id)
@@ -550,7 +575,7 @@ async def _benchmark_coverage(
     bars = series.bars
     latest = bars[-1].candle.trading_date
     enough = len(bars) >= _NEEDED_BARS
-    fresh = (as_of.date() - latest).days <= DEFAULT_STALE_AFTER_DAYS
+    fresh = latest >= required_through
     status = (
         CoverageStatus.INSUFFICIENT_HISTORY
         if not enough
@@ -608,13 +633,14 @@ def _yn(value: bool) -> str:
     return "yes" if value else "no"
 
 
-async def _coverage_entries(
+async def _coverage_entries(  # noqa: PLR0913 - one field per coverage input
     *,
     watchlist: tuple[WatchlistInstrument, ...],
     mapped: dict[InstrumentId, ResolvedCashInstrument],
     read: GetDailyBarSeries,
     account_id: AccountId,
     as_of: datetime,
+    required_through: date,
 ) -> tuple[InstrumentCoverage, ...]:
     as_of_date = as_of.date()
     from_date = _COVERAGE_FROM
@@ -670,7 +696,7 @@ async def _coverage_entries(
         bars = series.bars
         latest = bars[-1].candle.trading_date
         enough = len(bars) >= _NEEDED_BARS
-        fresh = (as_of_date - latest).days <= DEFAULT_STALE_AFTER_DAYS
+        fresh = latest >= required_through
         if not enough:
             status = CoverageStatus.INSUFFICIENT_HISTORY
         elif not fresh:
@@ -971,6 +997,7 @@ async def _refresh(  # noqa: PLR0913 - one collaborator per capability, matching
     clock: Clock,
     instrument_source: InstrumentMasterSource | None,
     history_source: DailyHistorySource | None,
+    trading_calendar: TradingCalendar,
 ) -> int:
     """Print exactly what ``refresh_market_data`` decided, and return its exit code."""
     outcome = await refresh_market_data(
@@ -984,6 +1011,7 @@ async def _refresh(  # noqa: PLR0913 - one collaborator per capability, matching
         clock=clock,
         instrument_source=instrument_source,
         history_source=history_source,
+        trading_calendar=trading_calendar,
     )
     if outcome.stdout:
         sys.stdout.write(outcome.stdout)
@@ -1004,6 +1032,7 @@ async def refresh_market_data(  # noqa: PLR0913 - one collaborator per capabilit
     clock: Clock,
     instrument_source: InstrumentMasterSource | None,
     history_source: DailyHistorySource | None,
+    trading_calendar: TradingCalendar | None = None,
 ) -> MarketDataRefreshOutcome:
     """Inspect coverage first, then fetch only what it says is missing.
 
@@ -1017,13 +1046,15 @@ async def refresh_market_data(  # noqa: PLR0913 - one collaborator per capabilit
     bootstrap window and the SESSION-only credential read are unchanged from
     before this function existed -- extracted, not rewritten.
     """
+    active_calendar = trading_calendar or ConfiguredNseCashCalendar()
     coverage = await read_coverage(
         account_id=account_id,
         as_of=as_of,
         reference_uow_factory=reference_uow_factory,
         marketdata_uow_factory=marketdata_uow_factory,
+        trading_calendar=active_calendar,
     )
-    if all(entry.status is CoverageStatus.READY for entry in coverage.entries):
+    if _coverage_is_ready(coverage):
         return MarketDataRefreshOutcome(
             status=MarketDataRefreshStatus.ALREADY_SUFFICIENT,
             exit_code=_EXIT_OK,
@@ -1072,6 +1103,7 @@ async def refresh_market_data(  # noqa: PLR0913 - one collaborator per capabilit
             clock=clock,
             instrument_source=instrument_source,
             history_source=history_source,
+            trading_calendar=active_calendar,
         )
 
 
@@ -1090,6 +1122,7 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
     clock: Clock,
     instrument_source: InstrumentMasterSource | None,
     history_source: DailyHistorySource | None,
+    trading_calendar: TradingCalendar,
 ) -> MarketDataRefreshOutcome:
     """Resolve instrument mapping, then fetch and ingest the bounded missing range."""
     instr_source: InstrumentMasterSource
@@ -1159,6 +1192,7 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
         as_of=as_of,
         reference_uow_factory=reference_uow_factory,
         marketdata_uow_factory=marketdata_uow_factory,
+        trading_calendar=trading_calendar,
     )
     not_ready = tuple(
         entry for entry in coverage.entries if entry.status is not CoverageStatus.READY
@@ -1169,8 +1203,11 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
     needs_history = tuple(
         entry for entry in not_ready if entry.status is not CoverageStatus.MISSING_MAPPING
     )
+    benchmark_needs_history = (
+        coverage.benchmark is not None and coverage.benchmark.status is not CoverageStatus.READY
+    )
 
-    if not needs_history:
+    if not needs_history and not benchmark_needs_history:
         return MarketDataRefreshOutcome(
             status=MarketDataRefreshStatus.MAPPING_REFRESHED,
             exit_code=_EXIT_OK,
@@ -1184,7 +1221,7 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
             ),
         )
 
-    required_through = _ist_date(as_of) - timedelta(days=1)
+    required_through = _required_through(as_of, trading_calendar)
     from_date = required_through - timedelta(days=settings.marketdata.bootstrap_lookback_days - 1)
     requests = [
         DailyHistoryRequest(
@@ -1230,6 +1267,7 @@ async def _resolve_and_ingest(  # noqa: PLR0913 - one collaborator per capabilit
         as_of=as_of,
         reference_uow_factory=reference_uow_factory,
         marketdata_uow_factory=marketdata_uow_factory,
+        trading_calendar=trading_calendar,
     )
     return MarketDataRefreshOutcome(
         status=MarketDataRefreshStatus.INGESTED,
@@ -1290,6 +1328,35 @@ def _ist_date(instant: datetime) -> date:
     offset used for the broker's own session-expiry cutoff is exact here too.
     """
     return (instant.astimezone(UTC) + _IST_OFFSET).date()
+
+
+def _required_through(instant: datetime, calendar: TradingCalendar) -> date:
+    """Return the latest calendar-declared session completed by ``instant``.
+
+    The calendar owns both session membership and close times.  The date range
+    here merely bounds the calendar query; selecting ``yesterday`` or manually
+    skipping weekend dates would repeat the bug this function prevents.
+    """
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValidationError("daily-history cutoff must be timezone-aware")
+    utc_instant = instant.astimezone(UTC)
+    span = DateRange(
+        (utc_instant - timedelta(days=_COMPLETED_SESSION_SEARCH_DAYS)).date(),
+        (utc_instant + timedelta(days=2)).date(),
+    )
+    completed = tuple(
+        session
+        for day in calendar.sessions_between(span)
+        if (session := calendar.session(day)).closes_at <= utc_instant
+    )
+    if not completed:
+        raise MissingDataError(
+            "trading calendar has no completed session near the refresh cutoff",
+            cutoff=utc_instant.isoformat(),
+            searched_from=span.start.isoformat(),
+            searched_to=span.end.isoformat(),
+        )
+    return max(completed, key=lambda session: session.closes_at).day.on
 
 
 def main(argv: Sequence[str] | None = None) -> int:

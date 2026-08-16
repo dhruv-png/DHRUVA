@@ -58,8 +58,8 @@ Reports one line per watchlist instrument:
 | `MISSING_MAPPING` | No current Zerodha instrument-master mapping is on record |
 | `NO_DATA` | Mapped, but nothing has ever been ingested |
 | `INSUFFICIENT_HISTORY` | Fewer than six complete daily bars — a current five-session return cannot be computed |
-| `STALE` | Enough bars, but the latest one is older than the staleness bound |
-| `READY` | Enough bars and fresh as of the cutoff |
+| `STALE` | Enough bars, but the latest expected completed trading session is absent |
+| `READY` | Enough bars and complete through the latest expected completed trading session |
 
 followed by one aggregate line: `watchlist`, `mapped`, `unmapped`,
 `with_bars`, `no_data`, `enough_history`, `insufficient`, `stale`.
@@ -91,10 +91,12 @@ dhruva-marketdata refresh --account owner-family
 4. Requests **daily candles only**, for the Nifty 50 benchmark plus every
    watchlist instrument not already `READY`, over one shared date range
    bounded to the last **twenty calendar days** (`settings.marketdata.
-   bootstrap_lookback_days`) ending the day before the refresh instant. This
-   is bootstrap for the *current* market context, not historical backfill —
-   the bound is a hard configuration ceiling, never silently extended
-   further back.
+   bootstrap_lookback_days`) ending at the most recent trading session whose
+   configured close is at or before the refresh cutoff. On Saturday, Sunday,
+   and Monday before the regular 15:30 IST close this is normally Friday; on a
+   normal weekday at or after close it is that weekday. This is bootstrap for
+   the *current* market context, not historical backfill — the bound is a hard
+   configuration ceiling, never silently extended further back.
 5. Ingests through the existing synchronized daily-history path. **The whole
    attempted batch is refused, atomically, if any one instrument is
    incompatible** — a stale session, a provider timeout, a malformed
@@ -106,6 +108,24 @@ dhruva-marketdata refresh --account owner-family
 If twenty calendar days still yields fewer than six complete sessions for an
 instrument, `refresh` reports it `INSUFFICIENT_HISTORY` and does **not**
 extend the window further back to manufacture a longer answer.
+
+### Interim trading-calendar scope
+
+Routine freshness resolves through the shared `TradingCalendar` port. Its
+current Reference-context adapter knows regular NSE cash hours (09:15–15:30
+IST), Saturdays, Sundays, and any reviewed closed dates explicitly supplied to
+the adapter. The production composition currently supplies no authoritative
+annual Indian exchange-holiday dataset: an unconfigured weekday holiday is
+therefore still treated as expected and will cause a fail-closed refusal if the
+provider returns no bar. That is intentional; inferring a holiday from a
+missing benchmark response would also hide a genuinely missing trading day.
+
+The interim adapter does not claim Muhurat timings or exchange-declared special
+Saturday sessions. Those require the approved S08 effective-dated calendar
+source. When that adapter arrives, routine refresh can receive it through the
+existing port without changing completeness validation. The 2026-08-15 case
+needs no one-date exception: Independence Day fell on a Saturday, which was
+already a non-session under the current calendar.
 
 If an instrument's mapping is still missing after resolution genuinely could
 not find it in the provider's master, `refresh` names it explicitly —

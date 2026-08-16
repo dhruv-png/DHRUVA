@@ -50,6 +50,7 @@ from dhruva.contexts.reference.domain.watchlist import (
     WatchlistInstrument,
     WatchlistMembershipRevision,
 )
+from dhruva.contexts.reference.infrastructure import ConfiguredNseCashCalendar
 from dhruva.shared.errors import MissingDataError
 from dhruva.shared.identity import AccountId, InstrumentId
 from dhruva.workers import marketdata as cli
@@ -188,6 +189,39 @@ def test_ist_date_stays_on_the_same_day_before_the_boundary() -> None:
     instant = datetime(2026, 8, 10, 18, 29, tzinfo=UTC)
 
     assert cli._ist_date(instant) == date(2026, 8, 10)
+
+
+@pytest.mark.parametrize(
+    ("cutoff", "expected"),
+    [
+        (datetime(2026, 8, 15, 12, 0, tzinfo=UTC), date(2026, 8, 14)),
+        (datetime(2026, 8, 16, 12, 0, tzinfo=UTC), date(2026, 8, 14)),
+        (datetime(2026, 8, 17, 9, 59, tzinfo=UTC), date(2026, 8, 14)),
+        (datetime(2026, 8, 17, 10, 0, tzinfo=UTC), date(2026, 8, 17)),
+        (datetime(2026, 8, 18, 12, 0, tzinfo=UTC), date(2026, 8, 18)),
+    ],
+)
+def test_required_through_is_the_latest_completed_session(cutoff: datetime, expected: date) -> None:
+    """Weekend and pre-close cutoffs resolve through session close, not yesterday."""
+    assert cli._required_through(cutoff, ConfiguredNseCashCalendar()) == expected
+
+
+def test_required_through_skips_a_configured_weekday_holiday() -> None:
+    """A holiday known by the calendar is no more demandable than a weekend."""
+    calendar = ConfiguredNseCashCalendar(closed_dates=frozenset({date(2026, 8, 17)}))
+    tuesday_before_close = datetime(2026, 8, 18, 9, 59, tzinfo=UTC)
+
+    assert cli._required_through(tuesday_before_close, calendar) == date(2026, 8, 14)
+
+
+def test_independence_day_2026_needs_no_one_date_exception() -> None:
+    """2026-08-15 is already closed as Saturday, whether or not listed as a holiday."""
+    independence_day = date(2026, 8, 15)
+
+    assert not ConfiguredNseCashCalendar().is_session(independence_day)
+    assert not ConfiguredNseCashCalendar(closed_dates=frozenset({independence_day})).is_session(
+        independence_day
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -409,7 +443,12 @@ async def _classify(
     )
     read = GetDailyBarSeries(lambda _account: FakeMarketDataUnitOfWork(FakeDailyBarStore(bars)))
     entries = await cli._coverage_entries(
-        watchlist=watchlist, mapped=mapping, read=read, account_id=ACCOUNT, as_of=AS_OF
+        watchlist=watchlist,
+        mapped=mapping,
+        read=read,
+        account_id=ACCOUNT,
+        as_of=AS_OF,
+        required_through=AS_OF.date(),
     )
     assert len(entries) == 1
     return entries[0]
@@ -503,7 +542,12 @@ async def test_an_empty_watchlist_produces_no_entries() -> None:
     read = GetDailyBarSeries(lambda _account: FakeMarketDataUnitOfWork(FakeDailyBarStore(())))
 
     entries = await cli._coverage_entries(
-        watchlist=(), mapped={}, read=read, account_id=ACCOUNT, as_of=AS_OF
+        watchlist=(),
+        mapped={},
+        read=read,
+        account_id=ACCOUNT,
+        as_of=AS_OF,
+        required_through=AS_OF.date(),
     )
 
     assert entries == ()
@@ -519,7 +563,12 @@ async def test_entries_are_ordered_by_canonical_symbol() -> None:
     read = GetDailyBarSeries(lambda _account: FakeMarketDataUnitOfWork(FakeDailyBarStore(())))
 
     entries = await cli._coverage_entries(
-        watchlist=watchlist, mapped={}, read=read, account_id=ACCOUNT, as_of=AS_OF
+        watchlist=watchlist,
+        mapped={},
+        read=read,
+        account_id=ACCOUNT,
+        as_of=AS_OF,
+        required_through=AS_OF.date(),
     )
 
     assert [entry.canonical_symbol for entry in entries] == ["AAA", "ZZZ"]
@@ -571,6 +620,17 @@ def test_aggregate_counts_are_exact() -> None:
         "insufficient": 1,
         "stale": 1,
     }
+
+
+def test_a_stale_benchmark_prevents_a_ready_whole_refresh() -> None:
+    """Owner rows cannot bypass the shared benchmark's completed-session cutoff."""
+    summary = cli.CoverageSummary(
+        as_of=AS_OF,
+        entries=(_coverage(cli.CoverageStatus.READY, symbol="OWNER"),),
+        benchmark=_coverage(cli.CoverageStatus.STALE, symbol="NIFTY 50"),
+    )
+
+    assert not cli._coverage_is_ready(summary)
 
 
 def test_rendering_names_every_instrument_and_the_aggregate() -> None:

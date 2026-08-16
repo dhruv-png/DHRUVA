@@ -16,6 +16,7 @@ from dhruva.contexts.reference.infrastructure.persistence import (
     ReferenceRepository,
     SqlAlchemyReferenceUnitOfWork,
 )
+from dhruva.contexts.reference.infrastructure.trading_calendar import ConfiguredNseCashCalendar
 from dhruva.contexts.reference.infrastructure.zerodha_instruments import (
     KiteInstrumentMasterAdapter,
     parse_instrument_master,
@@ -23,6 +24,7 @@ from dhruva.contexts.reference.infrastructure.zerodha_instruments import (
 
 __all__ = [
     "OWNER_UNIVERSE_REVISION",
+    "ConfiguredNseCashCalendar",
     "InstrumentArchiveRepository",
     "KiteInstrumentMasterAdapter",
     "ReferenceRepository",

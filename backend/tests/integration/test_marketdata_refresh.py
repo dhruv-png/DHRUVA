@@ -60,6 +60,7 @@ from dhruva.contexts.platform.infrastructure.database.identity_unit_of_work impo
 from dhruva.contexts.reference.application.watchlist import ConfigureReferenceUniverse
 from dhruva.contexts.reference.domain.instrument_master import InstrumentMasterSnapshot
 from dhruva.contexts.reference.infrastructure import (
+    ConfiguredNseCashCalendar,
     SqlAlchemyReferenceUnitOfWork,
     load_owner_universe,
 )
@@ -156,16 +157,26 @@ def _candle(trading_date: date) -> DailyCandle:
 
 
 class FakeHistorySource:
-    """Answer any bounded request with one candle per calendar day in range.
+    """Answer any bounded request with one candle per configured session.
 
-    Every instrument gets the identical set of calendar dates, so the
+    Every instrument normally gets the identical set of session dates, so the
     synchronized-session invariant holds by construction: this fake is testing
-    the CLI's wiring and its atomic-refusal behavior, not calendar realism.
+    the CLI's wiring and its atomic-refusal behavior without fabricating weekend
+    candles a real daily-history provider would never return.
     """
 
-    def __init__(self, *, retrieved_at: datetime, fail_for: InstrumentId | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        retrieved_at: datetime,
+        fail_for: InstrumentId | None = None,
+        calendar: ConfiguredNseCashCalendar | None = None,
+        omitted_dates: dict[InstrumentId, frozenset[date]] | None = None,
+    ) -> None:
         self.retrieved_at = retrieved_at
         self.fail_for = fail_for
+        self.calendar = calendar or ConfiguredNseCashCalendar()
+        self.omitted_dates = omitted_dates or {}
         self.requests: list[DailyHistoryRequest] = []
 
     async def fetch(self, request: DailyHistoryRequest) -> DailyHistoryBatch:
@@ -178,7 +189,10 @@ class FakeHistorySource:
         dates: list[date] = []
         current = request.from_date
         while current <= request.to_date:
-            dates.append(current)
+            if self.calendar.is_session(current) and current not in self.omitted_dates.get(
+                request.instrument_id, frozenset()
+            ):
+                dates.append(current)
             current += timedelta(days=1)
         candles = tuple(_candle(item) for item in dates)
         raw = f"synthetic-{request.instrument_id}-{request.from_date}-{request.to_date}".encode()
@@ -444,8 +458,129 @@ async def test_refresh_ingests_within_the_configured_bootstrap_bound(
     assert len(spans) == 1
     (from_date, to_date) = next(iter(spans))
     assert (to_date - from_date).days == 19
-    assert to_date == AS_OF.date() - timedelta(days=1)
+    assert to_date == AS_OF.date()
     assert len(history_source.requests) == 21  # twenty watchlist symbols plus the benchmark
+
+
+@pytest.mark.parametrize(
+    ("cutoff", "expected_through"),
+    [
+        (datetime(2026, 8, 15, 12, 0, tzinfo=UTC), date(2026, 8, 14)),
+        (datetime(2026, 8, 16, 12, 0, tzinfo=UTC), date(2026, 8, 14)),
+        (datetime(2026, 8, 17, 9, 59, tzinfo=UTC), date(2026, 8, 14)),
+        (datetime(2026, 8, 18, 12, 0, tzinfo=UTC), date(2026, 8, 18)),
+    ],
+)
+async def test_refresh_uses_one_latest_completed_session_for_the_whole_batch(
+    migrated: AsyncEngine,
+    truncated_after_test: None,  # noqa: ARG001 - requests committed-state cleanup
+    monkeypatch: pytest.MonkeyPatch,
+    cutoff: datetime,
+    expected_through: date,
+) -> None:
+    """Saturday, Sunday and pre-close Monday all share the correct batch endpoint."""
+    _set_master_key(monkeypatch)
+    await _seed_watchlist(migrated)
+    calendar = ConfiguredNseCashCalendar()
+    instrument_source = FakeInstrumentSource(_snapshot(market_date=cli._ist_date(cutoff)))
+    history_source = FakeHistorySource(
+        retrieved_at=cutoff - timedelta(minutes=1), calendar=calendar
+    )
+
+    exit_code = await cli.run(
+        ["refresh", "--account", str(ACCOUNT), "--as-of", cutoff.isoformat()],
+        instrument_source=instrument_source,
+        history_source=history_source,
+        trading_calendar=calendar,
+    )
+
+    assert exit_code == cli._EXIT_OK
+    assert len(history_source.requests) == 21
+    assert {request.to_date for request in history_source.requests} == {expected_through}
+
+
+async def test_missing_expected_friday_refuses_before_any_bar_is_persisted(
+    migrated: AsyncEngine,
+    truncated_after_test: None,  # noqa: ARG001 - requests committed-state cleanup
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Weekend awareness does not excuse an actually expected benchmark session."""
+    _set_master_key(monkeypatch)
+    await _seed_watchlist(migrated)
+    cutoff = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+    expected_friday = date(2026, 8, 14)
+    benchmark_id = InstrumentId.deterministic("reference", "nse-index-nifty-50")
+    history_source = FakeHistorySource(
+        retrieved_at=cutoff - timedelta(minutes=1),
+        omitted_dates={benchmark_id: frozenset({expected_friday})},
+    )
+
+    exit_code = await cli.run(
+        ["refresh", "--account", str(ACCOUNT), "--as-of", cutoff.isoformat()],
+        instrument_source=FakeInstrumentSource(_snapshot(market_date=date(2026, 8, 16))),
+        history_source=history_source,
+    )
+
+    rendered = capsys.readouterr().err
+    assert exit_code == cli._EXIT_REFUSED
+    assert "benchmark daily history is stale or incomplete" in rendered
+    assert "required_through: 2026-08-14" in rendered
+    assert await _bar_count(migrated) == 0
+
+
+async def test_monday_close_transitions_friday_coverage_from_ready_to_refreshable(
+    migrated: AsyncEngine,
+    truncated_after_test: None,  # noqa: ARG001 - requests committed-state cleanup
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Friday is current before Monday close, then Monday becomes exactly required."""
+    _set_master_key(monkeypatch)
+    await _seed_watchlist(migrated)
+    sunday = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+    await cli.run(
+        ["refresh", "--account", str(ACCOUNT), "--as-of", sunday.isoformat()],
+        instrument_source=FakeInstrumentSource(_snapshot(market_date=date(2026, 8, 16))),
+        history_source=FakeHistorySource(retrieved_at=sunday - timedelta(minutes=1)),
+    )
+    capsys.readouterr()
+
+    monday_before_close = datetime(2026, 8, 17, 9, 59, tzinfo=UTC)
+    preclose_instruments = FakeInstrumentSource(_snapshot(market_date=date(2026, 8, 17)))
+    preclose_history = FakeHistorySource(retrieved_at=monday_before_close)
+    preclose_exit = await cli.run(
+        [
+            "refresh",
+            "--account",
+            str(ACCOUNT),
+            "--as-of",
+            monday_before_close.isoformat(),
+        ],
+        instrument_source=preclose_instruments,
+        history_source=preclose_history,
+    )
+    capsys.readouterr()
+
+    monday_after_close = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+    postclose_history = FakeHistorySource(retrieved_at=monday_after_close)
+    postclose_exit = await cli.run(
+        [
+            "refresh",
+            "--account",
+            str(ACCOUNT),
+            "--as-of",
+            monday_after_close.isoformat(),
+        ],
+        instrument_source=FakeInstrumentSource(_snapshot(market_date=date(2026, 8, 17))),
+        history_source=postclose_history,
+    )
+
+    assert preclose_exit == cli._EXIT_OK
+    assert preclose_instruments.calls == 0
+    assert preclose_history.requests == []
+    assert postclose_exit == cli._EXIT_OK
+    assert {request.to_date for request in postclose_history.requests} == {date(2026, 8, 17)}
 
 
 async def test_a_provider_timeout_on_one_instrument_refuses_the_whole_batch(
