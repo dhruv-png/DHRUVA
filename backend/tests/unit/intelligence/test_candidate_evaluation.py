@@ -249,7 +249,7 @@ def test_dataset_metrics_readiness_and_export_are_deterministic() -> None:
     )
 
     assert readiness.status.value == "DIAGNOSTIC_ONLY"
-    assert readiness.schema == "dhruva.evaluation-data-readiness.v2"
+    assert readiness.schema == "dhruva.evaluation-data-readiness.v3"
     assert not readiness.survivorship_safe
     assert "HISTORICAL_UNIVERSE_UNAVAILABLE" in readiness.blockers
     assert "SOURCE_LICENSING_UNRESOLVED" in readiness.blockers
@@ -293,6 +293,47 @@ def test_current_watchlist_cannot_become_ready_even_if_other_gates_are_asserted(
 
     assert readiness.status.value == "DIAGNOSTIC_ONLY"
     assert not readiness.survivorship_safe
+
+
+def test_public_reconstruction_receives_distinct_readiness_without_pit_overclaim() -> None:
+    """Strong event-time diagnostics remain below institutional prospective PIT."""
+    ranking, benchmark = _ranking()
+    stocks = {
+        entry.instrument_id: _series(entry.instrument_id, Decimal("0.001"))
+        for entry in ranking.entries
+    }
+    dataset = build_evaluation_dataset(
+        identity=replace(
+            _identity(),
+            universe_type=UniverseType.HISTORICAL_PIT_UNIVERSE,
+            universe_id="public-liquid-nse-v0",
+        ),
+        rankings=(ranking,),
+        stocks=stocks,
+        benchmark=benchmark,
+        observable_through=CUTOFF.date() + timedelta(days=60),
+    )
+    readiness = build_evaluation_readiness(
+        dataset,
+        sessions_available=2500,
+        adjustment_semantics="RAW",
+        corporate_action_semantics="SOURCE_REPORTED",
+        historical_membership_available=True,
+        removals_included=True,
+        instrument_lifecycle_available=True,
+        return_basis="RAW_PRICE",
+        source_licensing_confirmed=True,
+        evidence_class="PUBLIC_RECONSTRUCTED",
+        known_at_semantics="RETRIEVED_LATER",
+        inactive_securities_retained=True,
+        universe_reconstruction_revision="public_liquid_nse_universe_v0",
+        licensing_terms_status="LOCAL_RESEARCH_ONLY",
+    )
+
+    assert readiness.status.value == "PUBLIC_RECONSTRUCTED"
+    assert not readiness.survivorship_safe
+    assert not readiness.pit_known_at_available
+    assert readiness.inactive_securities_retained
 
 
 def test_integrity_blocker_prevents_ready_historical_evidence() -> None:

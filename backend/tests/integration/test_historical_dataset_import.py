@@ -24,6 +24,7 @@ from dhruva.contexts.reference.infrastructure.persistence.models import (
     InstrumentIdentityRevisionModel,
     ReferenceInstrumentModel,
 )
+from dhruva.ingest.historical_dataset import ImportDecision, preflight_dataset
 from dhruva.ingest.historical_import import import_historical_dataset
 from dhruva.ingest.synthetic_historical_dataset import generate_synthetic_dataset
 from dhruva.shared.errors import ConflictError
@@ -63,6 +64,9 @@ async def test_ready_pack_import_is_atomic_provenanced_and_idempotent(
         for model, expected in models:
             observed = await session.scalar(select(func.count()).select_from(model))
             assert observed == expected
+        dataset = await session.scalar(select(HistoricalDatasetModel))
+        assert dataset is not None
+        assert dataset.evidence_class == "SYNTHETIC_TEST"
 
 
 async def test_dataset_ledger_refuses_mutation(
@@ -79,6 +83,46 @@ async def test_dataset_ledger_refuses_mutation(
                     "historical_dataset"
                 )
             )
+
+
+async def test_public_reconstructed_evidence_class_is_persisted(
+    migrated: AsyncEngine,
+    tmp_path: Path,
+    truncated_after_test: None,  # noqa: ARG001 - cleans committed import rows
+) -> None:
+    """A public reconstruction remains explicitly labelled after database import."""
+    manifest = generate_synthetic_dataset(tmp_path / "public-shaped-delivery")
+    decoded = json.loads(manifest.read_text(encoding="utf-8"))
+    decoded["evidence_class"] = "PUBLIC_RECONSTRUCTED"
+    decoded["dataset_id"] = "public-reconstructed-integration"
+    decoded["license"]["status"] = "PUBLIC_RESEARCH_LOCAL_USE"
+    decoded["known_at_semantics"] = "RETRIEVED_LATER"
+    decoded["capabilities"]["pit_known_at"] = False
+    definitions = manifest.parent / "universe_definitions.csv"
+    with definitions.open("r", encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+        fields = tuple(rows[0])
+    rows[0]["pit_known_at_available"] = "false"
+    with definitions.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+    content = definitions.read_bytes()
+    entry = next(item for item in decoded["files"] if item["role"] == "universe_definitions")
+    entry["sha256"] = hashlib.sha256(content).hexdigest()
+    entry["size_bytes"] = len(content)
+    manifest.write_text(json.dumps(decoded), encoding="utf-8")
+    sessions = build_session_factory(migrated)
+
+    report = preflight_dataset(manifest)
+    assert report.failures == ()
+    assert report.import_decision is ImportDecision.READY, report
+    await import_historical_dataset(manifest, account_id=ACCOUNT, session_factory=sessions)
+
+    async with sessions() as session:
+        dataset = await session.scalar(select(HistoricalDatasetModel))
+        assert dataset is not None
+        assert dataset.evidence_class == "PUBLIC_RECONSTRUCTED"
 
 
 async def test_mid_apply_conflict_rolls_back_every_context(
