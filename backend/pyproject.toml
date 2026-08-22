@@ -69,6 +69,9 @@ dependencies = [
   #   httpx2   maintained async HTTP transport for the deliberately narrow
   #            documented Kite market-data endpoints (ADR-076)
   "httpx2==2.9.1",
+  # Public NSE monthly XLSX files are untrusted ZIP/XML input. Parse their
+  # bounded workbook parts with hardened XML primitives.
+  "defusedxml==0.7.1",
 ]
 
 [project.optional-dependencies]

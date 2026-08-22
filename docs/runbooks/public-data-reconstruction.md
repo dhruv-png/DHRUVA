@@ -13,6 +13,7 @@ $Drop = 'C:\Users\dhruv\DHRUVA-data-drop'
 $Output = 'C:\Users\dhruv\DHRUVA-public-data-output\nse-v1'
 New-Item -ItemType Directory -Force `
   "$Drop\nse\bhavcopy", `
+  "$Drop\nse\exchange-monthly", `
   "$Drop\nse\security-master", `
   "$Drop\nse\corporate-actions", `
   "$Drop\nse\index" | Out-Null
@@ -33,13 +34,26 @@ Set-Location 'C:\Users\dhruv\Projects\DHRUVA\backend'
 & .venv\Scripts\dhruva-public.exe plan --source nse `
   --from 2016-01-01 --to 2026-01-01 --local-root "$Drop\nse" `
   --report "$Drop\nse-acquisition-plan.json"
+
+& .venv\Scripts\dhruva-public.exe acquisition-options --source nse `
+  --years 10 --as-of 2026-08-22 `
+  --report "$Drop\nse-acquisition-options.json"
 ```
 
-The planner counts weekdays as an upper bound, lists expected UDiFF filenames,
-and reports 5/8/10-year file counts when invoked for those windows. Disk size is
-`UNKNOWN` until retained samples support a defensible estimate. It never
-downloads. The official archive interface may use legacy/full bhavcopy before
-the 2024 UDiFF transition; download only what the official interface provides.
+For April 2016 onward, the planner prefers one official **Exchange Monthly
+Report** per month because its reviewed `Transaction Data` sheet contains daily
+traded-equity OHLCV, ISIN, series, turnover and trade count. It schedules annual
+MII security snapshots only where the file is publicly documented from
+2024-02-05, plus separate actions, price-index and TRI exports. Any earlier gap
+remains daily/archive work. `acquisition-options` compares this strategy with
+daily, clearing-only, security-wise and unverified-annual alternatives, including
+file/click counts and missing evidence. Neither command downloads anything.
+
+Use the exact owner steps and field-by-field limitations in
+[NSE bulk/monthly acquisition review](../data/nse-bulk-acquisition-review.md).
+The monthly report replaces traded bars, not a complete listed-security or
+lifecycle history. Disk size remains `UNKNOWN` until retained files support a
+defensible estimate.
 
 ## 3. Inspect and preflight
 

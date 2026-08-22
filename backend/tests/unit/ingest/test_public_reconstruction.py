@@ -7,6 +7,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from dhruva.ingest.public_exchange import (
     DisappearanceState,
     ObservationState,
@@ -18,6 +20,8 @@ from dhruva.ingest.public_exchange import (
 from dhruva.ingest.public_reconstruction import (
     BiasSeverity,
     LiquidityUniverseRule,
+    RequirementClassification,
+    build_acquisition_options,
     build_acquisition_plan,
     build_bias_report,
     compute_liquidity_memberships,
@@ -192,7 +196,47 @@ def test_acquisition_plans_are_network_free_and_scale_for_5_8_10_years() -> None
             to_date=date(2026, 1, 1),
         )
         counts.append(plan.expected_weekday_sessions)
-        assert plan.automation_status == "AUTOMATION_UNCLEAR"
+        assert plan.automation_status == "MANUAL_ONLY"
+        if years == 10:
+            assert plan.strategy.startswith("HYBRID_DAILY_GAP_PLUS_MONTHLY")
+        else:
+            assert plan.strategy == "MONTHLY_EXCHANGE_PLUS_ANNUAL_SECURITY_SNAPSHOT"
+        assert dict(plan.expected_file_counts)["exchange_monthly_reports"] > 0
+        assert dict(plan.requirements)["open_high_low_close"] is (
+            RequirementClassification.FULLY_REPLACE_DAILY
+        )
+        assert dict(plan.requirements)["lifecycle_evidence"] is (
+            RequirementClassification.PARTIALLY_REPLACE_DAILY
+        )
         assert plan.terms_review_required
         assert plan.approximate_disk_bytes is None
     assert counts == sorted(counts)
+
+
+@pytest.mark.parametrize(("years", "file_count"), [(1, 16), (5, 66), (10, 126)])
+def test_acquisition_options_select_monthly_strategy_with_conservative_counts(
+    years: int, file_count: int
+) -> None:
+    """Compare complete months and count only public post-2024 annual snapshots."""
+    report = build_acquisition_options(source="nse", years=years, as_of=date(2026, 8, 22))
+    assert report.lowest_work_valid_strategy == ("MONTHLY_EXCHANGE_PLUS_ANNUAL_SECURITY_SNAPSHOT")
+    recommended = next(item for item in report.options if item.recommended)
+    assert recommended.valid_for_public_reconstruction
+    assert recommended.file_count == file_count
+    assert recommended.manual_clicks_estimated == file_count
+    clearing = next(
+        item for item in report.options if item.strategy == "CLEARING_CORPORATION_MONTHLY_ONLY"
+    )
+    assert not clearing.valid_for_public_reconstruction
+    assert "OHLCV" in clearing.missing_requirements
+
+
+def test_acquisition_options_use_hybrid_before_monthly_publication() -> None:
+    """Do not claim that monthly files cover a pre-April-2016 range."""
+    report = build_acquisition_options(source="nse", years=11, as_of=date(2026, 8, 22))
+    recommended = next(item for item in report.options if item.recommended)
+    assert report.lowest_work_valid_strategy.startswith("HYBRID_DAILY_GAP_PLUS_MONTHLY")
+    assert recommended.valid_for_public_reconstruction
+    assert "dates before April 2016 remain daily bhavcopy acquisition" in (
+        recommended.scientific_limitations
+    )

@@ -175,7 +175,7 @@ class EstablishBrokerSession:
 
     __slots__ = ("_authenticator", "_clock", "_key_provider", "_open", "_read", "_store")
 
-    def __init__(  # noqa: PLR0913 - five collaborators, each a different capability
+    def __init__(  # noqa: PLR0913, PLR0917 - distinct collaborator capabilities
         self,
         unit_of_work_factory: Callable[[AccountId], IdentityUnitOfWork],
         key_provider: KeyProvider,

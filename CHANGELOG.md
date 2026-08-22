@@ -31,6 +31,13 @@ capital (ADR-026, ADR-029).
 
 ### Added
 
+- **Monthly-first public NSE acquisition.** `dhruva-public` now recognizes and
+  streams the official Exchange Monthly `Transaction Data` workbook offline,
+  mapping daily traded cash-equity ISIN/series/OHLCV/turnover/trade count while
+  retaining `PUBLIC_RECONSTRUCTED` and `RETRIEVED_LATER` semantics. The planner
+  chooses monthly reports plus annual public MII checkpoints where valid, and
+  `acquisition-options` compares file/click burden, coverage and scientific
+  gaps without adding any downloader or browser automation.
 - **Effective-dated shared reference universe (ADR-075).** The exact twenty
   owner-approved NSE equities and their names, aliases, sectors and concentration
   metadata are committed as reviewable configuration, with `NAM-INDIA` and `M&M`

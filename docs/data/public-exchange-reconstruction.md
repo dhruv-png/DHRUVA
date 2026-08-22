@@ -1,8 +1,8 @@
 # Public exchange historical reconstruction
 
 Status: implemented, manual-drop-first, network-free, and diagnostic-only.
-Research review date: 2026-08-16. Machine matrix revision:
-`public-source-review-2026-08-16`.
+Research review date: 2026-08-22. Machine matrix revision:
+`public-source-review-2026-08-22`.
 
 This path turns owner-retained official exchange reports into the existing six
 canonical CSV roles. It is useful because a frozen liquidity universe spanning
@@ -18,6 +18,12 @@ The review used official sources, not third-party format blogs:
   `CM-UDiFF Common Bhavcopy Final`, `Full Bhavcopy and Security Deliverable
   data`, and `CM - MII - Security File`; it also says the prior CM bhavcopy and
   common bhavcopy were discontinued from 2024-07-08 in favour of UDiFF.
+- NSE [Segment-wise Historical Reports](https://www.nseindia.com/static/regulations/segment-wise-historical-reports)
+  publishes a monthly Exchange workbook whose `Transaction Data` sheet carries
+  daily traded-security ISIN, symbol, series, OHLC, quantity, rupee turnover and
+  trade count. The clearing workbook carries settlement/margin evidence but no
+  OHLCV. The exact audit and owner workflow are in
+  [NSE bulk/monthly acquisition review](nse-bulk-acquisition-review.md).
 - NSE circular [NSE/MSD/60315](https://nsearchives.nseindia.com/content/circulars/MSD60315.pdf)
   establishes daily website dissemination of the MII security master from
   2024-02-05. The later interoperability circular
@@ -68,15 +74,19 @@ Supported NSE offline layouts are:
 | `NSE_CM_UDIFF_BHAVCOPY_V1` | ISO-tag headers including `TradDt`, `FinInstrmId`, `ISIN`, `TckrSymb`, `SctySrs`, OHLC and `TtlTradgVol` |
 | `NSE_CM_LEGACY_BHAVCOPY_V1` | legacy `SYMBOL`, `SERIES`, OHLC, `TOTTRDQTY`, `TIMESTAMP`, `ISIN` |
 | `NSE_FULL_BHAVCOPY_DELIVERABLE_V1` | `DATE1`, `*_PRICE`, `TTL_TRD_QNTY`, `DELIV_QTY`; needs separate unambiguous identity evidence |
+| `NSE_EXCHANGE_MONTHLY_TRANSACTION_V1` | exact official `Transaction Data` headers; maps traded `Equity` and `Equity SME` rows with ISIN, daily OHLCV, turnover and trade count |
 | `NSE_CM_MII_SECURITY_V1` | `FinInstrmId`, `TckrSymb`, `SctySrs`, `ISIN` plus a documented security-name field |
 | `NSE_CORPORATE_ACTIONS_V1` | official CSV table fields including purpose/ex/record date |
 | `NSE_NIFTY_PRICE_INDEX_V1` | date/OHLC/shares-traded history |
 | `NSE_NIFTY_TRI_V1` | date and `Total Returns Index` |
 
-ZIP must contain exactly one CSV; gzip and plain CSV are accepted. Files are
-hashed before parsing. Symlinks, path escapes, oversized ZIP members, malformed
-headers, invalid identifiers/dates/numbers, unknown schemas, duplicate bars,
-and conflicting identities fail closed. Original bytes are never rewritten.
+Bhavcopy ZIP must contain exactly one CSV; gzip and plain CSV are accepted. The
+monthly mapper streams the reviewed `Transaction Data` worksheet from XLSX,
+uses hardened XML parsing, bounds archive members/uncompressed size and rejects
+unknown headers. Files are hashed before parsing. Symlinks, path escapes,
+malformed headers, invalid identifiers/dates/numbers, unknown schemas,
+duplicate bars, and conflicting identities fail closed. Original bytes are
+never rewritten.
 
 ## Evidence, time, and return semantics
 

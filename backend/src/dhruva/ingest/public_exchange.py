@@ -6,15 +6,18 @@ import csv
 import gzip
 import hashlib
 import io
+import posixpath
 import re
 import zipfile
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, TextIO
+
+from defusedxml import ElementTree  # type: ignore[import-untyped]
 
 __all__ = [
     "DisappearanceState",
@@ -36,7 +39,10 @@ __all__ = [
 
 _MAX_HEADER_BYTES = 256_000
 _MAX_ARCHIVE_MEMBERS = 8
+_MAX_XLSX_ARCHIVE_MEMBERS = 128
 _MAX_UNCOMPRESSED_BYTES = 2_000_000_000
+_MAX_XLSX_COLUMNS = 16_384
+_MAX_XLSX_COLUMN_LETTERS = 3
 _MAX_TEXT_CHARS = 4096
 _ISIN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]\Z")
 _SAFE_SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9&._-]{0,31}\Z")
@@ -70,6 +76,7 @@ class PublicFileFormat(StrEnum):
     NSE_CM_UDIFF_BHAVCOPY_V1 = "NSE_CM_UDIFF_BHAVCOPY_V1"
     NSE_CM_LEGACY_BHAVCOPY_V1 = "NSE_CM_LEGACY_BHAVCOPY_V1"
     NSE_FULL_BHAVCOPY_DELIVERABLE_V1 = "NSE_FULL_BHAVCOPY_DELIVERABLE_V1"
+    NSE_EXCHANGE_MONTHLY_TRANSACTION_V1 = "NSE_EXCHANGE_MONTHLY_TRANSACTION_V1"
     NSE_CM_MII_SECURITY_V1 = "NSE_CM_MII_SECURITY_V1"
     NSE_CORPORATE_ACTIONS_V1 = "NSE_CORPORATE_ACTIONS_V1"
     NSE_NIFTY_PRICE_INDEX_V1 = "NSE_NIFTY_PRICE_INDEX_V1"
@@ -130,6 +137,7 @@ class PublicBar:
     trade_count: int | None
     delivery_quantity: int | None
     source_format: PublicFileFormat
+    company_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +190,40 @@ class PublicBenchmarkBar:
     source_format: PublicFileFormat
 
 
+_NSE_EXCHANGE_MONTHLY_TRANSACTION_HEADERS: Final = (
+    "Year",
+    "Month",
+    "Day",
+    "Date",
+    "Product",
+    "ISIN",
+    "Symbol",
+    "Issuer Name",
+    "CIN of Issuer",
+    "Exchange",
+    "Platform",
+    "Instrument Type (Series)",
+    "Listing Status",
+    "Available for Trading",
+    "Trading Status",
+    "Trade Term/Type",
+    "Previous Close Price",
+    "Open Price",
+    "High Price",
+    "Low Price",
+    "Last Traded Price",
+    "Close Price",
+    "VWAP (Turnover/ Total Traded Quantity)",
+    "Trade Count",
+    "Traded Quantity",
+    "Turnover (in Rs)",
+)
+
 _SIGNATURES: Final[tuple[tuple[PublicFileFormat, frozenset[str]], ...]] = (
+    (
+        PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1,
+        frozenset(_NSE_EXCHANGE_MONTHLY_TRANSACTION_HEADERS),
+    ),
     (
         PublicFileFormat.NSE_CM_UDIFF_BHAVCOPY_V1,
         frozenset(
@@ -256,12 +297,15 @@ def inspect_public_file(path: Path) -> PublicFileInspection:
     with resolved.open("rb") as binary:
         for chunk in iter(lambda: binary.read(1024 * 1024), b""):
             digest.update(chunk)
-    with _open_csv(resolved) as stream:
-        reader = csv.reader(stream)
-        try:
-            header = tuple(_clean_header(item) for item in next(reader))
-        except StopIteration as error:
-            raise ValueError("public source has no CSV header") from error
+    if resolved.name.lower().endswith(".xlsx"):
+        header = _xlsx_header(resolved)
+    else:
+        with _open_csv(resolved) as stream:
+            reader = csv.reader(stream)
+            try:
+                header = tuple(_clean_header(item) for item in next(reader))
+            except StopIteration as error:
+                raise ValueError("public source has no CSV header") from error
     detected = _detect(header, resolved.name)
     return PublicFileInspection(
         path=resolved,
@@ -285,6 +329,15 @@ def _detect(header: tuple[str, ...], filename: str) -> PublicFileFormat:
         return PublicFileFormat.UNKNOWN
     detected = matches[0]
     lower = filename.lower()
+    if detected is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1 and not lower.endswith(
+        ".xlsx"
+    ):
+        return PublicFileFormat.UNKNOWN
+    if (
+        detected is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1
+        and header != _NSE_EXCHANGE_MONTHLY_TRANSACTION_HEADERS
+    ):
+        return PublicFileFormat.UNKNOWN
     if detected is PublicFileFormat.NSE_CM_MII_SECURITY_V1 and not (
         lower.endswith(".csv") or lower.endswith(".csv.gz") or lower.endswith(".gz")
     ):
@@ -298,13 +351,60 @@ def iter_public_bars(inspection: PublicFileInspection) -> Iterator[PublicBar]:
         PublicFileFormat.NSE_CM_UDIFF_BHAVCOPY_V1,
         PublicFileFormat.NSE_CM_LEGACY_BHAVCOPY_V1,
         PublicFileFormat.NSE_FULL_BHAVCOPY_DELIVERABLE_V1,
+        PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1,
     }
     if inspection.format not in supported:
         raise ValueError(f"not a supported bar format: {inspection.format.value}")
+    if inspection.format is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1:
+        yield from _iter_monthly_bars(inspection)
+        return
     with _open_csv(inspection.path) as stream:
         for number, row in enumerate(csv.DictReader(stream), start=2):
             clean = _clean_row(row)
             yield _bar(clean, inspection.format, inspection.sha256, number)
+
+
+def _iter_monthly_bars(inspection: PublicFileInspection) -> Iterator[PublicBar]:
+    rows = _iter_xlsx_rows(inspection.path)
+    try:
+        header = tuple(_clean_header(item) for item in next(rows))
+    except StopIteration as error:
+        raise ValueError("monthly exchange report has no Transaction Data header") from error
+    for number, values in enumerate(rows, start=2):
+        if len(values) > len(header):
+            raise ValueError("monthly exchange row has more values than headers")
+        padded = (*values, *("" for _ in range(len(header) - len(values))))
+        row = dict(zip(header, padded, strict=True))
+        product = row["Product"].strip()
+        if product not in {"Equity", "Equity SME"}:
+            continue
+        if row["Trading Status"].strip() != "Traded":
+            continue
+        if row["Exchange"].strip() != "NSE":
+            raise ValueError("monthly exchange equity row is not NSE")
+        if row["Available for Trading"].strip() != "Y":
+            raise ValueError("monthly exchange traded row is not marked available")
+        isin = _isin(_required(row["ISIN"], "ISIN"))
+        if isin is None:
+            raise ValueError("monthly exchange equity row requires ISIN")
+        yield PublicBar(
+            source_row_id=_row_id(inspection.sha256, number),
+            trading_date=_xlsx_day(row["Date"]),
+            symbol=_symbol(row["Symbol"]),
+            series=_series(row["Instrument Type (Series)"]),
+            isin=isin,
+            security_id=None,
+            open=_decimal(row["Open Price"]),
+            high=_decimal(row["High Price"]),
+            low=_decimal(row["Low Price"]),
+            close=_decimal(row["Close Price"]),
+            volume=_integer(row["Traded Quantity"]),
+            turnover=_decimal(row["Turnover (in Rs)"]),
+            trade_count=_integer(row["Trade Count"]),
+            delivery_quantity=None,
+            source_format=inspection.format,
+            company_name=_optional(row["Issuer Name"]),
+        )
 
 
 def _bar(
@@ -497,6 +597,141 @@ def _open_csv(path: Path) -> _TextContext:
     return _TextContext(plain_text, (plain_text,))
 
 
+_SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+def _xlsx_header(path: Path) -> tuple[str, ...]:
+    rows = _iter_xlsx_rows(path)
+    try:
+        return tuple(_clean_header(item) for item in next(rows))
+    except StopIteration as error:
+        raise ValueError("monthly exchange report has no Transaction Data header") from error
+
+
+def _validated_xlsx_members(archive: zipfile.ZipFile) -> set[str]:
+    infos = [item for item in archive.infolist() if not item.is_dir()]
+    if not infos or len(infos) > _MAX_XLSX_ARCHIVE_MEMBERS:
+        raise ValueError("unsafe XLSX member count")
+    total_size = 0
+    names: set[str] = set()
+    for info in infos:
+        normalized = posixpath.normpath(info.filename.replace("\\", "/"))
+        if (
+            normalized.startswith("/")
+            or normalized == ".."
+            or normalized.startswith("../")
+            or info.file_size > _MAX_UNCOMPRESSED_BYTES
+        ):
+            raise ValueError("unsafe XLSX member")
+        total_size += info.file_size
+        if total_size > _MAX_UNCOMPRESSED_BYTES or normalized in names:
+            raise ValueError("unsafe XLSX archive")
+        names.add(normalized)
+    return names
+
+
+def _xlsx_sheet_path(archive: zipfile.ZipFile, names: set[str]) -> str:
+    workbook_name = "xl/workbook.xml"
+    relationships_name = "xl/_rels/workbook.xml.rels"
+    if workbook_name not in names or relationships_name not in names:
+        raise ValueError("XLSX workbook metadata is absent")
+    workbook = ElementTree.fromstring(archive.read(workbook_name))
+    sheet = next(
+        (
+            item
+            for item in workbook.findall(f".//{{{_SPREADSHEET_NS}}}sheet")
+            if item.attrib.get("name") == "Transaction Data"
+        ),
+        None,
+    )
+    if sheet is None:
+        raise ValueError("XLSX Transaction Data sheet is absent")
+    relationship_id = sheet.attrib.get(f"{{{_OFFICE_REL_NS}}}id")
+    relationships = ElementTree.fromstring(archive.read(relationships_name))
+    relationship = next(
+        (
+            item
+            for item in relationships.findall(f"{{{_PACKAGE_REL_NS}}}Relationship")
+            if item.attrib.get("Id") == relationship_id
+        ),
+        None,
+    )
+    if relationship is None:
+        raise ValueError("XLSX Transaction Data relationship is absent")
+    target = relationship.attrib.get("Target", "")
+    sheet_path = posixpath.normpath(posixpath.join("xl", target))
+    if sheet_path not in names or not sheet_path.startswith("xl/worksheets/"):
+        raise ValueError("unsafe XLSX Transaction Data target")
+    return sheet_path
+
+
+def _xlsx_shared_strings(archive: zipfile.ZipFile, names: set[str]) -> tuple[str, ...]:
+    name = "xl/sharedStrings.xml"
+    if name not in names:
+        return ()
+    strings: list[str] = []
+    with archive.open(name) as stream:
+        for _event, element in ElementTree.iterparse(stream, events=("end",)):
+            if element.tag != f"{{{_SPREADSHEET_NS}}}si":
+                continue
+            strings.append(
+                "".join(item.text or "" for item in element.iter(f"{{{_SPREADSHEET_NS}}}t"))
+            )
+            element.clear()
+    return tuple(strings)
+
+
+def _xlsx_column_index(reference: str) -> int:
+    letters = reference.rstrip("0123456789").upper()
+    if not letters or len(letters) > _MAX_XLSX_COLUMN_LETTERS:
+        raise ValueError("unsafe XLSX cell reference")
+    result = 0
+    for letter in letters:
+        if not "A" <= letter <= "Z":
+            raise ValueError("unsafe XLSX cell reference")
+        result = result * 26 + ord(letter) - ord("A") + 1
+    return result - 1
+
+
+def _xlsx_cell_value(cell: ElementTree.Element, shared: tuple[str, ...]) -> str:
+    cell_type = cell.attrib.get("t", "")
+    if cell_type == "inlineStr":
+        return "".join(item.text or "" for item in cell.iter(f"{{{_SPREADSHEET_NS}}}t"))
+    value = cell.find(f"{{{_SPREADSHEET_NS}}}v")
+    raw = "" if value is None or value.text is None else value.text
+    if cell_type == "s":
+        try:
+            return shared[int(raw)]
+        except (IndexError, ValueError) as error:
+            raise ValueError("invalid XLSX shared-string reference") from error
+    if cell_type == "b":
+        return "TRUE" if raw == "1" else "FALSE"
+    return raw
+
+
+def _iter_xlsx_rows(path: Path) -> Iterator[tuple[str, ...]]:
+    with zipfile.ZipFile(path) as archive:
+        names = _validated_xlsx_members(archive)
+        sheet_path = _xlsx_sheet_path(archive, names)
+        shared = _xlsx_shared_strings(archive, names)
+        with archive.open(sheet_path) as stream:
+            for _event, element in ElementTree.iterparse(stream, events=("end",)):
+                if element.tag != f"{{{_SPREADSHEET_NS}}}row":
+                    continue
+                values: list[str] = []
+                for cell in element.findall(f"{{{_SPREADSHEET_NS}}}c"):
+                    index = _xlsx_column_index(cell.attrib.get("r", ""))
+                    if index >= _MAX_XLSX_COLUMNS:
+                        raise ValueError("unsafe XLSX column")
+                    if index >= len(values):
+                        values.extend("" for _ in range(index - len(values) + 1))
+                    values[index] = _xlsx_cell_value(cell, shared).strip()
+                yield tuple(values)
+                element.clear()
+
+
 def _clean_header(value: str) -> str:
     cleaned = value.strip().lstrip("\ufeff")
     if not cleaned or len(cleaned.encode()) > _MAX_HEADER_BYTES:
@@ -524,6 +759,17 @@ def _day(value: str) -> date:
         except (ValueError, AttributeError):
             continue
     raise ValueError(f"unsupported public date: {raw}")
+
+
+def _xlsx_day(value: str) -> date:
+    raw = _required(value, "date")
+    try:
+        serial = Decimal(raw)
+    except InvalidOperation:
+        return _day(raw)
+    if serial != serial.to_integral_value() or not Decimal(1) <= serial <= Decimal(2_958_465):
+        raise ValueError(f"unsupported XLSX date serial: {raw}")
+    return date(1899, 12, 30) + timedelta(days=int(serial))
 
 
 def _optional_day(value: str) -> date | None:

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 from datetime import date
 from decimal import Decimal
+from html import escape
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
@@ -33,6 +35,190 @@ def _modern(path: Path) -> Path:
         "2024-07-08,2024-07-08,CM,NSE,STK,101,INE000A01001,ALPHA,EQ,100,105,99,"
         "104,100000,10200000,400",
     )
+
+
+_MONTHLY_HEADERS = (
+    "Year",
+    "Month",
+    "Day",
+    "Date",
+    "Product",
+    "ISIN",
+    "Symbol",
+    "Issuer Name",
+    "CIN of Issuer",
+    "Exchange",
+    "Platform",
+    "Instrument Type (Series)",
+    "Listing Status",
+    "Available for Trading",
+    "Trading Status",
+    "Trade Term/Type",
+    "Previous Close Price",
+    "Open Price",
+    "High Price",
+    "Low Price",
+    "Last Traded Price",
+    "Close Price",
+    "VWAP (Turnover/ Total Traded Quantity)",
+    "Trade Count",
+    "Traded Quantity",
+    "Turnover (in Rs)",
+)
+
+
+def _column_name(index: int) -> str:
+    result = ""
+    value = index
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result
+
+
+def _monthly_xlsx(
+    path: Path,
+    headers: tuple[str, ...] = _MONTHLY_HEADERS,
+) -> Path:
+    strings = list(headers)
+    rows = (
+        (
+            "2024",
+            "July",
+            "MONDAY",
+            (date(2024, 7, 8) - date(1899, 12, 30)).days,
+            "Equity",
+            "INE000A01001",
+            "ALPHA",
+            "Alpha Industries",
+            "N.A",
+            "NSE",
+            "N.A",
+            "EQ",
+            "Listed",
+            "Y",
+            "Traded",
+            "N.A",
+            99,
+            100,
+            105,
+            99,
+            103,
+            104,
+            102,
+            400,
+            100000,
+            10200000,
+        ),
+        (
+            "2024",
+            "July",
+            "MONDAY",
+            (date(2024, 7, 8) - date(1899, 12, 30)).days,
+            "Equity SME",
+            "INE000A01002",
+            "SMALLCO",
+            "",
+            "N.A",
+            "NSE",
+            "SME",
+            "SM",
+            "Listed",
+            "Y",
+            "Traded",
+            "N.A",
+            49,
+            50,
+            51,
+            48,
+            50,
+            50,
+            50,
+            12,
+            1000,
+            50000,
+        ),
+        (
+            "2024",
+            "July",
+            "MONDAY",
+            (date(2024, 7, 8) - date(1899, 12, 30)).days,
+            "Debt",
+            "INE000A01001",
+            "SKIPME",
+            "Debt Instrument",
+            "N.A",
+            "NSE",
+            "N.A",
+            "N1",
+            "Listed",
+            "Y",
+            "Traded",
+            "N.A",
+            99,
+            100,
+            105,
+            99,
+            103,
+            104,
+            102,
+            400,
+            100000,
+            10200000,
+        ),
+    )
+    for row in rows:
+        strings.extend(str(value) for value in row if isinstance(value, str))
+    string_index = {value: index for index, value in enumerate(dict.fromkeys(strings))}
+    unique_strings = tuple(string_index)
+
+    def cells(row_number: int, values: tuple[object, ...]) -> str:
+        output: list[str] = []
+        for index, value in enumerate(values, start=1):
+            reference = f"{_column_name(index)}{row_number}"
+            if isinstance(value, str):
+                output.append(f'<c r="{reference}" t="s"><v>{string_index[value]}</v></c>')
+            else:
+                output.append(f'<c r="{reference}"><v>{value}</v></c>')
+        return "".join(output)
+
+    sheet_rows = [f'<row r="1">{cells(1, headers)}</row>']
+    sheet_rows.extend(
+        f'<row r="{number}">{cells(number, row)}</row>' for number, row in enumerate(rows, start=2)
+    )
+    shared = "".join(f"<si><t>{escape(value)}</t></si>" for value in unique_strings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        )
+        archive.writestr(
+            "xl/workbook.xml",
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            "<sheets>"
+            '<sheet name="Transaction Data" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        )
+        archive.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        archive.writestr(
+            "xl/sharedStrings.xml",
+            f'<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{shared}</sst>',
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f"<sheetData>{''.join(sheet_rows)}</sheetData></worksheet>",
+        )
+    return path
 
 
 def test_modern_udiff_mapping_preserves_raw_ohlcv_and_ids(tmp_path: Path) -> None:
@@ -73,6 +259,44 @@ def test_full_bhavcopy_delivery_mapping(tmp_path: Path) -> None:
     bar = next(iter_public_bars(inspect_public_file(source)))
     assert bar.source_format is PublicFileFormat.NSE_FULL_BHAVCOPY_DELIVERABLE_V1
     assert (bar.delivery_quantity, bar.turnover) == (55000, Decimal("10200000"))
+
+
+def test_exchange_monthly_xlsx_maps_daily_traded_equities_offline(tmp_path: Path) -> None:
+    """Map exact monthly Transaction Data headers and exclude non-equity products."""
+    source = _monthly_xlsx(tmp_path / "Exchange_Data_CM_Segment_202407.xlsx")
+    inspection = inspect_public_file(source)
+    bars = tuple(iter_public_bars(inspection))
+    assert inspection.format is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1
+    assert len(bars) == 2
+    bar = next(item for item in bars if item.symbol == "ALPHA")
+    assert (bar.trading_date, bar.symbol, bar.series, bar.isin) == (
+        date(2024, 7, 8),
+        "ALPHA",
+        "EQ",
+        "INE000A01001",
+    )
+    assert (bar.open, bar.high, bar.low, bar.close) == (
+        Decimal("100"),
+        Decimal("105"),
+        Decimal("99"),
+        Decimal("104"),
+    )
+    assert (bar.volume, bar.turnover, bar.trade_count, bar.company_name) == (
+        100000,
+        Decimal("10200000"),
+        400,
+        "Alpha Industries",
+    )
+    assert next(item for item in bars if item.symbol == "SMALLCO").company_name is None
+
+
+def test_exchange_monthly_xlsx_rejects_an_unknown_header_revision(tmp_path: Path) -> None:
+    """Fail closed when the monthly workbook adds or changes a source column."""
+    source = _monthly_xlsx(
+        tmp_path / "Exchange_Data_CM_changed.xlsx",
+        (*_MONTHLY_HEADERS, "Unexpected Field"),
+    )
+    assert inspect_public_file(source).format is PublicFileFormat.UNKNOWN
 
 
 def test_mii_security_snapshot_mapping(tmp_path: Path) -> None:

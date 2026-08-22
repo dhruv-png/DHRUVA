@@ -38,6 +38,7 @@ def test_parser_exposes_manual_drop_workflow_without_downloader() -> None:
         ("coverage", "--drop", "."),
         ("bias", "--drop", "."),
         ("plan", "--source", "nse", "--from", "2021-01-01", "--to", "2026-01-01"),
+        ("acquisition-options", "--source", "nse", "--years", "10"),
         ("import", "--manifest", "manifest.json", "--account", "owner-family"),
     )
     assert all(parser.parse_args(command).command == command[0] for command in commands)
@@ -57,7 +58,36 @@ async def test_plan_performs_no_network(
     monkeypatch.setattr(socket, "create_connection", refused)
     code = await run(["plan", "--source", "nse", "--from", "2021-01-01", "--to", "2026-01-01"])
     assert code == 0
-    assert '"automation_status":"AUTOMATION_UNCLEAR"' in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert '"automation_status":"MANUAL_ONLY"' in output
+    assert '"strategy":"MONTHLY_EXCHANGE_PLUS_ANNUAL_SECURITY_SNAPSHOT"' in output
+
+
+@pytest.mark.asyncio
+async def test_acquisition_options_are_offline_and_report_lowest_work(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Comparison is deterministic when its as-of date is explicit."""
+
+    def refused(*_args: object, **_kwargs: object) -> socket.socket:
+        raise AssertionError("offline command attempted network access")
+
+    monkeypatch.setattr(socket, "create_connection", refused)
+    code = await run(
+        [
+            "acquisition-options",
+            "--source",
+            "nse",
+            "--years",
+            "10",
+            "--as-of",
+            "2026-08-22",
+        ]
+    )
+    assert code == 0
+    output = capsys.readouterr().out
+    assert '"file_count":126' in output
+    assert '"lowest_work_valid_strategy":"MONTHLY_EXCHANGE_PLUS_ANNUAL_SECURITY_SNAPSHOT"' in output
 
 
 @pytest.mark.asyncio

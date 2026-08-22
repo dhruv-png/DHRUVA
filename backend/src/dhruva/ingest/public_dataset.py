@@ -42,6 +42,7 @@ _BAR_FORMATS = {
     PublicFileFormat.NSE_CM_UDIFF_BHAVCOPY_V1,
     PublicFileFormat.NSE_CM_LEGACY_BHAVCOPY_V1,
     PublicFileFormat.NSE_FULL_BHAVCOPY_DELIVERABLE_V1,
+    PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1,
 }
 _BAR_BATCH_SIZE = 5000
 _DEFAULT_LIQUIDITY_RULE = LiquidityUniverseRule()
@@ -62,7 +63,7 @@ class NsePublicDropMapper:
     """Versioned adapter from one local NSE drop to the canonical contract."""
 
     mapper_id = "nse_public_drop"
-    mapping_revision = "nse_public_offline_mapper_v1"
+    mapping_revision = "nse_public_offline_mapper_v2"
 
     def __init__(
         self,
@@ -251,7 +252,7 @@ def _load_bars(
                     _IdentityRevision(
                         key,
                         bar.symbol,
-                        bar.symbol,
+                        bar.company_name or bar.symbol,
                         bar.isin,
                         bar.security_id,
                         bar.trading_date,
@@ -783,7 +784,11 @@ def build_public_dataset(  # noqa: PLR0915 - one atomic file-to-file reconstruct
                 "format": item.format.value,
                 "acquisition": "MANUAL_DROP",
                 "retrieved_at": retrieved,
-                "source_url_identifier": "https://www.nseindia.com/all-reports",
+                "source_url_identifier": (
+                    "https://www.nseindia.com/static/regulations/segment-wise-historical-reports"
+                    if item.format is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1
+                    else "https://www.nseindia.com/all-reports"
+                ),
             }
             for item in sorted(inspections, key=lambda value: value.original_filename)
         ]
@@ -793,7 +798,7 @@ def build_public_dataset(  # noqa: PLR0915 - one atomic file-to-file reconstruct
             "evidence_class": EvidenceClass.PUBLIC_RECONSTRUCTED.value,
             "source_family": "NSE_PUBLIC_REPORTS",
             "reconstruction_revision": PUBLIC_RECONSTRUCTION_REVISION,
-            "mapper_revision": "nse_public_offline_mapper_v1",
+            "mapper_revision": "nse_public_offline_mapper_v2",
             "identity_mapping_revision": revision,
             "universe_reconstruction_revision": rule.revision,
             "event_time_semantics": "SOURCE_FILE_DATE",

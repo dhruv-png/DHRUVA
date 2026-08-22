@@ -18,6 +18,7 @@ from dhruva.contexts.platform.infrastructure.database.engine import (
 from dhruva.ingest.historical_import import import_historical_dataset
 from dhruva.ingest.public_dataset import build_public_dataset
 from dhruva.ingest.public_reconstruction import (
+    build_acquisition_options,
     build_acquisition_plan,
     build_bias_report,
     canonical_json_bytes,
@@ -94,6 +95,17 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--to", dest="to_date", type=date.fromisoformat, required=True)
     plan.add_argument("--local-root", type=Path)
     plan.add_argument("--report", type=Path)
+    options = sub.add_parser(
+        "acquisition-options", help="compare NSE manual acquisition strategies"
+    )
+    options.add_argument("--source", choices=("nse",), required=True)
+    options.add_argument("--years", type=int, required=True)
+    options.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        default=datetime.now(UTC).date(),
+    )
+    options.add_argument("--report", type=Path)
     apply = sub.add_parser("import", help="apply an already READY canonical manifest")
     apply.add_argument("--manifest", type=Path, required=True)
     apply.add_argument("--account", required=True)
@@ -173,7 +185,7 @@ def _coverage_payload(drop: Path) -> bytes:
     return canonical_json_bytes(body) + b"\n"
 
 
-async def run(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
+async def run(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911, PLR0912, PLR0915
     """Execute one local operation."""
     args = build_parser().parse_args(argv)
     if args.command == "sources":
@@ -243,6 +255,15 @@ async def run(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
             from_date=args.from_date,
             to_date=args.to_date,
             local_root=args.local_root,
+        ).export_bytes()
+        _write(args.report, payload)
+        sys.stdout.buffer.write(payload)
+        return _EXIT_OK
+    if args.command == "acquisition-options":
+        payload = build_acquisition_options(
+            source=args.source,
+            years=args.years,
+            as_of=args.as_of,
         ).export_bytes()
         _write(args.report, payload)
         sys.stdout.buffer.write(payload)

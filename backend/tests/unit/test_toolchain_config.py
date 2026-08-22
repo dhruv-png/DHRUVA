@@ -149,6 +149,10 @@ DEPENDENCY_PROVENANCE: dict[str, str] = {
     "forbids storing it recoverably",
     "httpx2": "MVP 1 - async transport for the narrow read-only Kite market-data "
     "adapter (ADR-076); provider HTTP types remain in Reference infrastructure",
+    "defusedxml": (
+        "NSE bulk acquisition spike - hardened parsing of owner-retained public "
+        "Exchange Monthly XLSX evidence; no network capability"
+    ),
 }
 
 

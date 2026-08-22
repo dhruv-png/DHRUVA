@@ -22,18 +22,23 @@ from dhruva.ingest.public_exchange import (
     PublicFileInspection,
     PublicSecurity,
     inspect_public_file,
+    iter_public_bars,
 )
 
 __all__ = [
     "PUBLIC_LIQUID_NSE_UNIVERSE_ID",
     "PUBLIC_RECONSTRUCTION_REVISION",
+    "AcquisitionOptionsReport",
     "AcquisitionPlan",
+    "AcquisitionStrategyOption",
     "BiasFinding",
     "BiasSeverity",
     "LiquidityMembership",
     "LiquidityUniverseRule",
     "PublicPreflight",
+    "RequirementClassification",
     "SecurityObservation",
+    "build_acquisition_options",
     "build_acquisition_plan",
     "build_bias_report",
     "canonical_json_bytes",
@@ -44,15 +49,20 @@ __all__ = [
 ]
 
 PUBLIC_LIQUID_NSE_UNIVERSE_ID: Final = "public-liquid-nse-v0"
-PUBLIC_RECONSTRUCTION_REVISION: Final = "public_exchange_reconstruction_v0"
+PUBLIC_RECONSTRUCTION_REVISION: Final = "public_exchange_reconstruction_v2"
 PUBLIC_PREFLIGHT_SCHEMA: Final = "dhruva.public-data-preflight.v1"
 PUBLIC_BIAS_SCHEMA: Final = "dhruva.public-reconstruction-bias.v1"
-PUBLIC_PLAN_SCHEMA: Final = "dhruva.public-acquisition-plan.v1"
-_ALLOWED_SUFFIXES = (".csv", ".csv.gz", ".zip", ".gz")
+PUBLIC_PLAN_SCHEMA: Final = "dhruva.public-acquisition-plan.v2"
+PUBLIC_OPTIONS_SCHEMA: Final = "dhruva.public-acquisition-options.v1"
+_ALLOWED_SUFFIXES = (".csv", ".csv.gz", ".zip", ".gz", ".xlsx")
 _DAYS_IN_WORK_WEEK = 5
+_MONTHS_IN_YEAR = 12
+_MAX_COMPARISON_YEARS = 50
 _LONG_DATE_DIGITS = 8
 _SHORT_DATE_DIGITS = 6
 _MIN_DUPLICATE_FILES = 2
+_MONTHLY_EXCHANGE_START = date(2016, 4, 1)
+_MII_SECURITY_PUBLIC_START = date(2024, 2, 5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +145,15 @@ class BiasSeverity(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class RequirementClassification(StrEnum):
+    """Whether a lower-work strategy can retire the daily acquisition."""
+
+    FULLY_REPLACE_DAILY = "FULLY_REPLACE_DAILY"
+    PARTIALLY_REPLACE_DAILY = "PARTIALLY_REPLACE_DAILY"
+    DAILY_STILL_REQUIRED = "DAILY_STILL_REQUIRED"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True, slots=True)
 class BiasFinding:
     """One scientific limitation and why it received its severity."""
@@ -150,10 +169,16 @@ class AcquisitionPlan:
 
     schema: str
     source: str
+    strategy: str
     from_date: str
     to_date: str
     expected_weekday_sessions: int
     expected_file_counts: tuple[tuple[str, int], ...]
+    manual_clicks_estimated: int
+    click_estimate_basis: str
+    requirements: tuple[tuple[str, RequirementClassification], ...]
+    data_fields_covered: tuple[str, ...]
+    missing_requirements: tuple[str, ...]
     approximate_disk_bytes: int | None
     present_files: int
     missing_expected_names: tuple[str, ...]
@@ -161,6 +186,41 @@ class AcquisitionPlan:
     terms_review_required: bool
     instructions: tuple[str, ...]
     limitations: tuple[str, ...]
+
+    def export_bytes(self) -> bytes:
+        """Return canonical JSON bytes."""
+        return canonical_json_bytes(asdict(self)) + b"\n"
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionStrategyOption:
+    """One compared public/manual strategy and its explicit omissions."""
+
+    strategy: str
+    recommended: bool
+    valid_for_public_reconstruction: bool
+    file_count: int | None
+    manual_clicks_estimated: int | None
+    click_estimate_basis: str
+    data_fields_covered: tuple[str, ...]
+    requirements: tuple[tuple[str, RequirementClassification], ...]
+    scientific_limitations: tuple[str, ...]
+    evidence_quality: str
+    missing_requirements: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionOptionsReport:
+    """Deterministic manual-work comparison for complete-month windows."""
+
+    schema: str
+    source: str
+    years: int
+    as_of: str
+    coverage_start: str
+    coverage_end: str
+    lowest_work_valid_strategy: str
+    options: tuple[AcquisitionStrategyOption, ...]
 
     def export_bytes(self) -> bytes:
         """Return canonical JSON bytes."""
@@ -416,7 +476,9 @@ def _inspection_date(item: PublicFileInspection) -> date | None:
     return None
 
 
-def public_preflight(inspections: tuple[PublicFileInspection, ...]) -> PublicPreflight:
+def public_preflight(  # noqa: PLR0912
+    inspections: tuple[PublicFileInspection, ...],
+) -> PublicPreflight:
     """Classify local coverage, corrections, and archive gaps deterministically."""
     unsupported = tuple(
         sorted(
@@ -433,6 +495,12 @@ def public_preflight(inspections: tuple[PublicFileInspection, ...]) -> PublicPre
     for item in inspections:
         formats[item.format.value] += 1
         on = _inspection_date(item)
+        monthly_dates: set[date] = set()
+        if item.format is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1:
+            monthly_dates = {bar.trading_date for bar in iter_public_bars(item)}
+            if monthly_dates:
+                on = min(monthly_dates)
+                dates.update(monthly_dates)
         if on is not None and item.format in {
             PublicFileFormat.NSE_CM_UDIFF_BHAVCOPY_V1,
             PublicFileFormat.NSE_CM_LEGACY_BHAVCOPY_V1,
@@ -445,7 +513,10 @@ def public_preflight(inspections: tuple[PublicFileInspection, ...]) -> PublicPre
             .replace(".csv", "")
             .replace(".zip", "")
             .replace(".gz", "")
+            .replace(".xlsx", "")
         )
+        if monthly_dates:
+            stem = f"exchange-monthly-{on:%Y-%m}"
         by_logical[(item.format, on, stem)].append(item)
     duplicates: list[str] = []
     revisions: list[str] = []
@@ -476,7 +547,7 @@ def public_preflight(inspections: tuple[PublicFileInspection, ...]) -> PublicPre
     if revisions:
         blockers.append("corrected/revised source files require explicit selection")
     if not dates:
-        blockers.append("no supported cash-equity bhavcopy dates")
+        blockers.append("no supported cash-equity bar dates")
     warnings = (
         ["weekday gaps may be exchange holidays; configured holiday evidence is absent"]
         if gaps
@@ -574,56 +645,357 @@ def build_bias_report(preflight: PublicPreflight) -> tuple[BiasFinding, ...]:
     return tuple(sorted(findings, key=lambda item: item.risk))
 
 
-def build_acquisition_plan(
-    *, source: str, from_date: date, to_date: date, local_root: Path | None = None
-) -> AcquisitionPlan:
-    """Plan manual files using weekday upper bounds; perform no network request."""
-    if source.lower() != "nse":
-        raise ValueError("only the reviewed NSE manual plan is supported")
-    if to_date < from_date:
-        raise ValueError("plan date range is reversed")
+def _weekday_sessions(from_date: date, to_date: date) -> tuple[date, ...]:
     sessions: list[date] = []
     current = from_date
     while current <= to_date:
         if current.weekday() < _DAYS_IN_WORK_WEEK:
             sessions.append(current)
         current += timedelta(days=1)
+    return tuple(sessions)
+
+
+def _calendar_months(from_date: date, to_date: date) -> tuple[date, ...]:
+    current = from_date.replace(day=1)
+    final = to_date.replace(day=1)
+    months: list[date] = []
+    while current <= final:
+        months.append(current)
+        current = (
+            date(current.year + 1, 1, 1)
+            if current.month == _MONTHS_IN_YEAR
+            else date(current.year, current.month + 1, 1)
+        )
+    return tuple(months)
+
+
+def _shift_month(value: date, months: int) -> date:
+    ordinal = value.year * _MONTHS_IN_YEAR + value.month - 1 + months
+    return date(
+        ordinal // _MONTHS_IN_YEAR,
+        ordinal % _MONTHS_IN_YEAR + 1,
+        1,
+    )
+
+
+def _annual_snapshot_months(from_date: date, to_date: date) -> tuple[date, ...]:
+    if to_date < _MII_SECURITY_PUBLIC_START:
+        return ()
+    earliest = max(from_date, _MII_SECURITY_PUBLIC_START).replace(day=1)
+    current = to_date.replace(day=1)
+    targets: list[date] = []
+    while current >= earliest:
+        targets.append(current)
+        current = _shift_month(current, -_MONTHS_IN_YEAR)
+    return tuple(sorted(targets))
+
+
+def _recommended_requirements() -> tuple[tuple[str, RequirementClassification], ...]:
+    full = RequirementClassification.FULLY_REPLACE_DAILY
+    partial = RequirementClassification.PARTIALLY_REPLACE_DAILY
+    return (
+        ("daily_date", full),
+        ("symbol", full),
+        ("isin_or_security_id", full),
+        ("series", full),
+        ("open_high_low_close", full),
+        ("volume", full),
+        ("turnover", full),
+        ("trade_count", full),
+        ("listed_security_identity", partial),
+        ("corporate_actions", partial),
+        ("nifty_price_index", full),
+        ("nifty_total_return_index", full),
+        ("lifecycle_evidence", partial),
+    )
+
+
+_MONTHLY_FIELDS = (
+    "daily date",
+    "symbol",
+    "ISIN",
+    "series",
+    "issuer name",
+    "listing classification on traded rows",
+    "open/high/low/close",
+    "volume",
+    "turnover",
+    "trade count",
+    "NIFTY 50 price history (separate export)",
+    "NIFTY 50 TRI history (separate export)",
+    "corporate actions (separate export)",
+)
+
+
+def build_acquisition_plan(
+    *, source: str, from_date: date, to_date: date, local_root: Path | None = None
+) -> AcquisitionPlan:
+    """Choose the lowest-work reviewed manual strategy without network access."""
+    if source.lower() != "nse":
+        raise ValueError("only the reviewed NSE manual plan is supported")
+    if to_date < from_date:
+        raise ValueError("plan date range is reversed")
+    sessions = _weekday_sessions(from_date, to_date)
+    daily_gap = tuple(day for day in sessions if day < _MONTHLY_EXCHANGE_START)
+    monthly_start = max(from_date, _MONTHLY_EXCHANGE_START)
+    monthly_periods = () if monthly_start > to_date else _calendar_months(monthly_start, to_date)
+    snapshot_periods = _annual_snapshot_months(from_date, to_date)
+    if monthly_periods and daily_gap:
+        strategy = "HYBRID_DAILY_GAP_PLUS_MONTHLY_EXCHANGE_AND_ANNUAL_SECURITY_SNAPSHOT"
+    elif monthly_periods:
+        strategy = "MONTHLY_EXCHANGE_PLUS_ANNUAL_SECURITY_SNAPSHOT"
+    else:
+        strategy = "DAILY_ARCHIVE_WITH_MULTI_FILE_UI"
+
     present = 0
     present_names: set[str] = set()
+    present_months: set[date] = set()
+    present_snapshot_months: set[date] = set()
+    present_formats: set[PublicFileFormat] = set()
     if local_root is not None and local_root.exists():
         present_names = {item.name.lower() for item in local_root.rglob("*") if item.is_file()}
         present = len(present_names)
-    expected_names = tuple(f"BhavCopy_NSE_CM_0_0_0_{day:%Y%m%d}_F_0000.csv.zip" for day in sessions)
-    missing = tuple(name for name in expected_names if name.lower() not in present_names)
+        for inspection in inspect_drop(local_root):
+            present_formats.add(inspection.format)
+            if inspection.format is PublicFileFormat.NSE_EXCHANGE_MONTHLY_TRANSACTION_V1:
+                present_months.update(
+                    bar.trading_date.replace(day=1) for bar in iter_public_bars(inspection)
+                )
+            if inspection.format is PublicFileFormat.NSE_CM_MII_SECURITY_V1:
+                snapshot_date = _inspection_date(inspection)
+                if snapshot_date is not None:
+                    present_snapshot_months.add(snapshot_date.replace(day=1))
+
+    missing: list[str] = [
+        f"Exchange Monthly Report - {month:%Y-%m}"
+        for month in monthly_periods
+        if month not in present_months
+    ]
+    missing.extend(
+        name
+        for day in daily_gap
+        if (name := f"BhavCopy_NSE_CM_0_0_0_{day:%Y%m%d}_F_0000.csv.zip").lower()
+        not in present_names
+    )
+    missing.extend(
+        f"Annual MII security snapshot near {month:%Y-%m}"
+        for month in snapshot_periods
+        if month not in present_snapshot_months
+    )
+    for label, file_format in (
+        ("Corporate Actions history export", PublicFileFormat.NSE_CORPORATE_ACTIONS_V1),
+        ("NIFTY 50 price-index history", PublicFileFormat.NSE_NIFTY_PRICE_INDEX_V1),
+        ("NIFTY 50 TRI history", PublicFileFormat.NSE_NIFTY_TRI_V1),
+    ):
+        if file_format not in present_formats:
+            missing.append(label)
+
+    counts = (
+        ("exchange_monthly_reports", len(monthly_periods)),
+        ("daily_bhavcopy_for_pre_2016_04_gap", len(daily_gap)),
+        ("annual_security_master_snapshots_where_public", len(snapshot_periods)),
+        ("corporate_action_exports", 1),
+        ("nifty50_price_index", 1),
+        ("nifty50_tri", 1),
+    )
+    total_files = sum(item[1] for item in counts)
     return AcquisitionPlan(
-        PUBLIC_PLAN_SCHEMA,
+        schema=PUBLIC_PLAN_SCHEMA,
+        source="nse",
+        strategy=strategy,
+        from_date=from_date.isoformat(),
+        to_date=to_date.isoformat(),
+        expected_weekday_sessions=len(sessions),
+        expected_file_counts=counts,
+        manual_clicks_estimated=total_files,
+        click_estimate_basis=(
+            "lower-bound download-trigger clicks; navigation/date selection excluded"
+        ),
+        requirements=_recommended_requirements(),
+        data_fields_covered=_MONTHLY_FIELDS,
+        missing_requirements=(
+            "complete non-traded listed-security population before 2024-02-05",
+            "prospective publication/revision history",
+            "confirmed delisting events for every disappearance",
+        ),
+        approximate_disk_bytes=None,
+        present_files=present,
+        missing_expected_names=tuple(missing),
+        automation_status="MANUAL_ONLY",
+        terms_review_required=True,
+        instructions=(
+            "Download Exchange Monthly Reports from the official Segment-wise Historical "
+            "Reports page.",
+            "Use All Reports > Historical Reports > Equities > Archives for annual MII "
+            "snapshots where available.",
+            "Export corporate actions and NIFTY 50 price/TRI histories through their "
+            "official pages.",
+            "Retain original filenames and bytes, then run inspect-drop and preflight.",
+        ),
+        limitations=(
+            "monthly reports contain daily rows for traded equities, not the complete "
+            "non-traded listed population",
+            "public MII security-file dissemination starts 2024-02-05; older historical "
+            "snapshots are not assumed",
+            "monthly report availability is documented from April 2016; earlier dates "
+            "remain daily/archive work",
+            "historical completeness, revision history, and prospective known-at remain unproven",
+            "disk size is UNKNOWN until owner-retained files establish defensible averages",
+        ),
+    )
+
+
+def build_acquisition_options(*, source: str, years: int, as_of: date) -> AcquisitionOptionsReport:
+    """Compare reviewed NSE choices for the last complete ``years * 12`` months."""
+    if source.lower() != "nse":
+        raise ValueError("only the reviewed NSE comparison is supported")
+    if years < 1 or years > _MAX_COMPARISON_YEARS:
+        raise ValueError("years must be between 1 and 50")
+    coverage_end = as_of.replace(day=1) - timedelta(days=1)
+    coverage_start = _shift_month(
+        coverage_end.replace(day=1),
+        -(years * _MONTHS_IN_YEAR - 1),
+    )
+    sessions = len(_weekday_sessions(coverage_start, coverage_end))
+    daily_gap_end = min(coverage_end, _MONTHLY_EXCHANGE_START - timedelta(days=1))
+    daily_gap_files = (
+        0
+        if coverage_start > daily_gap_end
+        else len(_weekday_sessions(coverage_start, daily_gap_end))
+    )
+    monthly_start = max(coverage_start, _MONTHLY_EXCHANGE_START)
+    monthly_files = (
+        0 if monthly_start > coverage_end else len(_calendar_months(monthly_start, coverage_end))
+    )
+    snapshot_files = len(_annual_snapshot_months(coverage_start, coverage_end))
+    recommended_files = daily_gap_files + monthly_files + snapshot_files + 3
+    recommended_strategy = (
+        "HYBRID_DAILY_GAP_PLUS_MONTHLY_EXCHANGE_AND_ANNUAL_SECURITY_SNAPSHOT"
+        if daily_gap_files
+        else "MONTHLY_EXCHANGE_PLUS_ANNUAL_SECURITY_SNAPSHOT"
+    )
+    requirements = _recommended_requirements()
+    partial_missing = (
+        "complete non-traded listed-security population before 2024-02-05",
+        "complete lifecycle/delisting evidence",
+        "prospective known-at and source revision history",
+    )
+    options = (
+        AcquisitionStrategyOption(
+            recommended_strategy,
+            True,
+            True,
+            recommended_files,
+            recommended_files,
+            "one download-trigger per retained file; navigation/date selection excluded",
+            _MONTHLY_FIELDS,
+            requirements,
+            (
+                "monthly rows cover traded equities only",
+                "dates before April 2016 remain daily bhavcopy acquisition",
+                "annual snapshots provide coarse lifecycle checkpoints and exist publicly "
+                "only from 2024-02-05",
+                "actions and revision history remain partial/unknown",
+            ),
+            "PUBLIC_RECONSTRUCTED / RETRIEVED_LATER / DIAGNOSTIC_ONLY",
+            partial_missing,
+        ),
+        AcquisitionStrategyOption(
+            "DAILY_BHAVCOPY_AND_DAILY_SECURITY_WITH_MULTI_FILE_UI",
+            False,
+            True,
+            sessions * 2 + 3,
+            sessions * 3 + 3,
+            "two checkbox selections plus one bundle click per date; date-picker/navigation "
+            "excluded",
+            (
+                "daily OHLCV/turnover/trade count",
+                "daily MII identity/lifecycle from 2024-02-05",
+                "separate actions and benchmarks",
+            ),
+            requirements,
+            (
+                "Multiple file Download reduces two download triggers to one but requires "
+                "checkbox selections",
+                "MII security files are not assumed before their public dissemination date",
+            ),
+            "PUBLIC_RECONSTRUCTED / RETRIEVED_LATER / DIAGNOSTIC_ONLY",
+            partial_missing,
+        ),
+        AcquisitionStrategyOption(
+            "CLEARING_CORPORATION_MONTHLY_ONLY",
+            False,
+            False,
+            years * _MONTHS_IN_YEAR,
+            years * _MONTHS_IN_YEAR,
+            "one download-trigger per monthly clearing report",
+            (
+                "trade/settlement date",
+                "symbol",
+                "series",
+                "ISIN",
+                "deliverable/delivered/short-delivery quantities and values",
+                "margin percentages",
+            ),
+            tuple(
+                (name, RequirementClassification.DAILY_STILL_REQUIRED)
+                for name in (
+                    "daily_date",
+                    "open_high_low_close",
+                    "volume",
+                    "turnover",
+                    "trade_count",
+                )
+            ),
+            ("settlement and margin data are not price bars",),
+            "OFFICIAL_AGGREGATE/SETTLEMENT EVIDENCE; NOT A BHAVCOPY SUBSTITUTE",
+            ("OHLCV", "trade count", "benchmark histories", "corporate actions"),
+        ),
+        AcquisitionStrategyOption(
+            "SECURITY_WISE_PRICE_VOLUME_EXPORTS",
+            False,
+            False,
+            None,
+            None,
+            "one symbol/series/range query and CSV download per selected security",
+            (
+                "symbol/series/date/OHLC",
+                "traded quantity/turnover/trade count/deliverable quantity",
+            ),
+            tuple(
+                (name, RequirementClassification.PARTIALLY_REPLACE_DAILY)
+                for name in ("daily_date", "symbol", "series", "open_high_low_close", "volume")
+            ),
+            ("symbol-selected exports cannot establish the historical all-security universe",),
+            "OFFICIAL SECURITY-SELECTED HISTORY; SURVIVORSHIP-INCOMPLETE",
+            ("ISIN/security id", "all-security identity", "lifecycle", "corporate actions"),
+        ),
+        AcquisitionStrategyOption(
+            "EXCHANGE_ANNUAL_REPORT",
+            False,
+            False,
+            years,
+            years,
+            "one linked annual ZIP per year where offered",
+            (),
+            tuple(
+                (name, RequirementClassification.UNKNOWN)
+                for name in ("daily_date", "open_high_low_close", "listed_security_identity")
+            ),
+            ("annual ZIP contents/schema were not sufficiently verified for an offline mapper",),
+            "UNKNOWN; DO NOT SUBSTITUTE",
+            ("all DHRUVA requirements remain unverified",),
+        ),
+    )
+    return AcquisitionOptionsReport(
+        PUBLIC_OPTIONS_SCHEMA,
         "nse",
-        from_date.isoformat(),
-        to_date.isoformat(),
-        len(sessions),
-        (
-            ("cash_bhavcopy", len(sessions)),
-            ("security_master_snapshot", len(sessions)),
-            ("corporate_action_exports", 1),
-            ("nifty50_price_index", 1),
-            ("nifty50_tri", 1),
-        ),
-        None,
-        present,
-        missing,
-        "AUTOMATION_UNCLEAR",
-        True,
-        (
-            "Use official NSE report pages in a normal browser and download files manually.",
-            "Retain original filenames and bytes under an ignored local data-drop directory.",
-            "Run inspect-drop and preflight before reconstruction or authoritative import.",
-        ),
-        (
-            "weekday count is an upper bound because reviewed holiday/special-session "
-            "files were not supplied",
-            "historical public archive depth and endpoint automation permission are not assumed",
-            "disk size is UNKNOWN until owner samples establish defensible averages",
-        ),
+        years,
+        as_of.isoformat(),
+        coverage_start.isoformat(),
+        coverage_end.isoformat(),
+        recommended_strategy,
+        options,
     )
 
 
