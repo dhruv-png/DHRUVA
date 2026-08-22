@@ -1,0 +1,6 @@
+postgresql:  16.6
+timescaledb: 2.17.2
+isolation:   read committed
+database:    dhruva_test
+user:        dhruva_test
+exit_code: 0

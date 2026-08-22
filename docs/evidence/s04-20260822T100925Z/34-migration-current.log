@@ -1,0 +1,26 @@
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+Current revision(s) for postgresql+asyncpg://dhruva_test:***@localhost:55432/dhruva_test:
+Rev: 0023_public_evidence_class (head)
+Parent: 0022_historical_dataset
+Path: C:\Users\dhruv\Projects\DHRUVA\backend\alembic\versions\20260816_2100_public_evidence_class.py
+
+    Persist historical dataset evidence class.
+    
+    Revision ID: 0023_public_evidence_class
+    Revises: 0022_historical_dataset
+    Created: 2026-08-16
+    
+    Reversibility: reversible. Downgrade removes only the explicit classification;
+    the immutable manifest/file/provenance ledgers and imported historical facts are
+    retained. Existing rows receive the conservative LICENSED_VENDOR default because
+    0022 was the licensed/synthetic intake milestone; synthetic manifests continue
+    to carry their explicit class at the application boundary.
+    Rollback procedure: export accepted manifest/provenance reports, then run
+    ``alembic downgrade 0022_historical_dataset``; retained deliveries remain usable.
+    Irreversible operations: none structurally; the explicit classification column
+    is lost on downgrade and must be recovered from each retained manifest.
+    Expected runtime: sub-second for the current personal database.
+    Operational impact: metadata only; candidate-v0 and research facts are unchanged.
+
+exit_code: 0
